@@ -4,6 +4,7 @@ import App from './App'
 import { I18nProvider } from './i18n'
 import { api } from './api'
 import { SOURCE_LOCALE } from '@shared/i18n'
+import { dictionaryFor, SOURCE_DICTIONARY } from '@shared/locales'
 import './styles.css'
 import '@xterm/xterm/css/xterm.css'
 
@@ -21,9 +22,11 @@ async function boot(): Promise<void> {
   }
   document.documentElement.lang = locale
 
+  const dictionary = locale === SOURCE_LOCALE ? SOURCE_DICTIONARY : await dictionaryFor(locale)
+
   createRoot(document.getElementById('root')!).render(
     <React.StrictMode>
-      <I18nProvider initialLocale={locale}>
+      <I18nProvider initialLocale={locale} initialDictionary={dictionary}>
         <App />
       </I18nProvider>
     </React.StrictMode>

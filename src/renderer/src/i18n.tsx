@@ -3,6 +3,7 @@ import {
   createTranslator,
   LOCALES,
   SOURCE_LOCALE,
+  type Dictionary,
   type Translator
 } from '@shared/i18n'
 import { dictionaryFor, SOURCE_DICTIONARY } from '@shared/locales'
@@ -18,21 +19,26 @@ const I18nContext = createContext<I18nValue | null>(null)
 
 export function I18nProvider({
   initialLocale,
+  initialDictionary,
   children
 }: {
   initialLocale: string
+  initialDictionary: Dictionary
   children: ReactNode
 }) {
   const [locale, setLocaleState] = useState(initialLocale || SOURCE_LOCALE)
+  const [dictionary, setDictionary] = useState<Dictionary>(initialDictionary)
 
   const t = useMemo(
-    () => createTranslator(locale, dictionaryFor(locale), SOURCE_DICTIONARY),
-    [locale]
+    () => createTranslator(locale, dictionary, SOURCE_DICTIONARY),
+    [locale, dictionary]
   )
 
   const setLocale = useCallback(async (next: string) => {
+    const nextDictionary = next === SOURCE_LOCALE ? SOURCE_DICTIONARY : await dictionaryFor(next)
     // Jazyk uloží hlavní proces, aby ho znal i pro své chybové hlášky.
     await api.app.setLocale(next)
+    setDictionary(nextDictionary)
     setLocaleState(next)
     document.documentElement.lang = next
   }, [])

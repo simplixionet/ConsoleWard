@@ -10,29 +10,29 @@ import { createTranslator, SOURCE_LOCALE, type Translator } from '../shared/i18n
 import { dictionaryFor, SOURCE_DICTIONARY } from '../shared/locales'
 import { readPrefs } from './prefs'
 
-let current: { locale: string; t: Translator } | null = null
+let current: { locale: string; t: Translator } = {
+  locale: SOURCE_LOCALE,
+  t: createTranslator(SOURCE_LOCALE, SOURCE_DICTIONARY, SOURCE_DICTIONARY)
+}
 
-function build(locale: string): { locale: string; t: Translator } {
-  return {
-    locale,
-    t: createTranslator(locale, dictionaryFor(locale), SOURCE_DICTIONARY)
-  }
+/** Musí doběhnout dřív, než začne cokoliv volat appError() — viz index.ts app.whenReady(). */
+export async function initI18n(): Promise<void> {
+  const locale = readPrefs().locale ?? SOURCE_LOCALE
+  const dictionary = await dictionaryFor(locale)
+  current = { locale, t: createTranslator(locale, dictionary, SOURCE_DICTIONARY) }
 }
 
 export function currentLocale(): string {
-  if (!current) current = build(readPrefs().locale ?? SOURCE_LOCALE)
   return current.locale
 }
 
-export function setLocale(locale: string): void {
-  current = build(locale)
+export async function setLocale(locale: string): Promise<void> {
+  const dictionary = await dictionaryFor(locale)
+  current = { locale, t: createTranslator(locale, dictionary, SOURCE_DICTIONARY) }
 }
 
 /** Přeloží klíč do aktuálně zvoleného jazyka. */
-export const t: Translator = (key, params) => {
-  if (!current) current = build(readPrefs().locale ?? SOURCE_LOCALE)
-  return current.t(key, params)
-}
+export const t: Translator = (key, params) => current.t(key, params)
 
 /**
  * Chyba nesoucí překladový klíč.

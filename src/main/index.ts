@@ -21,7 +21,7 @@ import type {
   VaultStatus
 } from '../shared/types'
 import type { CommandApproval, McpStatus, ShareRequest } from '../shared/types'
-import { appError, currentLocale, setLocale } from './i18n'
+import { appError, currentLocale, initI18n, setLocale } from './i18n'
 import { readPrefs, writePrefs } from './prefs'
 import { DEFAULT_SETTINGS, migrateLegacyProfile, newId, vault } from './vault'
 import { ssh } from './ssh'
@@ -619,7 +619,7 @@ function registerIpc(): void {
   handle(CH.appGetLocale, () => currentLocale())
   handle(CH.appSetLocale, async (locale: string) => {
     const saved = await writePrefs({ locale })
-    setLocale(saved.locale)
+    await setLocale(saved.locale)
     return saved.locale
   })
 }
@@ -649,6 +649,8 @@ if (!gotLock) {
     // Projekt se dřív jmenoval jinak; přeneseme trezor ze staré složky profilu.
     const migratedFrom = await migrateLegacyProfile(['PuttyUI', 'putty-ui']).catch(() => null)
     if (migratedFrom) console.log('Trezor přenesen ze složky:', migratedFrom)
+
+    await initI18n()
 
     applyCsp()
     registerIpc()

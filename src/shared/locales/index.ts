@@ -7,18 +7,24 @@
 
 import type { Dictionary } from '../i18n'
 import en from './en.json'
-import cs from './cs.json'
-import de from './de.json'
 
-export const DICTIONARIES: Record<string, Dictionary> = {
-  en,
-  cs,
-  de
+export const SOURCE_DICTIONARY: Dictionary = en
+
+type Loader = () => Promise<Dictionary>
+
+const LOADERS: Record<string, Loader> = {
+  en: () => Promise.resolve(en),
+  cs: () => import('./cs.json').then((m) => m.default),
+  de: () => import('./de.json').then((m) => m.default)
 }
 
-export { en as SOURCE_DICTIONARY }
-
 /** Slovník jazyka, nebo prázdný objekt – překladač si sáhne do angličtiny. */
-export function dictionaryFor(locale: string): Dictionary {
-  return DICTIONARIES[locale] ?? {}
+export async function dictionaryFor(locale: string): Promise<Dictionary> {
+  const load = LOADERS[locale]
+  if (!load) return {}
+  try {
+    return await load()
+  } catch {
+    return {}
+  }
 }
