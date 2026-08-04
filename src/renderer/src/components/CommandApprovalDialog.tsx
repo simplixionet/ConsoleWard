@@ -20,7 +20,11 @@ interface Props {
 export default function CommandApprovalDialog({ request, onAnswer }: Props) {
   const t = useT()
   const [autoShare, setAutoShare] = useState(false)
-  const multiline = request.command.includes('\n')
+  // A bare \r counts. The command is written into a PTY, where ICRNL turns
+  // carriage return into Enter, so `ls -la\rrm -rf ~` is two commands even
+  // though it contains no newline. Checking only \n left that warning silent
+  // on exactly the payload it exists to catch.
+  const multiline = /[\n\r]/.test(request.command)
 
   return (
     <div className="modal-backdrop">

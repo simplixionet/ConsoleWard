@@ -345,7 +345,20 @@ class Vault {
     await this.persist()
   }
 
-  /** Vygeneruje nový obnovovací klíč; starý okamžitě přestane platit. */
+  /**
+   * Vygeneruje nový obnovovací klíč a nahradí jím starý wrap.
+   *
+   * POZOR — starý klíč tím **nepřestává platit**. Datový klíč (DEK) se
+   * nerotuje, a `persist()` před každým zápisem zkopíruje současný
+   * `vault.enc` do `vault.enc.bak`. Ten `.bak` tedy obsahuje wrap otevřený
+   * starým klíčem, ten wrap vydá tentýž DEK, a ten DEK dešifruje i všechny
+   * *budoucí* verze trezoru. Totéž platí pro `changePassword` a
+   * `removeRecoveryKey`.
+   *
+   * Předchozí znění tohoto komentáře tvrdilo, že starý klíč okamžitě přestane
+   * platit. Nebyla to pravda a nikdo si toho nevšiml, protože komentář zněl
+   * jako záruka. Skutečná revokace vyžaduje rotaci DEK a přešifrování obsahu.
+   */
   async regenerateRecoveryKey(): Promise<string> {
     this.requireUnlocked()
     const recoveryKey = generateRecoveryKey()

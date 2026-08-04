@@ -93,7 +93,13 @@ class SshManager {
     }
 
     try {
-      s.stream.write(Buffer.from(command.replace(/\n?$/, '\n'), 'utf8'))
+      // Normalise line endings before writing. A PTY applies ICRNL, so a bare
+      // \r arrives at the shell as Enter — meaning the bytes executed could
+      // contain more commands than the text the human approved appeared to.
+      // Collapsing CRLF and lone CR to LF makes the executed form match the
+      // reviewed form; the dialog warns whenever either is present.
+      const normalized = command.replace(/\r\n?/g, '\n').replace(/\n?$/, '\n')
+      s.stream.write(Buffer.from(normalized, 'utf8'))
       const startedAt = Date.now()
       let timedOut = false
       await new Promise<void>((resolve) => {
@@ -164,9 +170,24 @@ class SshManager {
     })
 
     client.on('keyboard-interactive', (_name, _instr, _lang, prompts, finish) => {
-      // Řada serverů posílá heslo přes keyboard-interactive místo `password`.
-      if (conn.authKind === 'password' && conn.password) {
-        finish(prompts.map(() => conn.password as string))
+      // Many servers deliver the password through keyboard-interactive rather
+      // than `password`, so this path has to answer — but only for a prompt
+      // that is actually a password prompt.
+      //
+      // It used to answer *every* prompt with the stored password:
+      // `finish(prompts.map(() => conn.password))`. Prompt text, the echo flag
+      // and the prompt count all come from the server, so a hostile or
+      // compromised host could ask "Enter your GitHub token:" and be handed the
+      // account password. A second round could ask again and get it again.
+      //
+      // Now: exactly one prompt, and it must have echo off, which is how a
+      // server marks a field whose input should not be displayed. Anything else
+      // — a second factor, an OTP, a multi-question round — is answered with
+      // nothing, and authentication fails visibly rather than leaking.
+      const isSinglePasswordPrompt = prompts.length === 1 && prompts[0]?.echo === false
+
+      if (conn.authKind === 'password' && conn.password && isSinglePasswordPrompt) {
+        finish([conn.password])
       } else {
         finish([])
       }
@@ -233,11 +254,17 @@ class SshManager {
       host: conn.host,
       port: conn.port || 22,
       username: conn.username,
-      readyTimeout: 25_000,
+      // ssh2 starts readyTimeout on socket connect and clears it only on
+      // `ready`, so it runs *while the host-key dialog is open*. At the old
+      // 25 s the real decision budget was 25 seconds, not the 120 the prompt
+      // allows — and a user who took the time to verify a fingerprint out of
+      // band was punished for it. Long enough now that the dialog's own
+      // timeout is the one that fires.
+      readyTimeout: 150_000,
       keepaliveInterval: 25_000,
       keepaliveCountMax: 4,
       hostVerifier: (key: Buffer, cb: (valid: boolean) => void) => {
-        this.verifyHostKey(conn, key)
+        this.verifyHostKey(conn, key, session)
           .then(cb)
           .catch((err) => {
             this.setStatus(session, 'error', (err as Error).message)
@@ -260,7 +287,7 @@ class SshManager {
     }
   }
 
-  private async verifyHostKey(conn: Connection, key: Buffer): Promise<boolean> {
+  private async verifyHostKey(conn: Connection, key: Buffer, session: Session): Promise<boolean> {
     const fingerprint = sha256Fingerprint(key)
     const keyType = parseKeyType(key)
     const hostKey = `${conn.host}:${conn.port || 22}`
@@ -291,6 +318,15 @@ class SshManager {
     })
 
     if (!accepted) return false
+
+    // Trust is only recorded if the answer can still be acted on. If the
+    // connection died while the dialog was open — readyTimeout, a dropped
+    // socket, the user quitting — persisting here would grant permanent trust
+    // to a key whose session never completed. The user would see a timeout
+    // error, have no idea trust was granted, and the *next* connect would
+    // succeed silently with no changed-key warning. That turns careful
+    // out-of-band verification into a silent MITM acceptance.
+    if (session.status === 'error' || session.status === 'closed') return false
 
     await vault.mutate((d) => {
       const idx = d.knownHosts.findIndex((h) => h.hostKey === hostKey)

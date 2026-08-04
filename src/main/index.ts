@@ -13,6 +13,7 @@ import {
 import fsp from 'node:fs/promises'
 import path from 'node:path'
 import { CH } from '../shared/channels'
+import { contentSecurityPolicy } from '../shared/csp'
 import type {
   ConnectionInput,
   ConnectionMeta,
@@ -81,21 +82,10 @@ function createWindow(): void {
 }
 
 function applyCsp(): void {
-  const devUrl = process.env['ELECTRON_RENDERER_URL']
-  const connect = isDev && devUrl ? `'self' ws: wss: http://localhost:* http://127.0.0.1:*` : `'self'`
-  const scriptSrc = isDev ? `'self' 'unsafe-inline' 'unsafe-eval'` : `'self'`
-  const policy = [
-    `default-src 'self'`,
-    `script-src ${scriptSrc}`,
-    `style-src 'self' 'unsafe-inline'`,
-    `img-src 'self' data:`,
-    `font-src 'self' data:`,
-    `connect-src ${connect}`,
-    `object-src 'none'`,
-    `frame-src 'none'`,
-    `base-uri 'none'`,
-    `form-action 'none'`
-  ].join('; ')
+  // Same policy the meta tag carries, from the same source. Both apply and CSP
+  // intersects them, so they must agree; see src/shared/csp.ts for why there
+  // used to be two and why the strict one never reached users.
+  const policy = contentSecurityPolicy(isDev)
 
   electronSession.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     callback({

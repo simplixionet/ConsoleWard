@@ -441,8 +441,18 @@ export default function App() {
         <HostKeyDialog prompt={hostKeyQueue[0]} onAnswer={(accept) => void answerHostKey(accept)} />
       )}
 
+      {/*
+        The `key` is load-bearing, not tidiness. Without it React reconciles the
+        same component across two different requests instead of remounting, so
+        useState initialisers never re-run: the share dialog would keep request
+        A's textarea while showing request B's header, and the auto-share
+        checkbox would carry A's tick into B — the "memory of past approvals"
+        DECISIONS.md says does not exist. Keying on the request id forces a
+        fresh mount per request.
+      */}
       {commandQueue.length > 0 && (
         <CommandApprovalDialog
+          key={commandQueue[0].id}
           request={commandQueue[0]}
           onAnswer={(approved, autoShare) => {
             const req = commandQueue[0]
@@ -454,6 +464,7 @@ export default function App() {
 
       {shareQueue.length > 0 && (
         <OutputShareDialog
+          key={shareQueue[0].id}
           request={shareQueue[0]}
           onAnswer={(shared, text) => {
             const req = shareQueue[0]
