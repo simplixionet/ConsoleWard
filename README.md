@@ -1,4 +1,8 @@
-# PuttyUI
+<p align="center">
+  <img src="build/icon.svg" width="96" height="96" alt="ConsoleWard">
+</p>
+
+<h1 align="center">ConsoleWard</h1>
 
 Desktopový SSH klient (Electron) se **šifrovaným trezorem** pro adresy, uživatele, hesla
 a privátní klíče. Ve druhé fázi přibude AI chat, který smí psát do konzole **jen s
@@ -115,7 +119,7 @@ Zapíná se v Nastavení → AI přístup. Aplikace pak hostí MCP server na `12
 (výchozí port 7345) a vypíše příkaz k nastavení klienta:
 
 ```bash
-claude mcp add --transport http putty-ui http://127.0.0.1:7345/ --header "Authorization: Bearer <token>"
+claude mcp add --transport http consoleward http://127.0.0.1:7345/ --header "Authorization: Bearer <token>"
 ```
 
 ### Co AI dostane a co ne

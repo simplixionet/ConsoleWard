@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="ConsoleWard">
+  <title>ConsoleWard</title>
+
+  <!--
+    Single-colour fallback for surfaces that render small and flat — favicons
+    on a light tab strip, some installer chrome, print. The green cursor of the
+    full mark turns to mud against a light background at 16px; here the whole
+    mark is one colour and the prompt is knocked out instead.
+
+    `currentColor` lets a host stylesheet recolour it; the fill attribute is the
+    default when there is no inherited colour.
+  -->
+
+  <path fill="currentColor" color="#4c9aff" fill-rule="evenodd"
+        d="M32 3 L59 11 L59 32 C59 47 47 57 32 61 C17 57 5 47 5 32 L5 11 Z
+           M25.4 22.6 a2.5 2.5 0 0 0 -3.5 3.5 L26.5 33 l-4.6 6.9 a2.5 2.5 0 0 0 3.5 3.5 l6.4-8.6 a2.5 2.5 0 0 0 0-3.6 Z
+           M35 36.5 h11 a1 1 0 0 1 1 1 v2.5 a1 1 0 0 1 -1 1 h-11 a1 1 0 0 1 -1 -1 v-2.5 a1 1 0 0 1 1 -1 Z" />
+</svg>

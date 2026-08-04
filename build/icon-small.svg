@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="ConsoleWard">
+  <title>ConsoleWard</title>
+
+  <!--
+    Small-size variant, used for the 16, 24 and 32 pixel frames of icon.ico.
+
+    The full mark loses its interior below about 24px: the chevron and cursor
+    collapse into noise and it reads as a blue shield with a dark smudge. This
+    is the same mark with the prompt enlarged and thickened until it survives
+    a taskbar. Nothing is added — only the two interior shapes grow.
+
+    Shipping different artwork per size is what the ICO format is for. Windows
+    picks the nearest frame, so the small frames get this and everything from
+    48px up gets build/icon.svg.
+  -->
+
+  <!-- Shield body — identical to the full mark, so the silhouette never shifts -->
+  <path fill="#4c9aff"
+        d="M32 3 L59 11 L59 32 C59 47 47 57 32 61 C17 57 5 47 5 32 L5 11 Z" />
+
+  <path fill="#0e1116"
+        d="M32 10 L53 16.5 L53 32 C53 44 43 52 32 55.5 C21 52 11 44 11 32 L11 16.5 Z" />
+
+  <!-- Prompt chevron, thickened from 5 to 7 and widened -->
+  <polyline points="20,24 30,33.5 20,43"
+            fill="none" stroke="#4c9aff" stroke-width="7"
+            stroke-linecap="round" stroke-linejoin="round" />
+
+  <!-- Cursor, grown so the one warm point still lands at 16px -->
+  <rect x="35" y="37" width="13" height="6" rx="1.5" fill="#7ee787" />
+</svg>

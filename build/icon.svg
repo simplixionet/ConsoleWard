@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="ConsoleWard">
+  <title>ConsoleWard</title>
+
+  <!--
+    A shield holding a terminal prompt.
+
+    The shield is "ward" — to guard, to have in keeping. The prompt names what
+    is being guarded. Together they say what the product actually is: a console
+    with a gate on it, not a terminal that happens to be pretty.
+
+    Designed at 16x16 and scaled up, not the other way round. Everything that
+    could not survive a taskbar was left out: no text, no shadow, no gradient,
+    no stroke thinner than 1/16 of the width. Three shapes, three colours.
+
+    Colours are the app's own tokens from src/renderer/src/styles.css, so the
+    mark cannot drift from the product:
+      #4c9aff  --accent   shield
+      #0e1116  --bg       interior
+      #7ee787  --ok       cursor
+  -->
+
+  <!-- Shield body -->
+  <path fill="#4c9aff"
+        d="M32 3 L59 11 L59 32 C59 47 47 57 32 61 C17 57 5 47 5 32 L5 11 Z" />
+
+  <!-- Interior, inset so the shield reads as an edge even at 16px -->
+  <path fill="#0e1116"
+        d="M32 10 L53 16.5 L53 32 C53 44 43 52 32 55.5 C21 52 11 44 11 32 L11 16.5 Z" />
+
+  <!-- Prompt chevron -->
+  <polyline points="23,25 31,33 23,41"
+            fill="none" stroke="#4c9aff" stroke-width="5"
+            stroke-linecap="round" stroke-linejoin="round" />
+
+  <!-- Cursor. The one warm point in the mark, and the element that says
+       "console" before anything else is legible. -->
+  <rect x="35" y="36.5" width="11" height="4.5" rx="1" fill="#7ee787" />
+</svg>

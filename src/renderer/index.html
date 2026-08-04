@@ -7,6 +7,10 @@
       content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' ws: wss: http://localhost:* http://127.0.0.1:*; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'"
     />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Inline so the page makes no extra request. The CSP above already
+         permits img-src data:, so this needs no policy change. Source of truth
+         is build/icon-small.svg; regenerate with npm run build:icon. -->
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCIgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByb2xlPSJpbWciIGFyaWEtbGFiZWw9IkNvbnNvbGVXYXJkIj4gPHRpdGxlPkNvbnNvbGVXYXJkPC90aXRsZT4gPHBhdGggZmlsbD0iIzRjOWFmZiIgZD0iTTMyIDMgTDU5IDExIEw1OSAzMiBDNTkgNDcgNDcgNTcgMzIgNjEgQzE3IDU3IDUgNDcgNSAzMiBMNSAxMSBaIiAvPiA8cGF0aCBmaWxsPSIjMGUxMTE2IiBkPSJNMzIgMTAgTDUzIDE2LjUgTDUzIDMyIEM1MyA0NCA0MyA1MiAzMiA1NS41IEMyMSA1MiAxMSA0NCAxMSAzMiBMMTEgMTYuNSBaIiAvPiA8cG9seWxpbmUgcG9pbnRzPSIyMCwyNCAzMCwzMy41IDIwLDQzIiBmaWxsPSJub25lIiBzdHJva2U9IiM0YzlhZmYiIHN0cm9rZS13aWR0aD0iNyIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIiAvPiA8cmVjdCB4PSIzNSIgeT0iMzciIHdpZHRoPSIxMyIgaGVpZ2h0PSI2IiByeD0iMS41IiBmaWxsPSIjN2VlNzg3IiAvPiA8L3N2Zz4=" />
     <title>ConsoleWard</title>
   </head>
   <body>
