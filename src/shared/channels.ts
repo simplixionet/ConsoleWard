@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Simplixio — Stanislav Opletal <info@simplixio.net>
+
 /** Názvy IPC kanálů – jediný zdroj pravdy pro main i preload. */
 export const CH = {
   vaultStatus: 'vault:status',

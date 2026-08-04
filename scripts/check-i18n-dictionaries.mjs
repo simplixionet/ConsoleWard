@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Simplixio — Stanislav Opletal <info@simplixio.net>
+
 /**
  * Checks the locale dictionaries on disk. Static counterpart to
  * `check-i18n-ui.mjs`: that one drives the built app, this one reads the data.

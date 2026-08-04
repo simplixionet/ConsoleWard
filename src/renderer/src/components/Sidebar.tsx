@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Simplixio — Stanislav Opletal <info@simplixio.net>
+
 import type { ConnectionMeta, Snippet } from '@shared/types'
 import { useT } from '../i18n'
 import ConnectionList from './ConnectionList'

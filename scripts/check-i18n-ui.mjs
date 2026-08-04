@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Simplixio — Stanislav Opletal <info@simplixio.net>
+
 /**
  * Drives the built app over the Chrome DevTools Protocol and proves every
  * locale the language picker offers actually renders its own dictionary.

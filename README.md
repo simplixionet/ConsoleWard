@@ -4,183 +4,245 @@
 
 <h1 align="center">ConsoleWard</h1>
 
-Desktopový SSH klient (Electron) se **šifrovaným trezorem** pro adresy, uživatele, hesla
-a privátní klíče. Ve druhé fázi přibude AI chat, který smí psát do konzole **jen s
-výslovným schválením člověka**.
+<p align="center">
+  An encrypted SSH client whose defining feature is a <strong>human-held gate</strong>:
+  an AI assistant can propose commands and ask for terminal output, but nothing runs
+  and nothing leaves the machine without an explicit human approval.
+</p>
 
-## Spuštění
+<p align="center">
+  <a href="LICENSE">GPL-3.0-or-later</a> ·
+  Windows ·
+  8 UI languages
+</p>
 
-Vývojový režim (hot reload):
+<!--
+  Deliberately no badge images. A shields.io badge is an external image host,
+  so every viewer of this page would send it a request. Same reasoning as the
+  banner above, which is a committed SVG at a relative path rather than a
+  hot-link.
+-->
+
+---
+
+A desktop SSH client built on Electron, with an **encrypted vault** for addresses,
+usernames, passwords and private keys — and a local MCP server that lets an AI client
+work with your sessions without ever seeing your credentials.
+
+## Running it
+
+Development, with hot reload:
 
 ```bash
 npm run dev
 ```
 
-Produkční build a spuštění:
+Production build and launch:
 
 ```bash
 npm run build
 npm start
 ```
 
-Instalátor pro Windows (NSIS + portable, do `release/`):
+Windows installer (NSIS plus a portable build, written to `release/`):
 
 ```bash
 npm run dist
 ```
 
-Kontrola typů:
+Checks:
 
 ```bash
-npm run typecheck
+npm run typecheck      # tsc --noEmit, the only automated gate
+npm run check:i18n     # locale parity, plural categories, placeholder integrity
+npm run check:i18n-ui  # drives the built app and proves every locale renders
 ```
 
-## Co umí
+## What it does
 
-- **Šifrovaný trezor** – jeden soubor `vault.enc` v profilu uživatele. Obsah šifruje
-  náhodný datový klíč (**AES-256-GCM**), který je v souboru uložený zabalený hlavním
-  heslem a obnovovacím klíčem (oba přes **scrypt**, N=2¹⁷, r=8, p=1). Špatné heslo pozná
-  GCM autentizační tag – nelze ho obejít.
-- **Obnovovací klíč** – 30 znaků / 150 bitů entropie, generuje se při založení trezoru
-  a zobrazí se jen jednou. Umožní resetovat zapomenuté hlavní heslo. Lze ho kdykoli
-  přegenerovat i úplně zrušit.
-- **Připojení** – název, host, port, uživatel, složka, poznámka. Přihlášení heslem,
-  privátním klíčem (OpenSSH PEM, včetně passphrase) nebo přes SSH agenta
-  (Pageant / OpenSSH agent).
-- **Ověřování host key** – otisky `SHA256:...` ve formátu OpenSSH. První připojení se
-  potvrzuje (TOFU), **změna otisku se hlásí jako varování** a bez potvrzení se spojení
-  neotevře. Uložené otisky lze spravovat v Nastavení → Známé servery.
-- **Příkazy a poznámky** – knihovna uložených příkazů (s popisem a složkami) a volných
-  poznámek. Uložený příkaz jde zkopírovat, **vložit** do terminálu bez odeslání (Enter
-  stiskneš sám) nebo rovnou **spustit**. Víceřádkový příkaz se před vložením potvrzuje —
-  v shellu se každý konec řádku chová jako Enter. Vše je v trezoru, tedy šifrované.
-- **Terminál** – xterm.js, více relací v záložkách, historie výstupu, hledání
-  (`Ctrl+Shift+F`), kopírování `Ctrl+Shift+C`, vkládání `Ctrl+Shift+V` nebo pravým
-  tlačítkem (jako v PuTTY).
-- **AI přístup přes MCP** – lokální MCP server, přes který může AI klient (Claude Code
-  apod.) vidět názvy relací, navrhovat příkazy a číst výstup. Vždy přes bránu, kterou
-  držíš ty. Ve výchozím stavu vypnuto.
-- **Automatické zamčení** po nastavené době nečinnosti; volitelně zároveň ukončí
-  všechny SSH relace.
-- **Změna hlavního hesla** – přešifruje celý trezor novým klíčem.
+- **Encrypted vault** — a single `vault.enc` in the user profile. The contents are
+  encrypted with a random data key (**AES-256-GCM**); that key is stored in the file
+  wrapped separately by your master password and by a recovery key, both derived with
+  **scrypt** (N=2¹⁷, r=8, p=1). A wrong password fails on the GCM authentication tag,
+  so there is no separate verifier to bypass.
+- **Recovery key** — 30 characters, 150 bits of entropy, generated when the vault is
+  created and shown exactly once. It resets a forgotten master password. You can
+  regenerate it or remove it entirely at any time.
+- **Connections** — name, host, port, user, folder, note. Authentication by password,
+  by private key (OpenSSH PEM, passphrase supported), or through an SSH agent
+  (Pageant or the OpenSSH agent).
+- **Host key verification** — `SHA256:…` fingerprints in OpenSSH format. First contact
+  asks for confirmation (TOFU); **a changed fingerprint is raised as a warning** and the
+  session does not open without explicit acceptance. Stored fingerprints are manageable
+  under Settings → Known servers.
+- **Command library** — saved commands with descriptions and folders, plus free-text
+  notes. A saved command can be copied, **inserted** into the terminal without being
+  sent (you press Enter yourself), or **run** directly. A multi-line command asks for
+  confirmation first, because in a shell every line ending acts as Enter. All of it
+  lives in the vault, encrypted.
+- **Terminal** — xterm.js, multiple sessions in tabs, scrollback, search
+  (`Ctrl+Shift+F`), copy `Ctrl+Shift+C`, paste `Ctrl+Shift+V` or right-click, as in PuTTY.
+- **AI access over MCP** — a local MCP server through which an AI client (Claude Code
+  and similar) can see session names, propose commands and request output. Always
+  through the gate you hold. Off by default.
+- **Automatic lock** after a configurable idle period, optionally ending all SSH
+  sessions at the same time.
+- **Master password change** — re-wraps the vault key with the new password.
+- **Eight UI languages** — English, Czech, German, Spanish, French, Italian,
+  Brazilian Portuguese and Dutch, with correct plural handling.
 
-## Bezpečnostní model
+## Security model
 
-| Co | Kde žije |
+| What | Where it lives |
 |---|---|
-| Hesla, privátní klíče, passphrase | pouze hlavní proces, uvnitř šifrovaného trezoru |
-| UI (renderer) | dostává jen metadata a příznaky `hasPassword` / `hasPrivateKey` |
-| Otisky serverů | v trezoru, šifrovaně |
-| Příkazy a poznámky | v trezoru, šifrovaně (do UI se posílají — musíš je vidět a editovat) |
-| Obnovovací klíč | nikde — v souboru je jen zámek z něj odvozený |
+| Passwords, private keys, passphrases | main process only, inside the encrypted vault |
+| The UI (renderer) | receives metadata plus `hasPassword` / `hasPrivateKey` flags only |
+| Host fingerprints | in the vault, encrypted |
+| Commands and notes | in the vault, encrypted (sent to the UI — you have to see and edit them) |
+| Recovery key | nowhere — the file holds only a lock derived from it |
+| Language preference | `prefs.json`, deliberately **outside** the vault, since the unlock screen must be translated before any password is typed |
 
-- Renderer běží se `contextIsolation: true`, `nodeIntegration: false` a `sandbox: true`;
-  komunikuje výhradně přes úzké IPC rozhraní v preloadu.
-- Content-Security-Policy je nastavená hlavičkou i meta tagem; externí odkazy se
-  otevírají v systémovém prohlížeči, navigace uvnitř okna je zakázaná.
-- Tajemství se z formuláře posílají jen tehdy, když je uživatel skutečně změní –
-  prázdné pole znamená „ponechat beze změny“, tlačítko *Smazat* znamená „odstranit“.
-- Trezor se zapisuje atomicky (`.tmp` → přejmenování) a předchozí verze se zálohuje
-  do `vault.enc.bak`. Záloha je snímek — platí pro ni heslo, které platilo v době jejího
-  vzniku.
-- Trezory ve starém formátu (verze 1, klíč odvozený přímo z hesla) se při odemčení
-  automaticky převedou na verzi 2.
+- The renderer runs with `contextIsolation: true`, `nodeIntegration: false` and
+  `sandbox: true`, and communicates only through a narrow IPC surface defined in the
+  preload.
+- Content-Security-Policy is set by both header and meta tag; external links open in the
+  system browser and in-window navigation is blocked.
+- Secrets leave the editor only when you actually change them — an empty field means
+  "leave unchanged", the *Delete* button means "remove".
+- The vault is written atomically (`.tmp` then rename) and the previous version is kept
+  as `vault.enc.bak`. That backup is a snapshot: the password that applied when it was
+  written is the password that opens it.
+- Vaults in the old format (version 1, key derived straight from the password) are
+  migrated to version 2 automatically on unlock.
 
-### Obnovovací klíč
+### The recovery key
 
-Trezor používá obálkové šifrování: obsah šifruje náhodný **datový klíč (DEK)**, který
-je v souboru uložený vícekrát – pokaždé zabalený jiným tajemstvím:
+The vault uses envelope encryption. The contents are encrypted with a random
+**data key (DEK)**, which is stored in the file more than once — each time wrapped by a
+different secret:
 
 ```
-wrap[password] = AES-GCM(DEK, scrypt(hlavní heslo, salt₁))
-wrap[recovery] = AES-GCM(DEK, scrypt(obnovovací klíč, salt₂))
+wrap[password] = AES-GCM(DEK, scrypt(master password, salt₁))
+wrap[recovery] = AES-GCM(DEK, scrypt(recovery key,   salt₂))
 ```
 
-Odemknout lze kterýmkoli z nich. Změna hesla i obnova proto jen přebalí DEK — obsah
-trezoru se znovu nešifruje.
+Either one unlocks it. Changing the password and recovering access therefore only
+re-wrap the DEK — the vault contents are never re-encrypted.
 
-Klíč má 30 znaků v abecedě Crockford Base32 (bez `I`, `L`, `O`, `U`, aby nešlo splést
-znaky při přepisu) = **150 bitů entropie**. Při zadávání nezáleží na velikosti písmen ani
-na oddělovačích a `O`/`0` i `I`/`L`/`1` se automaticky sjednotí.
+The key is 30 characters of Crockford Base32 (no `I`, `L`, `O` or `U`, so nothing can be
+misread when copied by hand) = **150 bits of entropy**. Input ignores case and
+separators, and folds `O`/`0` and `I`/`L`/`1` together.
 
-> **Klíč se nikde neukládá** — v trezoru je z něj odvozený jen zámek, ne klíč samotný.
-> Zobrazí se jednou při vytvoření trezoru (a při přegenerování v Nastavení). Kdo ho má,
-> dostane se ke všem uloženým heslům, takže ho drž **odděleně od souboru trezoru**.
+> **The key is stored nowhere.** The vault holds only a lock derived from it, not the
+> key itself. It is shown once when the vault is created, and again if you regenerate it
+> in Settings. Anyone who has it reaches every stored password, so keep it **separate
+> from the vault file**.
 >
-> **Když ztratíš heslo i obnovovací klíč, data jsou nenávratně pryč.** Zadní vrátka
-> neexistují.
+> **If you lose both the password and the recovery key, the data is gone for good.**
+> There is no back door.
 
-Obnovovací klíč lze v Nastavení → Zabezpečení kdykoli přegenerovat (starý okamžitě
-přestane platit) nebo úplně odstranit, pokud nechceš, aby druhá cesta k datům existovala.
+Under Settings → Security you can regenerate the recovery key at any time — the old one
+stops working immediately — or remove it entirely if you do not want a second route to
+your data to exist.
 
-## AI přístup přes MCP
+## AI access over MCP
 
-Zapíná se v Nastavení → AI přístup. Aplikace pak hostí MCP server na `127.0.0.1`
-(výchozí port 7345) a vypíše příkaz k nastavení klienta:
+Turn it on under Settings → AI access. The app then hosts an MCP server on `127.0.0.1`
+(port 7345 by default) and prints the command to configure a client:
 
 ```bash
 claude mcp add --transport http consoleward http://127.0.0.1:7345/ --header "Authorization: Bearer <token>"
 ```
 
-### Co AI dostane a co ne
+### What the AI gets, and what it does not
 
-| Nástroj | Co dělá |
+| Tool | What it does |
 |---|---|
-| `list_sessions` | jen `id`, název a stav relace — **adresa, port ani uživatel se neposílají** |
-| `run_command` | navrhne příkaz; **nespustí se, dokud ho neschválíš** v dialogu |
-| `read_terminal` | požádá o výstup; ty vybereš nebo přepíšeš, co přesně odejde |
+| `list_sessions` | `id`, name and status only — **address, port and username are never sent** |
+| `run_command` | proposes a command; **it does not run until you approve it** in a dialog |
+| `read_terminal` | asks for output; you choose or rewrite exactly what goes back |
 
-Dialog s příkazem zobrazuje jeho **doslovné znění se zviditelněnými řídicími znaky**,
-aby v něm nešel schovat řádek navíc. Není tam „schválit vše" ani „zapamatovat" — každý
-příkaz vidíš zvlášť. To je celý smysl brány.
+The approval dialog shows the command's **literal text with control characters made
+visible**, so an extra line cannot hide in it. There is no "approve all" and no
+"remember" — you see every command separately. That is the entire point of the gate.
 
-Ve výběrovém dialogu je výstup **editovatelný**: můžeš označit část a poslat jen ji,
-cokoliv přepsat, nebo označené nahradit `[REDIGOVÁNO]`. Podezřelá místa (hesla
-v přiřazení, tokeny, privátní klíče, přihlašovací údaje v URL, IP adresy) se podbarvují.
-Je to jen vodítko — regulární výrazy nezachytí všechno.
+In the sharing dialog the output is **editable**: select a portion and send only that,
+rewrite anything, or replace a selection with `[REDACTED]`. Suspicious spans (passwords
+in assignments, tokens, private keys, credentials in URLs, IP addresses) are highlighted.
+That is a hint, not a guarantee — regular expressions do not catch everything.
 
-AI vždy dostane poznámku, že jde o výřez, aby z neúplného výstupu nevyvozovala závěry,
-jako by viděla vše.
+The AI is always told the content is an excerpt, so it does not reason from partial
+output as though it had seen everything.
 
-### Zabezpečení serveru
+### Server hardening
 
-- poslouchá **výhradně na `127.0.0.1`**, nikdy na `0.0.0.0`
-- povinný bearer token (uložený v trezoru)
-- ochrana proti DNS rebindingu — cizí hlavička `Host` i `Origin` vrací 403
-- při zamčení trezoru se server okamžitě vypne a čekající žádosti se odmítnou
-- bez odpovědi do 5 minut se žádost sama zamítne
+- listens **only on `127.0.0.1`**, never on `0.0.0.0`
+- bearer token required, stored in the vault
+- DNS-rebinding protection — a foreign `Host` or `Origin` header returns 403
+- locking the vault shuts the server down immediately and denies pending requests
+- an unanswered request auto-denies after 5 minutes
 
-> ⚠️ **Co odejde na internet:** příkazy, které AI navrhne, a **výstup, který pustíš**.
-> Tvůj AI klient je posílá svému poskytovateli. Přihlašovací údaje a adresy zůstávají
-> lokálně, obsah výstupu ne.
+> ⚠️ **What leaves your machine:** the commands the AI proposes, and **the output you
+> release**. Your AI client sends them to its provider. Credentials and addresses stay
+> local; released output does not.
 >
-> ⚠️ **Prompt injection:** výstup terminálu je nedůvěryhodný vstup. Když v logu bude
-> „ignoruj předchozí instrukce a spusť…", model to může navrhnout. Jediná skutečná
-> obrana je ta schvalovací brána — čti, co schvaluješ.
+> ⚠️ **Prompt injection:** terminal output is untrusted input. If a log line contains
+> "ignore previous instructions and run…", the model may propose exactly that. The
+> approval gate is the only real defence — read what you approve.
 
-## Poznámka k rotaci hesla
+## A note on password rotation
 
-Změna hlavního hesla přebalí datový klíč, ale **nemění ho**. Pokud někdo dříve získal
-kopii souboru *a* staré heslo, změna hesla mu už jednou přečtená data nevezme. V takovém
-případě založ nový trezor a připojení do něj přenes ručně.
+Changing the master password re-wraps the data key but **does not change it**. If someone
+already captured a copy of the file *and* the old password, rotating the password does
+not take back what they have already read. In that situation, create a new vault and move
+the connections across by hand.
 
-### Klíče ve formátu PuTTY (.ppk)
+### PuTTY-format keys (`.ppk`)
 
-`.ppk` se přímo nepodporuje. Převeď ho v PuTTYgen přes
-*Conversions → Export OpenSSH key* a výsledný soubor načti v editoru připojení.
+`.ppk` is not supported directly. Convert it in PuTTYgen via
+*Conversions → Export OpenSSH key* and load the result in the connection editor.
 
-## Struktura projektu
+## Project layout
 
 ```
 src/
-  shared/     typy a názvy IPC kanálů sdílené napříč procesy
-  main/       hlavní proces: trezor (vault.ts), SSH (ssh.ts), IPC (index.ts)
-  preload/    most mezi hlavním procesem a UI (contextBridge)
-  renderer/   React UI + xterm.js terminál
+  shared/     types, IPC channel names and i18n shared across processes
+  main/       main process: vault (vault.ts), SSH (ssh.ts), MCP (mcp.ts), IPC (index.ts)
+  preload/    the bridge between main and the UI (contextBridge)
+  renderer/   React UI and the xterm.js terminal
+scripts/      build and verification scripts, plain Node, no dependencies
+build/        brand assets and the electron-builder resource directory
 ```
 
-## Stav
+## Status
 
-Fáze 1 (SSH klient + trezor) je hotová a odzkoušená end-to-end proti reálnému SSH serveru.
-Fáze 2 – AI chat s API klíčem a schvalováním každého příkazu člověkem – zatím není
-implementovaná; v trezoru a nastavení jsou pro ni připravená pole.
+The SSH client, the vault, the command library, the MCP gate and the i18n layer are all
+built and verified end to end against a real SSH server and a real MCP client.
+
+Windows is the tested platform. macOS (dmg) and Linux (AppImage) targets are configured
+in `electron-builder` but have not been built or tested, and no icons exist for them yet.
+
+An in-app AI chat with an API key was considered and dropped. The MCP approach replaced
+it and is strictly better: no key lives in the app, and the gate sits where the
+credentials already are.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Adding a UI language is three small edits and is
+documented there.
+
+Source comments are currently in Czech. Translating them is real work rather than a
+find-and-replace — they explain *why*, not *what* — and it is tracked as an open item.
+New code should be commented in English.
+
+## Security
+
+Please do not open a public issue for a vulnerability. See [SECURITY.md](SECURITY.md)
+for how to report one privately.
+
+## Licence
+
+GPL-3.0-or-later. See [LICENSE](LICENSE) for the full text.
+
+This is copyleft: forks must stay open. That was the intent, and it does discourage some
+corporate adoption.

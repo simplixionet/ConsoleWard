@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Simplixio — Stanislav Opletal <info@simplixio.net>
+
 import { useState } from 'react'
 import type { CommandApproval } from '@shared/types'
 import { useT } from '../i18n'

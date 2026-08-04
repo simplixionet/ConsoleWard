@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Simplixio — Stanislav Opletal <info@simplixio.net>
+
 import { useEffect, useState } from 'react'
 import type { KnownHost, McpStatus, Settings } from '@shared/types'
 import { api, errorMessage, unwrap } from '../api'

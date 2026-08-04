@@ -1,0 +1,88 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Simplixio — Stanislav Opletal <info@simplixio.net>
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Read-only by default. Nothing here needs to write to the repository.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Typecheck, build, locale gates
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # ci, not install — the lockfile is the contract, and a security tool
+      # should not silently float a transitive dependency in CI.
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      # Static locale gates: the shipping set, plural-aware key parity, and
+      # placeholder integrity across the 61 security-critical keys.
+      - name: Locale dictionaries
+        run: npm run check:i18n
+
+      # check:i18n-ui is deliberately NOT run here. It drives the built app
+      # over the Chrome DevTools Protocol and needs a real desktop session;
+      # on a headless runner it would either hang or pass vacuously, and a
+      # gate that cannot fail is worse than no gate. Run it locally before
+      # tagging a release.
+
+      - name: Icon is present and parses as an ICO
+        shell: bash
+        run: |
+          node -e "
+            const fs = require('fs')
+            const b = fs.readFileSync('build/icon.ico')
+            if (b.readUInt16LE(0) !== 0 || b.readUInt16LE(2) !== 1) throw new Error('not an ICO')
+            const n = b.readUInt16LE(4)
+            if (n < 1) throw new Error('ICO has no frames')
+            let end = 0
+            for (let i = 0; i < n; i++) {
+              const at = 6 + i * 16
+              const len = b.readUInt32LE(at + 8)
+              const off = b.readUInt32LE(at + 12)
+              const png = b.subarray(off, off + 4)
+              if (png[0] !== 0x89 || png[1] !== 0x50) throw new Error('frame ' + i + ' is not a PNG')
+              end = Math.max(end, off + len)
+            }
+            if (end !== b.length) throw new Error('frame offsets do not reach end of file')
+            console.log('icon.ico ok: ' + n + ' frames, ' + b.length + ' bytes')
+          "
+
+      - name: Every source file carries an SPDX header
+        shell: bash
+        run: |
+          missing=$(grep -rL "SPDX-License-Identifier" \
+            --include="*.ts" --include="*.tsx" --include="*.mjs" \
+            src scripts || true)
+          if [ -n "$missing" ]; then
+            echo "Missing SPDX header:"
+            echo "$missing"
+            exit 1
+          fi
+          echo "All source files carry an SPDX header."

@@ -33,10 +33,10 @@
   "homepage": "https://simplixio.net",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/simplixionet/consoleward.git"
+    "url": "git+https://github.com/simplixionet/ConsoleWard.git"
   },
   "bugs": {
-    "url": "https://github.com/simplixionet/consoleward/issues"
+    "url": "https://github.com/simplixionet/ConsoleWard/issues"
   },
   "type": "commonjs",
   "devDependencies": {

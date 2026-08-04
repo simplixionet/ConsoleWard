@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Simplixio — Stanislav Opletal <info@simplixio.net>
+
 /**
  * Renders build/icon.svg to build/icon.ico using the Electron already in the
  * dependency tree — no image library, no native binary, no ImageMagick.

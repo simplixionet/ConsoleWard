@@ -1,0 +1,106 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Simplixio — Stanislav Opletal <info@simplixio.net>
+
+name: Release
+
+# Tag-driven. Pushing v0.1.0 builds the Windows installer and drafts a release
+# from it. Nothing publishes on a branch push.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    name: Windows installer
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      # The same gates CI runs. A tag should not produce an installer that
+      # would have failed a pull request.
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Locale dictionaries
+        run: npm run check:i18n
+
+      # The tag must match the version in package.json, or the release will
+      # claim to be something the installer is not.
+      - name: Tag matches package.json version
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg=$(node -p "require('./package.json').version")
+          if [ "$tag" != "$pkg" ]; then
+            echo "Tag $GITHUB_REF_NAME implies version $tag, package.json says $pkg."
+            exit 1
+          fi
+          echo "Version $pkg confirmed."
+
+      # electron-builder publishes nothing on its own here — the release step
+      # below is the only thing that can, and it drafts rather than publishes.
+      - name: Build installer
+        run: npm run dist
+        env:
+          GH_TOKEN: ''
+
+      - name: Collect artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: consoleward-windows
+          path: |
+            release/*.exe
+            release/*.blockmap
+            release/latest.yml
+          if-no-files-found: error
+          retention-days: 14
+
+  draft-release:
+    name: Draft release
+    needs: windows
+    runs-on: ubuntu-latest
+
+    # The only job that writes. Scoped here rather than at workflow level so
+    # the build job cannot touch the repository.
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: consoleward-windows
+          path: dist
+
+      # Draft, not published. A human reads the notes, checks the installer and
+      # presses the button — the same principle the product itself is built on.
+      - name: Draft
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          generate_release_notes: true
+          files: dist/*
+          body: |
+            See [CHANGELOG.md](CHANGELOG.md) for what changed.
+
+            **Windows only.** macOS and Linux targets are configured but have
+            not been built or tested.
+
+            The installer is unsigned — Windows SmartScreen will warn on first
+            run. Verify the checksum before trusting it.

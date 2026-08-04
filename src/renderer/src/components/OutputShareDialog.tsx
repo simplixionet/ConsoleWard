@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Simplixio — Stanislav Opletal <info@simplixio.net>
+
 import { useMemo, useRef, useState } from 'react'
 import type { ShareRequest } from '@shared/types'
 import { findSecrets, summarizeSecrets } from '@shared/secretPatterns'
