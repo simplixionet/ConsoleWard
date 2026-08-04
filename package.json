@@ -1,0 +1,105 @@
+{
+  "name": "consoleward",
+  "productName": "ConsoleWard",
+  "version": "0.1.0",
+  "description": "Encrypted SSH client with an AI gate: every command and every byte of output needs your approval",
+  "license": "GPL-3.0-or-later",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "start": "electron-vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "dist": "electron-vite build && electron-builder --win"
+  },
+  "keywords": [
+    "ssh",
+    "ssh-client",
+    "terminal",
+    "vault",
+    "encryption",
+    "mcp",
+    "ai",
+    "electron",
+    "security"
+  ],
+  "author": {
+    "name": "Stanislav Opletal",
+    "url": "https://simplixio.net"
+  },
+  "homepage": "https://simplixio.net",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/simplixionet/consoleward.git"
+  },
+  "bugs": {
+    "url": "https://github.com/simplixionet/consoleward/issues"
+  },
+  "type": "commonjs",
+  "devDependencies": {
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@types/ssh2": "^1.15.5",
+    "@vitejs/plugin-react": "^5.2.0",
+    "electron": "^43.2.0",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^5.0.0",
+    "typescript": "^7.0.2",
+    "vite": "^7.3.6"
+  },
+  "allowScripts": {
+    "electron@43.2.0": true,
+    "electron-winstaller@5.4.0": true,
+    "esbuild@0.25.12": true,
+    "esbuild@0.28.1": true
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-search": "^0.16.0",
+    "@xterm/addon-web-links": "^0.12.0",
+    "@xterm/xterm": "^6.0.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "ssh2": "^1.17.0",
+    "zod": "^4.4.3"
+  },
+  "build": {
+    "appId": "net.simplixio.consoleward",
+    "copyright": "Copyright © 2026 Simplixio — Stanislav Opletal",
+    "productName": "ConsoleWard",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "out/**/*",
+      "package.json",
+      "LICENSE"
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "ConsoleWard"
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Development"
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.developer-tools"
+    }
+  }
+}

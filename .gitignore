@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+
+# Build output
+out/
+release/
+dist/
+
+# Logs and OS noise
+*.log
+.DS_Store
+Thumbs.db
+
+# GSD Core tooling — reinstall with:
+#   npx @opengsd/gsd-core@latest --claude --local
+# Kept out of the repo so 9.7 MB of MIT-licensed tooling does not dominate a
+# GPL-3.0 project. The project's own specification lives in .planning/, which
+# IS committed.
+.claude/
+
+# Never commit a vault or a recovery key, wherever one lands
+vault.enc
+vault.enc.*
+prefs.json
+*-recovery-key.txt
+*obnovovaci-klic*.txt

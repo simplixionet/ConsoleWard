@@ -1,0 +1,682 @@
+import {
+  app,
+  BrowserWindow,
+  clipboard,
+  dialog,
+  ipcMain,
+  session as electronSession,
+  shell
+} from 'electron'
+import fsp from 'node:fs/promises'
+import path from 'node:path'
+import { CH } from '../shared/channels'
+import type {
+  ConnectionInput,
+  ConnectionMeta,
+  KnownHost,
+  Result,
+  Settings,
+  Snippet,
+  SnippetInput,
+  VaultStatus
+} from '../shared/types'
+import type { CommandApproval, McpStatus, ShareRequest } from '../shared/types'
+import { appError, currentLocale, setLocale } from './i18n'
+import { readPrefs, writePrefs } from './prefs'
+import { DEFAULT_SETTINGS, migrateLegacyProfile, newId, vault } from './vault'
+import { ssh } from './ssh'
+import { mcp } from './mcp'
+
+const isDev = !app.isPackaged
+let mainWindow: BrowserWindow | null = null
+let autoLockTimer: NodeJS.Timeout | null = null
+
+/* ------------------------------------------------------------------ okno */
+
+function createWindow(): void {
+  mainWindow = new BrowserWindow({
+    width: 1360,
+    height: 860,
+    minWidth: 900,
+    minHeight: 600,
+    show: false,
+    backgroundColor: '#0e1116',
+    title: 'ConsoleWard',
+    autoHideMenuBar: true,
+    webPreferences: {
+      preload: path.join(__dirname, '../preload/index.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      spellcheck: false
+    }
+  })
+
+  mainWindow.once('ready-to-show', () => mainWindow?.show())
+
+  // Externí odkazy do systémového prohlížeče, nikdy do okna aplikace.
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//.test(url)) void shell.openExternal(url)
+    return { action: 'deny' }
+  })
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    const devUrl = process.env['ELECTRON_RENDERER_URL']
+    if (devUrl && url.startsWith(devUrl)) return
+    event.preventDefault()
+  })
+
+  mainWindow.on('closed', () => {
+    mainWindow = null
+  })
+
+  const devUrl = process.env['ELECTRON_RENDERER_URL']
+  if (isDev && devUrl) {
+    void mainWindow.loadURL(devUrl)
+  } else {
+    void mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'))
+  }
+}
+
+function applyCsp(): void {
+  const devUrl = process.env['ELECTRON_RENDERER_URL']
+  const connect = isDev && devUrl ? `'self' ws: wss: http://localhost:* http://127.0.0.1:*` : `'self'`
+  const scriptSrc = isDev ? `'self' 'unsafe-inline' 'unsafe-eval'` : `'self'`
+  const policy = [
+    `default-src 'self'`,
+    `script-src ${scriptSrc}`,
+    `style-src 'self' 'unsafe-inline'`,
+    `img-src 'self' data:`,
+    `font-src 'self' data:`,
+    `connect-src ${connect}`,
+    `object-src 'none'`,
+    `frame-src 'none'`,
+    `base-uri 'none'`,
+    `form-action 'none'`
+  ].join('; ')
+
+  electronSession.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        'Content-Security-Policy': [policy]
+      }
+    })
+  })
+
+  // Aplikace nepotřebuje kameru, mikrofon ani nic podobného.
+  electronSession.defaultSession.setPermissionRequestHandler((_wc, _perm, cb) => cb(false))
+}
+
+/* ------------------------------------------------------- automatické zamčení */
+
+function resetAutoLock(): void {
+  if (autoLockTimer) clearTimeout(autoLockTimer)
+  autoLockTimer = null
+  if (!vault.isUnlocked()) return
+
+  const minutes = vault.read().settings.autoLockMinutes
+  if (!minutes || minutes <= 0) return
+
+  autoLockTimer = setTimeout(() => doLock(), minutes * 60_000)
+}
+
+function doLock(): void {
+  if (!vault.isUnlocked()) return
+  const disconnect = vault.read().settings.disconnectOnLock
+  if (disconnect) ssh.disconnectAll()
+  // Zamčený trezor nemá co nabízet – MCP server hned zavíráme.
+  void mcp.stopOnLock().then(pushMcpStatus)
+  rejectAllPending()
+  vault.lock()
+  if (autoLockTimer) clearTimeout(autoLockTimer)
+  autoLockTimer = null
+  mainWindow?.webContents.send(CH.vaultLockedEvent)
+}
+
+/* ------------------------------------------------- schvalovací fronta MCP */
+
+interface Pending<T> {
+  resolve: (value: T) => void
+  timer: NodeJS.Timeout
+}
+
+const pendingCommands = new Map<string, Pending<{ approved: boolean; autoShare: boolean }>>()
+const pendingShares = new Map<string, Pending<{ shared: boolean; text: string }>>()
+
+/** Bez odpovědi do 5 minut raději odmítnout, než nechat volání viset. */
+const APPROVAL_TIMEOUT_MS = 5 * 60_000
+
+function rejectAllPending(): void {
+  for (const [, p] of pendingCommands) {
+    clearTimeout(p.timer)
+    p.resolve({ approved: false, autoShare: false })
+  }
+  pendingCommands.clear()
+  for (const [, p] of pendingShares) {
+    clearTimeout(p.timer)
+    p.resolve({ shared: false, text: '' })
+  }
+  pendingShares.clear()
+}
+
+function pushMcpStatus(): void {
+  mainWindow?.webContents.send(CH.mcpStatusEvent, mcp.status())
+}
+
+/** Po odemčení trezoru nastartuje MCP server, pokud je zapnutý v nastavení. */
+async function syncMcp(): Promise<void> {
+  if (!vault.isUnlocked()) return
+  const wanted = Boolean(vault.read().settings.mcpEnabled)
+  try {
+    if (wanted) await mcp.start()
+    else await mcp.stop()
+  } catch (err) {
+    console.error('MCP server:', err)
+  } finally {
+    pushMcpStatus()
+  }
+}
+
+function registerMcpBridge(): void {
+  mcp.bind({
+    askCommand: (req: CommandApproval) =>
+      new Promise((resolve) => {
+        const timer = setTimeout(() => {
+          if (pendingCommands.delete(req.id)) resolve({ approved: false, autoShare: false })
+        }, APPROVAL_TIMEOUT_MS)
+        pendingCommands.set(req.id, { resolve, timer })
+        mainWindow?.webContents.send(CH.mcpCommandRequestEvent, req)
+      }),
+
+    askShare: (req: ShareRequest) =>
+      new Promise((resolve) => {
+        const timer = setTimeout(() => {
+          if (pendingShares.delete(req.id)) resolve({ shared: false, text: '' })
+        }, APPROVAL_TIMEOUT_MS)
+        pendingShares.set(req.id, { resolve, timer })
+        mainWindow?.webContents.send(CH.mcpShareRequestEvent, req)
+      }),
+
+    focusWindow: () => {
+      if (!mainWindow) return
+      if (mainWindow.isMinimized()) mainWindow.restore()
+      mainWindow.show()
+      mainWindow.focus()
+      if (process.platform === 'win32') mainWindow.flashFrame(true)
+    }
+  })
+}
+
+/* ----------------------------------------------------------------- pomůcky */
+
+function ok<T>(value: T): Result<T> {
+  return { ok: true, value }
+}
+
+function fail(err: unknown): Result<never> {
+  const message = err instanceof Error ? err.message : String(err)
+  return { ok: false, error: message }
+}
+
+/** Registrace handleru s jednotným zabalením chyb do `Result`. */
+function handle<T>(channel: string, fn: (...args: any[]) => Promise<T> | T): void {
+  ipcMain.handle(channel, async (_event, ...args) => {
+    try {
+      return ok(await fn(...args))
+    } catch (err) {
+      return fail(err)
+    }
+  })
+}
+
+function toMeta(c: {
+  id: string
+  name: string
+  host: string
+  port: number
+  username: string
+  authKind: ConnectionMeta['authKind']
+  password?: string
+  privateKey?: string
+  passphrase?: string
+  agentSocket?: string
+  folder?: string
+  notes?: string
+  createdAt: number
+  updatedAt: number
+}): ConnectionMeta {
+  return {
+    id: c.id,
+    name: c.name,
+    host: c.host,
+    port: c.port,
+    username: c.username,
+    authKind: c.authKind,
+    hasPassword: Boolean(c.password),
+    hasPrivateKey: Boolean(c.privateKey),
+    hasPassphrase: Boolean(c.passphrase),
+    agentSocket: c.agentSocket,
+    folder: c.folder,
+    notes: c.notes,
+    createdAt: c.createdAt,
+    updatedAt: c.updatedAt
+  }
+}
+
+/**
+ * Aplikuje hodnotu tajemství podle sémantiky ConnectionInput:
+ * undefined = beze změny, '' = smazat, jinak nastavit.
+ */
+function applySecret(current: string | undefined, incoming: string | undefined): string | undefined {
+  if (incoming === undefined) return current
+  if (incoming === '') return undefined
+  return incoming
+}
+
+function validateInput(input: ConnectionInput): void {
+  if (!input.name?.trim()) throw appError('error.fillName')
+  if (!input.host?.trim()) throw appError('error.fillHost')
+  if (!input.username?.trim()) throw appError('error.fillUsername')
+  const port = Number(input.port)
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw appError('error.invalidPort')
+  }
+  if (!['password', 'key', 'agent'].includes(input.authKind)) {
+    throw appError('error.invalidAuth')
+  }
+}
+
+/* --------------------------------------------------------------------- IPC */
+
+function registerIpc(): void {
+  /* trezor */
+  handle(CH.vaultStatus, async (): Promise<VaultStatus> => ({
+    exists: vault.exists(),
+    unlocked: vault.isUnlocked(),
+    hasRecovery: vault.isUnlocked() ? vault.hasRecoveryKey() : await vault.hasRecoveryOnDisk(),
+    path: vault.filePath
+  }))
+
+  handle(CH.vaultCreate, async (pw: string) => {
+    const recoveryKey = await vault.create(pw)
+    resetAutoLock()
+    return recoveryKey
+  })
+
+  handle(CH.vaultUnlock, async (pw: string) => {
+    await vault.unlock(pw)
+    resetAutoLock()
+    await syncMcp()
+    return null
+  })
+
+  handle(CH.vaultUnlockWithRecovery, async (recoveryKey: string, newPassword: string) => {
+    await vault.unlockWithRecovery(recoveryKey, newPassword)
+    resetAutoLock()
+    await syncMcp()
+    return null
+  })
+
+  handle(CH.vaultLock, () => {
+    doLock()
+    return null
+  })
+
+  handle(CH.vaultChangePassword, async (oldPw: string, newPw: string) => {
+    await vault.changePassword(oldPw, newPw)
+    return null
+  })
+
+  handle(CH.vaultRegenerateRecovery, () => vault.regenerateRecoveryKey())
+
+  handle(CH.vaultRemoveRecovery, async () => {
+    await vault.removeRecoveryKey()
+    return null
+  })
+
+  /* připojení */
+  handle(CH.connList, (): ConnectionMeta[] =>
+    vault
+      .read()
+      .connections.map(toMeta)
+      .sort((a, b) => a.name.localeCompare(b.name, 'cs'))
+  )
+
+  handle(CH.connSave, async (input: ConnectionInput): Promise<ConnectionMeta> => {
+    validateInput(input)
+    return vault.mutate((data) => {
+      const now = Date.now()
+      const existing = input.id ? data.connections.find((c) => c.id === input.id) : undefined
+
+      if (existing) {
+        existing.name = input.name.trim()
+        existing.host = input.host.trim()
+        existing.port = Number(input.port)
+        existing.username = input.username.trim()
+        existing.authKind = input.authKind
+        existing.password = applySecret(existing.password, input.password)
+        existing.privateKey = applySecret(existing.privateKey, input.privateKey)
+        existing.passphrase = applySecret(existing.passphrase, input.passphrase)
+        existing.agentSocket = input.agentSocket?.trim() || undefined
+        existing.folder = input.folder?.trim() || undefined
+        existing.notes = input.notes ?? undefined
+        existing.updatedAt = now
+        return toMeta(existing)
+      }
+
+      const created = {
+        id: newId(),
+        name: input.name.trim(),
+        host: input.host.trim(),
+        port: Number(input.port),
+        username: input.username.trim(),
+        authKind: input.authKind,
+        password: input.password || undefined,
+        privateKey: input.privateKey || undefined,
+        passphrase: input.passphrase || undefined,
+        agentSocket: input.agentSocket?.trim() || undefined,
+        folder: input.folder?.trim() || undefined,
+        notes: input.notes ?? undefined,
+        createdAt: now,
+        updatedAt: now
+      }
+      data.connections.push(created)
+      return toMeta(created)
+    })
+  })
+
+  handle(CH.connRemove, async (id: string) => {
+    await vault.mutate((data) => {
+      const idx = data.connections.findIndex((c) => c.id === id)
+      if (idx < 0) throw appError('error.connNotFound')
+      data.connections.splice(idx, 1)
+    })
+    return null
+  })
+
+  handle(CH.connDuplicate, async (id: string): Promise<ConnectionMeta> =>
+    vault.mutate((data) => {
+      const src = data.connections.find((c) => c.id === id)
+      if (!src) throw appError('error.connNotFound')
+      const now = Date.now()
+      const copy = { ...src, id: newId(), name: `${src.name} (kopie)`, createdAt: now, updatedAt: now }
+      data.connections.push(copy)
+      return toMeta(copy)
+    })
+  )
+
+  /* příkazy a poznámky */
+  handle(CH.snipList, (): Snippet[] =>
+    [...vault.read().snippets].sort((a, b) => a.title.localeCompare(b.title, 'cs'))
+  )
+
+  handle(CH.snipSave, async (input: SnippetInput): Promise<Snippet> => {
+    if (!input.title?.trim()) throw appError('error.fillName')
+    if (!input.body?.trim()) throw appError('error.fillBody')
+    if (!['command', 'note'].includes(input.kind)) throw appError('error.invalidKind')
+
+    // Konce řádků sjednotíme na LF – CRLF by se v shellu projevilo jako ^M.
+    const body = normalizeNewlines(input.body)
+
+    return vault.mutate((data) => {
+      const now = Date.now()
+      const existing = input.id ? data.snippets.find((s) => s.id === input.id) : undefined
+
+      if (existing) {
+        existing.title = input.title.trim()
+        existing.body = body
+        existing.note = input.note?.trim() || undefined
+        existing.folder = input.folder?.trim() || undefined
+        existing.kind = input.kind
+        existing.updatedAt = now
+        return existing
+      }
+
+      const created: Snippet = {
+        id: newId(),
+        title: input.title.trim(),
+        body,
+        note: input.note?.trim() || undefined,
+        folder: input.folder?.trim() || undefined,
+        kind: input.kind,
+        createdAt: now,
+        updatedAt: now
+      }
+      data.snippets.push(created)
+      return created
+    })
+  })
+
+  handle(CH.snipRemove, async (id: string) => {
+    await vault.mutate((data) => {
+      const idx = data.snippets.findIndex((s) => s.id === id)
+      if (idx < 0) throw appError('error.snipNotFound')
+      data.snippets.splice(idx, 1)
+    })
+    return null
+  })
+
+  handle(CH.snipDuplicate, (id: string): Promise<Snippet> =>
+    vault.mutate((data) => {
+      const src = data.snippets.find((s) => s.id === id)
+      if (!src) throw appError('error.snipNotFound')
+      const now = Date.now()
+      const copy: Snippet = {
+        ...src,
+        id: newId(),
+        title: `${src.title} (kopie)`,
+        createdAt: now,
+        updatedAt: now
+      }
+      data.snippets.push(copy)
+      return copy
+    })
+  )
+
+  /* nastavení */
+  handle(CH.settingsGet, (): Settings => {
+    const d = vault.read()
+    return { ...DEFAULT_SETTINGS, ...d.settings, hasAiApiKey: Boolean(d.aiApiKey) }
+  })
+
+  handle(CH.settingsSave, async (patch: Partial<Settings>): Promise<Settings> => {
+    const saved = await vault.mutate((data) => {
+      const next = { ...data.settings, ...patch }
+      next.autoLockMinutes = clamp(Number(next.autoLockMinutes) || 0, 0, 24 * 60)
+      next.fontSize = clamp(Number(next.fontSize) || 14, 8, 32)
+      next.scrollback = clamp(Number(next.scrollback) || 5000, 500, 200_000)
+      next.disconnectOnLock = Boolean(next.disconnectOnLock)
+      delete (next as Partial<Settings>).hasAiApiKey
+      data.settings = next
+      return next
+    })
+    resetAutoLock()
+    return { ...saved, hasAiApiKey: Boolean(vault.read().aiApiKey) }
+  })
+
+  /* známé hostitele */
+  handle(CH.hostsList, (): KnownHost[] =>
+    [...vault.read().knownHosts].sort((a, b) => a.hostKey.localeCompare(b.hostKey))
+  )
+
+  handle(CH.hostsForget, async (hostKey: string) => {
+    await vault.mutate((data) => {
+      data.knownHosts = data.knownHosts.filter((h) => h.hostKey !== hostKey)
+    })
+    return null
+  })
+
+  /* SSH */
+  handle(CH.sshConnect, (connectionId: string) => ssh.connect(connectionId))
+  handle(CH.sshWrite, (sessionId: string, data: string) => {
+    ssh.write(sessionId, data)
+    return null
+  })
+  handle(CH.sshResize, (sessionId: string, cols: number, rows: number) => {
+    ssh.resize(sessionId, cols, rows)
+    return null
+  })
+  handle(CH.sshDisconnect, (sessionId: string) => {
+    ssh.disconnect(sessionId)
+    return null
+  })
+  handle(CH.sshAnswerHostKey, (requestId: string, accept: boolean) => {
+    ssh.answerHostKey(requestId, Boolean(accept))
+    return null
+  })
+
+  /* dialogy */
+  handle(CH.dialogReadTextFile, async (title: string) => {
+    if (!mainWindow) return null
+    const res = await dialog.showOpenDialog(mainWindow, {
+      title: title || 'Vybrat soubor',
+      properties: ['openFile'],
+      filters: [
+        { name: 'Privátní klíče', extensions: ['pem', 'key', 'ppk', 'rsa', 'ed25519', 'pub', ''] },
+        { name: 'Všechny soubory', extensions: ['*'] }
+      ]
+    })
+    if (res.canceled || res.filePaths.length === 0) return null
+    const file = res.filePaths[0]
+    const stat = await fsp.stat(file)
+    if (stat.size > 1024 * 1024) throw appError('error.fileTooLarge')
+    const content = await fsp.readFile(file, 'utf8')
+    return { name: path.basename(file), content }
+  })
+
+  handle(CH.dialogSaveTextFile, async (suggestedName: string, content: string) => {
+    if (!mainWindow) return null
+    const res = await dialog.showSaveDialog(mainWindow, {
+      title: 'Uložit soubor',
+      defaultPath: suggestedName,
+      filters: [{ name: 'Textový soubor', extensions: ['txt'] }]
+    })
+    if (res.canceled || !res.filePath) return null
+    await fsp.writeFile(res.filePath, String(content ?? ''), { encoding: 'utf8', mode: 0o600 })
+    return res.filePath
+  })
+
+  /* MCP */
+  handle(CH.mcpStatus, (): McpStatus => mcp.status())
+
+  handle(CH.mcpSetEnabled, async (enabled: boolean): Promise<McpStatus> => {
+    await vault.mutate((data) => {
+      data.settings = { ...data.settings, mcpEnabled: Boolean(enabled) }
+    })
+    if (enabled) await mcp.start()
+    else await mcp.stop()
+    const status = mcp.status()
+    pushMcpStatus()
+    return status
+  })
+
+  handle(CH.mcpSetPort, async (port: number): Promise<McpStatus> => {
+    const n = Number(port)
+    if (!Number.isInteger(n) || n < 1024 || n > 65535) {
+      throw appError('error.invalidMcpPort')
+    }
+    await vault.mutate((data) => {
+      data.settings = { ...data.settings, mcpPort: n }
+    })
+    if (mcp.status().running) await mcp.restart()
+    const status = mcp.status()
+    pushMcpStatus()
+    return status
+  })
+
+  handle(CH.mcpToken, () => mcp.readToken())
+  handle(CH.mcpRegenerateToken, () => mcp.regenerateToken())
+
+  handle(CH.mcpAnswerCommand, (id: string, approved: boolean, autoShare: boolean) => {
+    const pending = pendingCommands.get(id)
+    if (!pending) return null
+    pendingCommands.delete(id)
+    clearTimeout(pending.timer)
+    pending.resolve({ approved: Boolean(approved), autoShare: Boolean(autoShare) })
+    return null
+  })
+
+  handle(CH.mcpAnswerShare, (id: string, shared: boolean, text: string) => {
+    const pending = pendingShares.get(id)
+    if (!pending) return null
+    pendingShares.delete(id)
+    clearTimeout(pending.timer)
+    pending.resolve({ shared: Boolean(shared), text: shared ? String(text ?? '') : '' })
+    return null
+  })
+
+  /* schránka (sandboxovaný preload k ní nemá přímý přístup) */
+  handle(CH.clipboardRead, () => clipboard.readText())
+  handle(CH.clipboardWrite, (text: string) => {
+    clipboard.writeText(String(text ?? ''))
+    return null
+  })
+
+  /* aplikace */
+  ipcMain.on(CH.appActivity, () => resetAutoLock())
+  handle(CH.appVersion, () => app.getVersion())
+
+  handle(CH.appGetLocale, () => currentLocale())
+  handle(CH.appSetLocale, async (locale: string) => {
+    const saved = await writePrefs({ locale })
+    setLocale(saved.locale)
+    return saved.locale
+  })
+}
+
+function clamp(n: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, n))
+}
+
+function normalizeNewlines(text: string): string {
+  return String(text ?? '').replace(/\r\n?/g, '\n')
+}
+
+/* ------------------------------------------------------------------ start */
+
+const gotLock = app.requestSingleInstanceLock()
+if (!gotLock) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore()
+      mainWindow.focus()
+    }
+  })
+
+  void app.whenReady().then(async () => {
+    // Projekt se dřív jmenoval jinak; přeneseme trezor ze staré složky profilu.
+    const migratedFrom = await migrateLegacyProfile(['PuttyUI', 'putty-ui']).catch(() => null)
+    if (migratedFrom) console.log('Trezor přenesen ze složky:', migratedFrom)
+
+    applyCsp()
+    registerIpc()
+
+    ssh.bind({
+      data: (sessionId, base64) =>
+        mainWindow?.webContents.send(CH.sshDataEvent, sessionId, base64),
+      status: (info) => mainWindow?.webContents.send(CH.sshStatusEvent, info),
+      hostKeyPrompt: (prompt) => mainWindow?.webContents.send(CH.sshHostKeyEvent, prompt)
+    })
+    registerMcpBridge()
+
+    createWindow()
+
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    })
+  })
+
+  app.on('window-all-closed', () => {
+    ssh.disconnectAll()
+    if (process.platform !== 'darwin') app.quit()
+  })
+
+  app.on('before-quit', () => {
+    rejectAllPending()
+    void mcp.stop()
+    ssh.disconnectAll()
+    vault.lock()
+  })
+}
