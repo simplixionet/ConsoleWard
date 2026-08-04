@@ -1,8 +1,16 @@
 /**
  * Registr slovníků.
  *
- * Přidání jazyka = přidat JSON vedle tohohle souboru, doplnit jeden import
- * a jeden řádek do mapy, plus záznam do `LOCALES` v `../i18n.ts`.
+ * Přidání jazyka = přidat JSON vedle tohohle souboru, doplnit jeden řádek do
+ * `LOADERS` a záznam do `LOCALES` v `../i18n.ts`.
+ *
+ * Angličtina se importuje staticky, protože překladač ji potřebuje synchronně
+ * jako záložní slovník — bez ní by šlo krátce vykreslit holé klíče. Ostatní
+ * jazyky se načtou až při přepnutí, každý ve vlastním chunku.
+ *
+ * `import()` u JSON vrací namespace modulu, ne samotná data. To `.default`
+ * na konci každého loaderu je proto povinné: bez něj TypeScript nic nevytkne,
+ * ale za běhu se jazyk tiše propadne do angličtiny.
  */
 
 import type { Dictionary } from '../i18n'
