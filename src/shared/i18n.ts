@@ -37,14 +37,7 @@ export const LOCALES: LocaleInfo[] = [
   { code: 'fr', nativeName: 'Français', englishName: 'French' },
   { code: 'it', nativeName: 'Italiano', englishName: 'Italian' },
   { code: 'pt-BR', nativeName: 'Português (Brasil)', englishName: 'Portuguese (Brazil)' },
-  { code: 'nl', nativeName: 'Nederlands', englishName: 'Dutch' },
-  { code: 'pl', nativeName: 'Polski', englishName: 'Polish' },
-  { code: 'ru', nativeName: 'Русский', englishName: 'Russian' },
-  { code: 'uk', nativeName: 'Українська', englishName: 'Ukrainian' },
-  { code: 'tr', nativeName: 'Türkçe', englishName: 'Turkish' },
-  { code: 'zh-CN', nativeName: '简体中文', englishName: 'Chinese (Simplified)' },
-  { code: 'ja', nativeName: '日本語', englishName: 'Japanese' },
-  { code: 'ko', nativeName: '한국어', englishName: 'Korean' }
+  { code: 'nl', nativeName: 'Nederlands', englishName: 'Dutch' }
 ]
 
 export const LOCALE_CODES = LOCALES.map((l) => l.code)

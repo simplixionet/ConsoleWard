@@ -15,7 +15,12 @@ type Loader = () => Promise<Dictionary>
 const LOADERS: Record<string, Loader> = {
   en: () => Promise.resolve(en),
   cs: () => import('./cs.json').then((m) => m.default),
-  de: () => import('./de.json').then((m) => m.default)
+  de: () => import('./de.json').then((m) => m.default),
+  es: () => import('./es.json').then((m) => m.default),
+  fr: () => import('./fr.json').then((m) => m.default),
+  it: () => import('./it.json').then((m) => m.default),
+  'pt-BR': () => import('./pt-BR.json').then((m) => m.default),
+  nl: () => import('./nl.json').then((m) => m.default)
 }
 
 /** Slovník jazyka, nebo prázdný objekt – překladač si sáhne do angličtiny. */
