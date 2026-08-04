@@ -160,7 +160,7 @@
   "hostkey.titleUnknown": "Server sconosciuto",
   "hostkey.titleChanged": "La chiave del server è CAMBIATA",
   "hostkey.bodyUnknown": "Ti stai connettendo a {{host}}:{{port}} per la prima volta. Verifica l'impronta della chiave — per esempio con ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub sul server stesso — e solo allora accettala.",
-  "hostkey.bodyChanged": "L'impronta di {{host}}:{{port}} non corrisponde a quella salvata. Può essere un cambiamento legittimo, come un server reinstallato, ma anche un tentativo di intercettare la connessione. Continua solo se ti aspettavi il cambiamento e hai verificato la nuova impronta per un altro canale.",
+  "hostkey.bodyChanged": "L'impronta di {{host}}:{{port}} non corrisponde a quella salvata. Può essere un cambiamento legittimo, come un server reinstallato, ma anche un tentativo di intercettare la connessione. Continua solo se ti aspettavi il cambiamento e hai verificato la nuova impronta tramite un altro canale.",
   "hostkey.keyType": "Tipo di chiave",
   "hostkey.newFingerprint": "Nuova impronta",
   "hostkey.storedFingerprint": "Impronta salvata",

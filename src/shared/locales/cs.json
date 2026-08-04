@@ -162,7 +162,7 @@
   "hostkey.titleUnknown": "Neznámý server",
   "hostkey.titleChanged": "Klíč serveru se ZMĚNIL",
   "hostkey.bodyUnknown": "K serveru {{host}}:{{port}} se připojuješ poprvé. Ověř otisk klíče — třeba příkazem ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub přímo na serveru — a teprve pak ho přijmi.",
-  "hostkey.bodyChanged": "Otisk klíče serveru {{host}}:{{port}} neodpovídá tomu, který máš uložený. Může jít o legitimní změnu, třeba přeinstalovaný server, ale také o pokus o odposlech spojení. Pokračuj, jen pokud změnu čekáš a ověřil jsi nový otisk jiným kanálem.",
+  "hostkey.bodyChanged": "Otisk klíče serveru {{host}}:{{port}} neodpovídá tomu, který máš uložený. Může jít o legitimní změnu, třeba přeinstalovaný server, ale také o pokus o odchycení spojení. Pokračuj, jen pokud změnu čekáš a ověřil jsi nový otisk jiným kanálem.",
   "hostkey.keyType": "Typ klíče",
   "hostkey.newFingerprint": "Nový otisk",
   "hostkey.storedFingerprint": "Uložený otisk",
