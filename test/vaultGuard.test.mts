@@ -90,11 +90,18 @@ describe('serializeGuard + parseGuard', () => {
     assert.deepEqual(read.kind === 'ok' && read.anchor, { counter: 7, at: 1234, protected: true })
   })
 
-  it('zapsané je opravdu zapečetěné, ne čitelné', () => {
+  /*
+   * Decode the payload before judging it. Asserting on the raw file text looks
+   * equivalent and is not: base64 hides the plaintext either way, so that
+   * version of this test passed against an anchor that was never sealed at all.
+   */
+  it('zapsané je opravdu zapečetěné, ne jen zakódované', () => {
     const raw = serializeGuard(42, 1234, fakeSealer())
     assert.equal(JSON.parse(raw).protected, true)
-    // Číslo nesmí být v souboru vidět prostým okem.
-    assert.ok(!raw.includes('"counter"'), 'čítač nesmí zůstat v otevřeném textu')
+
+    const decoded = Buffer.from(JSON.parse(raw).payload, 'base64').toString('utf8')
+    assert.notEqual(decoded, JSON.stringify({ counter: 42, at: 1234 }))
+    assert.ok(!decoded.includes('"counter"'), 'čítač nesmí být čitelný po dekódování base64')
   })
 
   /*
