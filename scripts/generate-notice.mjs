@@ -176,7 +176,12 @@ const check = process.argv.includes('--check')
 
 if (check) {
   const current = fs.existsSync(noticePath) ? fs.readFileSync(noticePath, 'utf8') : ''
-  if (current !== text) {
+  // Compared with line endings normalised. Git rewrites them on checkout under
+  // `core.autocrlf`, which is the default on Windows, so a byte comparison here
+  // would fail on every developer machine that had ever checked the file out —
+  // a gate that is always red teaches people to ignore it.
+  const same = current.replace(/\r\n/g, '\n') === text.replace(/\r\n/g, '\n')
+  if (!same) {
     console.error('NOTICE is out of date. Run: node scripts/generate-notice.mjs')
     process.exit(1)
   }
