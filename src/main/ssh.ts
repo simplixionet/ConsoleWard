@@ -24,8 +24,27 @@ const SCROLL_MEMORY_BYTES = 256 * 1024
 /** Strop výstupu jednoho MCP příkazu. */
 const RUN_OUTPUT_BYTES = 128 * 1024
 
+/**
+ * Kolik navíc dostane stderr, aby ho stdout nemohl vytlačit.
+ *
+ * stderr is short by nature and is the most informative part of the result when
+ * a command goes wrong. Sharing one budget meant a command that floods stdout
+ * consumed the whole allowance before stderr said anything, so the line
+ * explaining WHY it failed was dropped along with its `--- stderr ---` label
+ * and the result read as a clean run that merely produced a lot.
+ */
+const STDERR_RESERVE_BYTES = 16 * 1024
+
 /** Tvrdý strop na dobu běhu jednoho MCP příkazu. */
 const RUN_TIMEOUT_MS = 30_000
+
+/**
+ * Jak dlouho po `exit` ještě čekáme na `close`.
+ *
+ * Enough for the trailing data packets of any ordinary command, and far short
+ * of the point where a finished command reads as a hung one.
+ */
+const EXIT_GRACE_MS = 250
 
 export interface RunOptions {
   timeoutMs?: number
@@ -485,15 +504,31 @@ export function runExec(
     let timedOut = false
     let settled = false
     let channel: ClientChannel | null = null
+    let exitTimer: NodeJS.Timeout | null = null
 
     // Keep the head, not the tail. The start of the output is what the human
     // reads first, and a server that floods must not be able to push it off the
     // top. Chunks past the cap are dropped rather than refused — refusing would
     // stall the channel, and the exit status with it.
+    // Separate budgets, not one shared between the two streams. Sharing meant a
+    // command that floods stdout consumed the whole allowance before stderr
+    // said anything, and the error explaining WHY it failed — the one line
+    // worth reading — was dropped along with its `--- stderr ---` label, so the
+    // output looked like a clean run that simply produced a lot. stderr gets a
+    // small reserved slice because it is short by nature and the most
+    // informative thing in the result when a command goes wrong.
+    // stderr's slice is ON TOP of `maxBytes`, not carved out of it. Carving it
+    // out would silently shrink the stdout cap the caller asked for, and at a
+    // small `maxBytes` the reserve would consume the whole budget and stdout
+    // would collect nothing. So `maxBytes` keeps meaning exactly what it did —
+    // the ceiling on stdout — and the worst case grows by the reserve, which is
+    // 16 KB against a 128 KB default and still well inside MAX_SCAN_CHARS.
+    const budget = { out: maxBytes, err: Math.min(STDERR_RESERVE_BYTES, maxBytes) }
+
     const collect =
-      (into: Buffer[]) =>
+      (into: Buffer[], stream: 'out' | 'err') =>
       (chunk: Buffer): void => {
-        const room = maxBytes - bytes
+        const room = budget[stream]
         if (room <= 0) {
           truncated = true
           return
@@ -501,24 +536,29 @@ export function runExec(
         if (chunk.length > room) {
           truncated = true
           into.push(chunk.subarray(0, room))
-          bytes = maxBytes
+          budget[stream] = 0
           return
         }
         into.push(chunk)
-        bytes += chunk.length
+        budget[stream] -= chunk.length
       }
+
+    const stopTimers = (): void => {
+      clearTimeout(timer)
+      if (exitTimer) clearTimeout(exitTimer)
+    }
 
     const finish = (): void => {
       if (settled) return
       settled = true
-      clearTimeout(timer)
+      stopTimers()
       resolve({ output: joinStreams(out, err), exitCode, signal, timedOut, truncated })
     }
 
     const fail = (error: Error): void => {
       if (settled) return
       settled = true
-      clearTimeout(timer)
+      stopTimers()
       reject(appError('error.execFailed', { message: error.message }))
     }
 
@@ -543,14 +583,25 @@ export function runExec(
           return
         }
         channel = chan
-        chan.on('data', collect(out))
-        chan.stderr.on('data', collect(err))
+        chan.on('data', collect(out, 'out'))
+        chan.stderr.on('data', collect(err, 'err'))
         chan.on('exit', (code: number | null, sig?: string) => {
           exitCode = typeof code === 'number' ? code : null
-          signal = typeof sig === 'string' ? sig : null
+          signal = signalName(sig)
+          // `close` is the real end — exit-status is optional in the SSH spec
+          // and can arrive before the last data packet, so finishing here would
+          // truncate the output. But a server that sends exit-status and then
+          // never closes the channel is not hypothetical: `ForceCommand` and
+          // several appliance SSH stacks do exactly that, and waiting for a
+          // close that is not coming means the human sits through the full time
+          // limit for a command that finished instantly.
+          //
+          // So: give `close` a short grace period after `exit`, then take the
+          // exit status we already have. Long enough for the trailing data
+          // packets of any ordinary command, short enough not to read as a hang.
+          clearTimeout(timer)
+          exitTimer = setTimeout(finish, EXIT_GRACE_MS)
         })
-        // `close` is the end, not `exit`: exit-status is optional in the SSH
-        // spec and can arrive before the last data packet.
         chan.on('close', finish)
         // A Duplex with no error listener takes the main process down. Whatever
         // we already collected is still worth returning.
@@ -583,6 +634,32 @@ function joinStreams(out: Buffer[], err: Buffer[]): string {
   if (!stderr.trim()) return stdout
   const head = stdout.trim() ? stdout.replace(/\n?$/, '\n') : ''
   return `${head}--- stderr ---\n${stderr}`
+}
+
+/**
+ * The signal name from an SSH `exit-signal`, or nothing.
+ *
+ * RFC 4254 types this field as a `string`, so it is whatever the server says it
+ * is — and it lands in two places the server has no business writing to. It
+ * goes into the note `describeRun` builds for the model, which rides ALONGSIDE
+ * the shared text rather than inside it: the human edits the output in the
+ * share dialog, never the note, so an unfiltered value here is a channel into
+ * the model's context that bypasses the gate entirely. It is also rendered into
+ * the human's terminal through `term.runSignal`.
+ *
+ * So only a name that looks like a signal is passed on. The list in RFC 4254 is
+ * ABRT, ALRM, FPE, HUP, ILL, INT, KILL, PIPE, QUIT, SEGV, TERM, USR1 and USR2;
+ * the shape is kept slightly wider than that so a real server sending something
+ * legitimate and unusual is not silently reported as unsignalled, while
+ * anything with punctuation, whitespace or length is refused outright.
+ *
+ * Refusing yields `null`, which reads downstream as "no signal" — the same as a
+ * command that exited normally. That is the right failure: an attacker gets
+ * silence rather than a megaphone.
+ */
+function signalName(sig: unknown): string | null {
+  if (typeof sig !== 'string') return null
+  return /^[A-Z][A-Z0-9]{1,14}$/.test(sig) ? sig : null
 }
 
 /** Jednořádkový závěr běhu pro viditelný terminál. */
