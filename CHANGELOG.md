@@ -98,9 +98,13 @@ a change from a previous version.
 
 ### Known limitations
 
-- **Rotating the master password does not rotate the data key.** It re-wraps it.
-  Someone holding a captured file and the old password has already read the
-  data.
+- **Rotation cannot undo a copy already taken.** Revoking a secret re-keys the
+  vault and destroys the backup, so the revoked secret stops working from that
+  point on — but anyone who captured the file together with the old secret
+  beforehand has already read what it held.
+- **Changing the master password issues a new recovery key.** Unavoidable: the
+  old recovery wrap cannot be rebuilt under the new data key, because the
+  recovery key is stored nowhere.
 - **Translations are machine-produced** and have not been natively reviewed. The
   61 security-critical strings were checked mechanically for placeholder
   integrity and read by a human for dropped negations.

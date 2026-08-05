@@ -74,12 +74,11 @@ Out of scope:
 These are documented trade-offs, not oversights. Reporting them is fine, but
 you will get this answer:
 
-- **Rotating the master password does not rotate the data key.** It re-wraps it.
-  Someone who already captured the file *and* the old password has already read
-  the data; rotation does not undo that. Documented in the README, with the
-  remedy: create a new vault.
-- **The `.bak` file is a snapshot.** The password that applied when it was
-  written is the password that opens it.
+- **Rotation protects the future, not the past.** Every revocation now re-keys
+  the vault and destroys the backup, so a revoked secret stops working from that
+  point on. What it cannot undo is a copy someone already took together with the
+  matching secret — they have read what was in that copy. This was a real
+  finding, fixed on 2026-08-05; before that, revocation revoked nothing at all.
 - **Translations are machine-produced.** The 61 security-critical strings are
   checked mechanically for placeholder integrity and were read by a human for
   dropped negations, but they have not had a native review. A weakened warning

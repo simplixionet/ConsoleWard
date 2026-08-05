@@ -87,7 +87,7 @@ npm run check:i18n-ui  # drives the built app and proves every locale renders
   through the gate you hold. Off by default.
 - **Automatic lock** after a configurable idle period, optionally ending all SSH
   sessions at the same time.
-- **Master password change** — re-wraps the vault key with the new password.
+- **Master password change** — rotates the vault key and re-encrypts the contents. Issues a new recovery key, since the old one cannot be rebuilt under the new key.
 - **Eight UI languages** — English, Czech, German, Spanish, French, Italian,
   Brazilian Portuguese and Dutch, with correct plural handling.
 
@@ -110,8 +110,9 @@ npm run check:i18n-ui  # drives the built app and proves every locale renders
 - Secrets leave the editor only when you actually change them — an empty field means
   "leave unchanged", the *Delete* button means "remove".
 - The vault is written atomically (`.tmp` then rename) and the previous version is kept
-  as `vault.enc.bak`. That backup is a snapshot: the password that applied when it was
-  written is the password that opens it.
+  as `vault.enc.bak`. That backup is a snapshot opened by whatever password applied when
+  it was written — which is why every revocation overwrites and deletes it rather than
+  leaving a copy the revoked secret could still open.
 - Vaults in the old format (version 1, key derived straight from the password) are
   migrated to version 2 automatically on unlock.
 
@@ -126,8 +127,20 @@ wrap[password] = AES-GCM(DEK, scrypt(master password, salt₁))
 wrap[recovery] = AES-GCM(DEK, scrypt(recovery key,   salt₂))
 ```
 
-Either one unlocks it. Changing the password and recovering access therefore only
-re-wrap the DEK — the vault contents are never re-encrypted.
+Either one unlocks it.
+
+**Every operation that revokes a secret rotates the DEK.** Changing the
+password, regenerating or removing the recovery key, and recovering access all
+generate a fresh data key, rebuild both wraps under it, re-encrypt the contents
+and destroy the backup. That is what makes revocation mean something: without
+it, the `.bak` written before each save kept a wrap openable by the secret you
+had just revoked, and that wrap yielded the key to every *future* version too.
+
+One consequence, stated plainly because it will surprise you: **changing the
+master password issues a new recovery key.** The old recovery wrap cannot be
+rebuilt under the new data key, because the recovery key is stored nowhere.
+Write the new one down. Regenerating or removing the recovery key also asks for
+the master password, since the rotation needs it.
 
 The key is 30 characters of Crockford Base32 (no `I`, `L`, `O` or `U`, so nothing can be
 misread when copied by hand) = **150 bits of entropy**. Input ignores case and
@@ -141,9 +154,10 @@ separators, and folds `O`/`0` and `I`/`L`/`1` together.
 > **If you lose both the password and the recovery key, the data is gone for good.**
 > There is no back door.
 
-Under Settings → Security you can regenerate the recovery key at any time — the old one
-stops working immediately — or remove it entirely if you do not want a second route to
-your data to exist.
+Under Settings → Security you can regenerate the recovery key at any time, or remove it
+entirely if you do not want a second route to your data to exist. Both ask for your
+master password, because both re-key the vault — which is what actually makes the old
+key stop working.
 
 ## AI access over MCP
 
@@ -192,10 +206,10 @@ output as though it had seen everything.
 
 ## A note on password rotation
 
-Changing the master password re-wraps the data key but **does not change it**. If someone
-already captured a copy of the file *and* the old password, rotating the password does
-not take back what they have already read. In that situation, create a new vault and move
-the connections across by hand.
+Rotation re-keys the vault, so a revoked secret genuinely stops working from that
+point on. What it cannot undo is the past: if someone captured a copy of the file
+*and* the old secret before you rotated, they have already read what was in that
+copy. Rotation protects everything written afterwards, not what was already taken.
 
 ### PuTTY-format keys (`.ppk`)
 
