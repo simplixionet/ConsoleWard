@@ -62,6 +62,8 @@ interface OnDiskWrap {
 interface OnDiskVault {
   version: number
   cipher: string
+  /** v3 only; absent in the v1 and v2 fixtures. */
+  counter?: number
   iv: string
   tag: string
   data: string
@@ -208,6 +210,73 @@ async function writeLegacyVault(password: string, payload: unknown): Promise<voi
     iv: iv.toString('base64'),
     tag: cipher.getAuthTag().toString('base64'),
     data: data.toString('base64')
+  })
+}
+
+/**
+ * One key wrap in the version-2 shape: scrypt at the shipped parameters, then
+ * AES-GCM over the data key. Written out by hand rather than imported, because
+ * a fixture built from `vault.ts` would only prove the code agrees with itself.
+ */
+async function makeV2Wrap(
+  type: 'password' | 'recovery',
+  secret: string,
+  dek: Buffer
+): Promise<OnDiskWrap> {
+  const salt = randomBytes(32)
+  const params = { N: 1 << 17, r: 8, p: 1, keylen: 32 }
+  const kek = await scryptAsync(secret, salt, params.keylen, {
+    N: params.N,
+    r: params.r,
+    p: params.p,
+    maxmem: 320 * 1024 * 1024
+  })
+  const iv = randomBytes(12)
+  const cipher = createCipheriv('aes-256-gcm', kek, iv)
+  const wrapped = Buffer.concat([cipher.update(dek), cipher.final()])
+  return {
+    type,
+    kdf: { name: 'scrypt', salt: salt.toString('base64'), ...params },
+    iv: iv.toString('base64'),
+    tag: cipher.getAuthTag().toString('base64'),
+    wrapped: wrapped.toString('base64')
+  }
+}
+
+/**
+ * Builds a version-2 vault file: a random data key, that key wrapped by both the
+ * password and the recovery key, and a body encrypted under it with **no AAD** —
+ * the header floats free of the ciphertext, which is the whole reason v3 exists.
+ *
+ * This is the file on the disk of everyone running the previous release. The
+ * upgrade runs once on their machine and there is no second attempt, so both
+ * wraps have to come out the other side still working — the recovery key in
+ * particular, because it exists only on a piece of paper the user wrote it on.
+ */
+async function writeV2Vault(
+  password: string,
+  recoveryKey: string,
+  payload: unknown
+): Promise<void> {
+  const dek = randomBytes(32)
+  const wraps = [
+    await makeV2Wrap('password', password, dek),
+    await makeV2Wrap('recovery', normalizeRecoveryKey(recoveryKey), dek)
+  ]
+  const iv = randomBytes(12)
+  const cipher = createCipheriv('aes-256-gcm', dek, iv)
+  const data = Buffer.concat([
+    cipher.update(Buffer.from(JSON.stringify(payload), 'utf8')),
+    cipher.final()
+  ])
+  fs.mkdirSync(dir, { recursive: true })
+  writeVaultFile({
+    version: 2,
+    cipher: 'aes-256-gcm',
+    iv: iv.toString('base64'),
+    tag: cipher.getAuthTag().toString('base64'),
+    data: data.toString('base64'),
+    wraps
   })
 }
 
@@ -840,9 +909,9 @@ test('a rotation that cannot be written back leaves the old secrets working', as
   assert.equal(typeof replacement, 'string', 'a failed rotation burned the recovery key')
 })
 
-/* ------------------------------------------------------- migrace v1 → v2 */
+/* ------------------------------------------------------- migrace v1 → v3 */
 
-test('a v1 vault migrates to v2 on unlock and keeps its data', async () => {
+test('a v1 vault migrates to v3 on unlock and keeps its data', async () => {
   fresh()
   await writeLegacyVault(PASSWORD, {
     connections: [sampleConnection()],
@@ -863,7 +932,11 @@ test('a v1 vault migrates to v2 on unlock and keeps its data', async () => {
   assert.equal(migrated.mcpToken, 'legacy-mcp-token', 'the legacy MCP token was lost')
 
   const onDisk = readVaultFile()
-  assert.equal(onDisk.version, 2, 'the file was not rewritten in the v2 format')
+  assert.equal(onDisk.version, 3, 'the file was not rewritten in the v3 format')
+  assert.ok(
+    Number.isSafeInteger(onDisk.counter) && onDisk.counter! >= 1,
+    `the migrated file carries no usable counter: ${onDisk.counter}`
+  )
   assert.deepEqual(
     onDisk.wraps.map((w) => w.type),
     ['password'],
@@ -880,7 +953,7 @@ test('a v1 vault migrates to v2 on unlock and keeps its data', async () => {
     'the migrated vault could not be reopened with the same password'
   )
 
-  // And it must keep behaving like a v2 vault from then on.
+  // And it must keep behaving like a v3 vault from then on.
   await vault.mutate((data) => {
     data.settings.scrollback = 999
   })
@@ -928,7 +1001,7 @@ test('a v1 vault opened with the wrong password is left exactly as it was', asyn
 
   // The one chance at migration must still be there.
   await vault.unlock(PASSWORD)
-  assert.equal(readVaultFile().version, 2, 'the migration no longer runs after a wrong guess')
+  assert.equal(readVaultFile().version, 3, 'the migration no longer runs after a wrong guess')
   assert.equal(vault.read().connections.length, 1, 'the legacy data was lost')
 })
 
@@ -946,6 +1019,111 @@ test('unlockWithRecovery() on a v1 vault says so and leaves the file untouched',
 
   await vault.unlock(PASSWORD)
   assert.equal(vault.read().connections.length, 1, 'the legacy data was lost')
+})
+
+/* ------------------------------------------------------- migrace v2 → v3 */
+
+test('a v2 vault migrates to v3 on unlock, keeping its data and both secrets', async () => {
+  fresh()
+  const recoveryKey = generateRecoveryKey()
+  await writeV2Vault(PASSWORD, recoveryKey, {
+    connections: [sampleConnection()],
+    knownHosts: [],
+    snippets: [],
+    settings: { autoLockMinutes: 11 },
+    mcpToken: 'v2-mcp-token'
+  })
+
+  await vault.unlock(PASSWORD)
+  assert.equal(
+    vault.read().connections[0].password,
+    'hunter2-the-real-secret',
+    'the v2 connection secret did not survive the migration'
+  )
+  assert.equal(vault.read().settings.autoLockMinutes, 11, 'v2 settings were lost')
+  assert.equal(vault.read().mcpToken, 'v2-mcp-token', 'the v2 MCP token was lost')
+
+  const onDisk = readVaultFile()
+  assert.equal(onDisk.version, 3, 'unlocking a v2 vault did not rewrite it as v3')
+  assert.ok(
+    Number.isSafeInteger(onDisk.counter) && onDisk.counter! >= 1,
+    `the migrated file carries no usable counter: ${onDisk.counter}`
+  )
+  assert.deepEqual(
+    onDisk.wraps.map((w) => w.type).sort(),
+    ['password', 'recovery'],
+    'the migration dropped a wrap'
+  )
+
+  // The migration runs once and cannot be retried, so the rewritten file has to
+  // open on the next launch.
+  vault.lock()
+  await vault.unlock(PASSWORD)
+  assert.equal(
+    vault.read().connections[0].password,
+    'hunter2-the-real-secret',
+    'the migrated vault could not be reopened with the same password'
+  )
+
+  // And with the recovery key too. It is carried across verbatim because it can
+  // never be rebuilt from the file — rotating the data key here would silently
+  // kill the only string the user has written down.
+  vault.lock()
+  const replacement = await vault.unlockWithRecovery(recoveryKey, OTHER_PASSWORD)
+  assert.match(replacement, /^[0-9A-Z]{5}(-[0-9A-Z]{5}){5}$/, 'the replacement key is malformed')
+  assert.equal(
+    vault.read().connections[0].password,
+    'hunter2-the-real-secret',
+    'recovering into the migrated vault lost the data'
+  )
+})
+
+test('the file a v2 migration leaves behind is header-protected like any other v3', async () => {
+  fresh()
+  await writeV2Vault(PASSWORD, generateRecoveryKey(), { connections: [sampleConnection()] })
+  await vault.unlock(PASSWORD)
+  vault.lock()
+
+  // A migration that wrote v3 in the header but sealed the body without AAD
+  // would pass every assertion above and protect nothing.
+  const migrated = readVaultFile()
+  writeVaultFile({ ...migrated, wraps: migrated.wraps.filter((w) => w.type === 'password') })
+  await rejectsWithKey(
+    () => vault.unlock(PASSWORD),
+    'error.decryptFailed',
+    'the migrated file accepted a stripped wrap list'
+  )
+})
+
+test('a v2 vault opened with the wrong password is left in the v2 format', async () => {
+  fresh()
+  await writeV2Vault(PASSWORD, generateRecoveryKey(), { connections: [sampleConnection()] })
+  const before = fs.readFileSync(vaultPath())
+
+  await rejectsWithKey(() => vault.unlock('not-the-v2-password'), 'error.wrongPassword')
+  assert.equal(vault.isUnlocked(), false, 'a failed v2 unlock left the vault unlocked')
+  assert.deepEqual(fs.readFileSync(vaultPath()), before, 'a failed v2 unlock rewrote the file')
+  assert.equal(readVaultFile().version, 2, 'a failed v2 unlock half-migrated the file')
+
+  // The one chance at migration must still be there.
+  await vault.unlock(PASSWORD)
+  assert.equal(readVaultFile().version, 3, 'the migration no longer runs after a wrong guess')
+  assert.equal(vault.read().connections.length, 1, 'the v2 data was lost')
+})
+
+test('unlockWithRecovery() on a v2 vault migrates it to v3 and rotates', async () => {
+  fresh()
+  const recoveryKey = generateRecoveryKey()
+  await writeV2Vault(PASSWORD, recoveryKey, { connections: [sampleConnection()] })
+
+  const replacement = await vault.unlockWithRecovery(recoveryKey, OTHER_PASSWORD)
+  assert.notEqual(replacement, recoveryKey, 'the recovery unlock handed back the key just used')
+  assert.equal(readVaultFile().version, 3, 'the recovery unlock left the file at v2')
+  assert.equal(vault.read().connections.length, 1, 'the v2 data was lost')
+
+  vault.lock()
+  await vault.unlock(OTHER_PASSWORD)
+  assert.equal(vault.read().connections.length, 1, 'the migrated vault did not reopen')
 })
 
 /* -------------------------------------------------- poškozené soubory */
@@ -977,7 +1155,7 @@ test('unlock() refuses a version or cipher it does not understand', async () => 
   await vault.create(PASSWORD)
   const good = readVaultFile()
 
-  writeVaultFile({ ...good, version: 3 })
+  writeVaultFile({ ...good, version: 4 })
   vault.lock()
   await rejectsWithKey(() => vault.unlock(PASSWORD), 'error.vaultUnsupported', 'a future version')
 
@@ -1183,7 +1361,7 @@ test('a v1 vault with hostile KDF parameters is refused before deriving', async 
   // one format that predates it, and the migration gets exactly one attempt.
   writeVaultFile(legacy)
   await vault.unlock(PASSWORD)
-  assert.equal(readVaultFile().version, 2, 'the KDF check blocked the v1 migration')
+  assert.equal(readVaultFile().version, 3, 'the KDF check blocked the v1 migration')
   assert.equal(vault.read().connections.length, 1, 'the legacy data was lost')
 })
 
@@ -1200,4 +1378,172 @@ test('the KDF check leaves a genuine file alone and leaves room to raise N', asy
   // cost without every vault already on disk reading as corrupt.
   await forgeKdf('password', { N: 1 << 18 })
   await rejectsWithKey(() => vault.unlock(PASSWORD), 'error.wrongPassword', 'N = 1 << 18')
+})
+
+/* --------------------------------------------- autentizovaná hlavička (v3) */
+
+test('a new vault is written in the v3 format with a counter in the header', async () => {
+  fresh()
+  await vault.create(PASSWORD)
+  await seed()
+
+  const file = readVaultFile()
+  assert.equal(file.version, 3, 'create() did not write the v3 format')
+  assert.ok(Number.isSafeInteger(file.counter), `the header counter is not whole: ${file.counter}`)
+  assert.ok(file.counter! >= 1, 'the header counter never advanced past zero')
+
+  vault.lock()
+  await vault.unlock(PASSWORD)
+  assertSeeded('after a v3 round trip')
+})
+
+test('every write advances the header counter, and reopening resumes from it', async () => {
+  fresh()
+  await vault.create(PASSWORD)
+  const first = readVaultFile().counter!
+  await seed()
+  const second = readVaultFile().counter!
+  assert.ok(second > first, `the counter did not advance on a write: ${first} then ${second}`)
+
+  // Resuming matters for C6: a counter that restarted at 1 after every unlock
+  // would make an old file indistinguishable from a new one.
+  vault.lock()
+  await vault.unlock(PASSWORD)
+  await vault.mutate((data) => {
+    data.settings.scrollback = 4321
+  })
+  const third = readVaultFile().counter!
+  assert.ok(third > second, `the counter restarted after a lock/unlock: ${second} then ${third}`)
+})
+
+test('removing a wrap from a finished v3 file makes the body undecryptable', async () => {
+  fresh()
+  await vault.create(PASSWORD)
+  await seed()
+  const file = readVaultFile()
+  assert.equal(file.wraps.length, 2, 'precondition: the file has a password and a recovery wrap')
+
+  // Strip the recovery wrap and leave everything else — body, iv, tag, counter,
+  // and the password wrap — exactly as it was. Without AAD the password still
+  // yields the data key and the body's tag still verifies, so the file opens and
+  // the user's only escape from a forgotten password is silently gone.
+  writeVaultFile({ ...file, wraps: file.wraps.filter((w) => w.type === 'password') })
+  vault.lock()
+  await rejectsWithKey(
+    () => vault.unlock(PASSWORD),
+    'error.decryptFailed',
+    'a v3 file with the recovery wrap stripped still opened'
+  )
+  assert.equal(vault.isUnlocked(), false, 'a header-tampered vault ended up unlocked')
+
+  // Writing the file back verbatim must restore it. That proves the rejection
+  // came from the missing wrap and not from anything writeVaultFile() does to
+  // the JSON — and incidentally that the AAD does not depend on key order.
+  writeVaultFile(file)
+  vault.lock()
+  await vault.unlock(PASSWORD)
+  assertSeeded('after the untouched file was written back')
+})
+
+test('adding a wrap to a finished v3 file makes the body undecryptable', async () => {
+  fresh()
+  await vault.create(PASSWORD)
+  await seed()
+  const file = readVaultFile()
+
+  // The strongest case for the AAD: the added wrap is a copy of one already in
+  // the file, so it opens the very same data key. Nothing about the body has
+  // changed and nothing about the key has changed. Only the header grew.
+  writeVaultFile({ ...file, wraps: [...file.wraps, wrapOfType(file, 'password')] })
+  vault.lock()
+  await rejectsWithKey(() => vault.unlock(PASSWORD), 'error.decryptFailed', 'an added wrap')
+})
+
+test('reordering the wraps of a finished v3 file makes the body undecryptable', async () => {
+  fresh()
+  await vault.create(PASSWORD)
+  await seed()
+  const file = readVaultFile()
+  assert.equal(file.wraps[0].type, 'password', 'precondition: the password wrap is written first')
+
+  // `find()` still locates the password wrap, so the data key is unchanged.
+  // Order is part of the serialisation on purpose: a canonicalisation that
+  // sorted the wraps would let this edit through.
+  writeVaultFile({ ...file, wraps: [...file.wraps].reverse() })
+  vault.lock()
+  await rejectsWithKey(() => vault.unlock(PASSWORD), 'error.decryptFailed', 'reordered wraps')
+})
+
+test('changing version in a finished v3 file makes it fail instead of opening', async () => {
+  fresh()
+  await vault.create(PASSWORD)
+  await seed()
+  const file = readVaultFile()
+
+  // A version the reader knows nothing about is refused before any crypto runs.
+  writeVaultFile({ ...file, version: 4 })
+  vault.lock()
+  await rejectsWithKey(() => vault.unlock(PASSWORD), 'error.vaultUnsupported', 'version 4')
+
+  // A version the reader *does* know is the dangerous one: claiming v2 asks the
+  // reader to take the AAD-free path, which is the downgrade the tag has to
+  // catch. That is why `version` is inside the AAD and not merely checked.
+  writeVaultFile({ ...file, version: 2 })
+  vault.lock()
+  await rejectsWithKey(
+    () => vault.unlock(PASSWORD),
+    'error.decryptFailed',
+    'a v3 file relabelled as v2 skipped the AAD and opened'
+  )
+  assert.equal(vault.isUnlocked(), false, 'a downgraded vault ended up unlocked')
+})
+
+test('rewinding or advancing the header counter makes the body undecryptable', async () => {
+  fresh()
+  await vault.create(PASSWORD)
+  await seed()
+  const file = readVaultFile()
+  assert.ok(file.counter! >= 2, 'precondition: the counter has advanced at least twice')
+
+  // Nothing compares the counter to anything yet — that is C6. What B1 owes is
+  // that the number cannot be edited, so C6 has something worth comparing.
+  writeVaultFile({ ...file, counter: file.counter! - 1 })
+  vault.lock()
+  await rejectsWithKey(() => vault.unlock(PASSWORD), 'error.decryptFailed', 'a rewound counter')
+
+  writeVaultFile({ ...file, counter: file.counter! + 1000 })
+  vault.lock()
+  await rejectsWithKey(() => vault.unlock(PASSWORD), 'error.decryptFailed', 'an advanced counter')
+})
+
+test('a v3 header that cannot be encoded is reported as damaged, not crashed', async () => {
+  fresh()
+  await vault.create(PASSWORD)
+  const file = readVaultFile()
+
+  // These never reach the cipher: the AAD encoder would throw a raw RangeError
+  // or TypeError out of unlock() and the user would read a stack trace on the
+  // unlock screen instead of a translated sentence.
+  const kdfOf = (patch: Record<string, unknown>): unknown => ({
+    ...file,
+    wraps: file.wraps.map((w) => ({ ...w, kdf: { ...w.kdf, ...patch } }))
+  })
+  const cases: Array<[string, unknown]> = [
+    ['a counter that is not a number', { ...file, counter: 'seven' }],
+    ['a negative counter', { ...file, counter: -1 }],
+    ['a fractional counter', { ...file, counter: 1.5 }],
+    ['a missing counter', { ...file, counter: undefined }],
+    ['an out-of-range scrypt N', kdfOf({ N: 1e40 })],
+    ['a negative scrypt r', kdfOf({ r: -8 })],
+    ['a null salt', kdfOf({ salt: null })],
+    ['a numeric wrap type', { ...file, wraps: file.wraps.map((w) => ({ ...w, type: 7 })) }],
+    ['a null wrap', { ...file, wraps: [...file.wraps, null] }]
+  ]
+  for (const [label, broken] of cases) {
+    writeVaultFile(broken)
+    vault.lock()
+    const err = await rejectsWithKey(() => vault.unlock(PASSWORD), 'error.vaultCorrupt', label)
+    assert.notEqual(err.name, 'RangeError', `${label} crashed instead of reporting an error`)
+    assert.notEqual(err.name, 'TypeError', `${label} crashed instead of reporting an error`)
+  }
 })

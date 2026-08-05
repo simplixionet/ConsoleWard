@@ -113,8 +113,15 @@ npm run check:i18n-ui  # drives the built app and proves every locale renders
   as `vault.enc.bak`. That backup is a snapshot opened by whatever password applied when
   it was written — which is why every revocation overwrites and deletes it rather than
   leaving a copy the revoked secret could still open.
-- Vaults in the old format (version 1, key derived straight from the password) are
-  migrated to version 2 automatically on unlock.
+- The readable header — the format version, the write counter and every field of every
+  key wrap — is bound to the encrypted body as AES-GCM additional authenticated data.
+  Editing the header of a vault file therefore makes it refuse to open: a wrap cannot be
+  removed, added, reordered or spliced in from an older copy without the body's tag
+  failing. (The counter is protected here but not yet compared against anything, so
+  replacing the whole file with an older copy is still undetected.)
+- Vaults in older formats are migrated automatically on unlock: version 1 (key derived
+  straight from the password) and version 2 (unauthenticated header) both become
+  version 3. Migration keeps your existing recovery key working.
 
 ### The recovery key
 

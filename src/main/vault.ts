@@ -15,9 +15,21 @@
  *  - zapomenuté heslo lze resetovat obnovovacím klíčem
  *
  * Formát souboru (JSON, čitelná hlavička + zašifrovaný obsah):
- *   { version: 2, cipher, iv, tag, data, wraps: [...] }
+ *   { version: 3, cipher, counter, iv, tag, data, wraps: [...] }
  *
- * Verze 1 (klíč odvozený přímo z hesla) se při odemčení automaticky převede na verzi 2.
+ * Hlavička je čitelná, ale ne volně měnitelná: `version`, `cipher`, `counter`
+ * a všechna pole všech wrapů jdou do GCM jako AAD (viz `headerAad`). Kdo do
+ * souboru zapíše, tím pádem nemůže vyndat password wrap, podstrčit cizí
+ * recovery wrap ani splácnout wrapy ze starší kopie — tag na těle přestane
+ * sedět a trezor se neotevře.
+ *
+ * `counter` roste s každým zápisem. Tady ho AAD jen chrání před přepsáním;
+ * porovnání proti dřív viděné hodnotě, kterým se pozná vrácení celé staré
+ * kopie souboru, tu **není** — je to samostatný krok (C6).
+ *
+ * Starší formáty se při odemčení převedou na verzi 3:
+ *   verze 1 – klíč odvozený přímo z hesla, bez DEK a bez wrapů
+ *   verze 2 – DEK a wrapy jako dnes, ale hlavička nesvázaná s tělem
  */
 
 import { app } from 'electron'
@@ -54,6 +66,9 @@ const MAXMEM = 320 * 1024 * 1024
  */
 const KDF_ACCEPTED = { minN: 1 << 17, maxN: 1 << 18, r: 8, p: 1, keylen: 32, minSaltBytes: 16 }
 
+/** Aktuální formát souboru. Verze 1 a 2 se umí přečíst a při odemčení převést sem. */
+const VAULT_VERSION = 3 as const
+
 type WrapType = 'password' | 'recovery'
 
 interface KdfSpec {
@@ -86,6 +101,17 @@ interface VaultFileV1 {
 interface VaultFileV2 {
   version: 2
   cipher: 'aes-256-gcm'
+  iv: string
+  tag: string
+  data: string
+  wraps: KeyWrap[]
+}
+
+interface VaultFileV3 {
+  version: 3
+  cipher: 'aes-256-gcm'
+  /** Roste s každým zápisem. Chrání ho AAD; porovnávat ho bude až C6. */
+  counter: number
   iv: string
   tag: string
   data: string
@@ -261,12 +287,118 @@ async function openWrap(wrap: KeyWrap, secret: string): Promise<Buffer> {
   }
 }
 
+/* --------------------------------------------- autentizovaná hlavička (AAD) */
+
+/**
+ * Doménová předpona serializace.
+ *
+ * Bez ní by stačilo, aby nějaký jiný formát náhodou vyprodukoval tytéž bajty,
+ * a tag by ověřil hlavičku, kterou nikdo nezamýšlel. Číslo na konci je verze
+ * *kódování*, ne verze souboru — kdyby se pořadí polí někdy měnilo, změní se
+ * i tahle konstanta.
+ */
+const AAD_MAGIC = Buffer.from('consoleward.vault.aad.1', 'ascii')
+
+/** `délka || obsah`. Rámování je jediné, co brání záměně `ab|c` za `a|bc`. */
+function frame(value: string): Buffer {
+  const body = Buffer.from(value, 'utf8')
+  const header = Buffer.alloc(4)
+  header.writeUInt32BE(body.length)
+  return Buffer.concat([header, body])
+}
+
+function u32(value: number): Buffer {
+  const buf = Buffer.alloc(4)
+  buf.writeUInt32BE(value)
+  return buf
+}
+
+function u64(value: number): Buffer {
+  const buf = Buffer.alloc(8)
+  buf.writeBigUInt64BE(BigInt(value))
+  return buf
+}
+
+/**
+ * Kanonická podoba hlavičky, kterou přes `setAAD()` svážeme s tělem.
+ *
+ * Pokrývá `version`, `cipher`, `counter` a **všechna** pole **všech** wrapů
+ * v tom pořadí, v jakém leží v souboru. Nepokrývá `iv`, `tag` a `data` těla:
+ * `tag` je výstup právě počítané operace, `iv` vstupuje do GCM zvlášť a jeho
+ * záměna rozbije tag sama o sobě, a `data` autentizuje GCM z definice.
+ *
+ * Proč ne `JSON.stringify`: pořadí klíčů v souboru si diktuje ten, kdo ho
+ * napsal, takže dva soubory se stejným významem by daly různé AAD a trezor by
+ * se po ručním přeformátování neotevřel. Tady je pořadí polí pevné a každý
+ * proměnlivě dlouhý úsek nese svou délku před sebou; počet wrapů je zapsaný
+ * před nimi. Díky tomu neexistují dvě různé hlavičky se stejnými bajty.
+ *
+ * Wrapy vlastní AAD nedostávají. Bylo by to kruhové — tag wrapu je součástí
+ * téhle serializace — a hlavně by to zabilo migraci z v2: obnovovací wrap se dá
+ * postavit znovu jen s obnovovacím klíčem v plaintextu, který nikde není.
+ * Vazba tělo → všechna pole wrapů je ta, na které záleží.
+ */
+function headerAad(header: {
+  version: number
+  cipher: string
+  counter: number
+  wraps: KeyWrap[]
+}): Buffer {
+  const parts: Buffer[] = [
+    AAD_MAGIC,
+    u32(header.version),
+    frame(header.cipher),
+    u64(header.counter),
+    u32(header.wraps.length)
+  ]
+  for (const w of header.wraps) {
+    parts.push(
+      frame(w.type),
+      frame(w.kdf.name),
+      frame(w.kdf.salt),
+      u32(w.kdf.N),
+      u32(w.kdf.r),
+      u32(w.kdf.p),
+      u32(w.kdf.keylen),
+      frame(w.iv),
+      frame(w.tag),
+      frame(w.wrapped)
+    )
+  }
+  return Buffer.concat(parts)
+}
+
+/**
+ * Ověří, že hlavička v3 jde vůbec zakódovat do AAD.
+ *
+ * KDF parametry řeší `assertKdf`, který běží dřív a je přísnější, než by tady
+ * dávalo smysl. Zbývá čítač a ta pole wrapu, která jdou do `headerAad()` jako
+ * rámované řetězce — bez téhle kontroly by `writeBigUInt64BE(BigInt(1.5))` nebo
+ * `Buffer.from(null)` shodily odemykací obrazovku syrovým RangeError/TypeError
+ * místo přeložené hlášky.
+ */
+function assertHeaderShape(file: VaultFileV3): void {
+  if (!Number.isSafeInteger(file.counter) || file.counter < 0) {
+    throw appError('error.vaultCorrupt')
+  }
+  for (const w of file.wraps) {
+    const ok =
+      typeof w?.type === 'string' &&
+      typeof w.iv === 'string' &&
+      typeof w.tag === 'string' &&
+      typeof w.wrapped === 'string'
+    if (!ok) throw appError('error.vaultCorrupt')
+  }
+}
+
 /* -------------------------------------------------------------- trezor */
 
 class Vault {
   private dek: Buffer | null = null
   private wraps: KeyWrap[] = []
   private data: VaultData | null = null
+  /** Poslední číslo zápisu, které jsme viděli nebo zapsali. Nula = zatím žádné. */
+  private counter = 0
 
   get filePath(): string {
     return path.join(app.getPath('userData'), 'vault.enc')
@@ -295,7 +427,9 @@ class Vault {
   async hasRecoveryOnDisk(): Promise<boolean> {
     if (!this.exists()) return false
     try {
-      const file = JSON.parse(await fsp.readFile(this.filePath, 'utf8')) as VaultFileV2
+      const file = JSON.parse(await fsp.readFile(this.filePath, 'utf8')) as
+        | VaultFileV2
+        | VaultFileV3
       return Array.isArray(file.wraps) && file.wraps.some((w) => w.type === 'recovery')
     } catch {
       return false
@@ -312,6 +446,7 @@ class Vault {
 
     this.dek = dek
     this.data = emptyData()
+    this.counter = 0
     this.wraps = [
       await makeWrap('password', masterPassword, dek),
       await makeWrap('recovery', normalizeRecoveryKey(recoveryKey), dek)
@@ -338,6 +473,26 @@ class Vault {
       throw appError('error.wrongPassword')
     }
     this.adopt(file, dek)
+
+    // Migrace v2 → v3. Přepsat soubor jde až teď, kdy je DEK v ruce. DEK ani
+    // wrapy se nemění: obnovovací wrap by šlo postavit znovu jen s obnovovacím
+    // klíčem v plaintextu, který se nikde neukládá, takže rotace by uživateli
+    // tiše zabila klíč, který má opsaný na papíře. Mění se jen tělo — nově
+    // zapečetěné s AAD nad hlavičkou.
+    //
+    // Když zápis selže (profil jen pro čtení, plný disk), je nutné se zamknout.
+    // `adopt()` už nastavil `dek`, `wraps` i `data`, takže bez tohohle by
+    // `unlock()` volajícímu ohlásil chybu, renderer zůstal na zamykací
+    // obrazovce — a `vault.isUnlocked()` by v hlavním procesu bylo `true`,
+    // což je přesně ten predikát, na kterém visí SSH i MCP.
+    if (file.version === 2) {
+      try {
+        await this.persist()
+      } catch (err) {
+        this.lock()
+        throw err
+      }
+    }
   }
 
   /**
@@ -382,6 +537,7 @@ class Vault {
     this.dek = null
     this.data = null
     this.wraps = []
+    this.counter = 0
   }
 
   /**
@@ -500,16 +656,19 @@ class Vault {
 
   /* ------------------------------------------------------------ vnitřní */
 
-  private async readFile(): Promise<VaultFileV1 | VaultFileV2> {
+  private async readFile(): Promise<VaultFileV1 | VaultFileV2 | VaultFileV3> {
     if (!this.exists()) throw appError('error.vaultMissing')
     const raw = await fsp.readFile(this.filePath, 'utf8')
-    let file: VaultFileV1 | VaultFileV2
+    let file: VaultFileV1 | VaultFileV2 | VaultFileV3
     try {
       file = JSON.parse(raw)
     } catch {
       throw appError('error.vaultCorrupt')
     }
-    if (file.cipher !== 'aes-256-gcm' || (file.version !== 1 && file.version !== 2)) {
+    if (
+      file.cipher !== 'aes-256-gcm' ||
+      (file.version !== 1 && file.version !== 2 && file.version !== 3)
+    ) {
       throw appError('error.vaultUnsupported')
     }
     // Verze 2 stojí na seznamu wrapů. Bez téhle kontroly se poškozený soubor
@@ -517,7 +676,7 @@ class Vault {
     // ukázal syrový `TypeError` místo přeložené hlášky. `hasRecoveryOnDisk()`
     // tuhle situaci hlídalo, `readFile()` ne — vypadá to na opomenutí, ne na
     // rozhodnutí. Prázdné pole je legitimní a řeší se dál jako chybějící heslo.
-    if (file.version === 2 && !Array.isArray((file as VaultFileV2).wraps)) {
+    if (file.version !== 1 && !Array.isArray((file as VaultFileV2 | VaultFileV3).wraps)) {
       throw appError('error.vaultCorrupt')
     }
     // The one place where file bytes become KDF parameters, so the one place
@@ -530,14 +689,25 @@ class Vault {
     } else {
       for (const wrap of file.wraps) assertKdf(wrap?.kdf)
     }
+    // Hlavička v3 jde do AAD, takže co nejde zakódovat, se sem nesmí dostat.
+    if (file.version === 3) assertHeaderShape(file)
     return file
   }
 
-  /** Dešifruje obsah pomocí DEK a převezme stav do paměti. */
-  private adopt(file: VaultFileV2, dek: Buffer): void {
+  /**
+   * Dešifruje obsah pomocí DEK a převezme stav do paměti.
+   *
+   * U v3 je hlavička svázaná s tělem přes AAD, takže vyndaný wrap, přidaný wrap,
+   * přeházené pořadí i posunutý čítač skončí selháním tagu. U v2 žádné AAD není
+   * a být nemůže — soubor vznikl bez něj. Právě proto je `version` součástí AAD:
+   * přepsat v3 hlavičku na `version: 2` a doufat, že se AAD přeskočí, končí
+   * `error.decryptFailed`.
+   */
+  private adopt(file: VaultFileV2 | VaultFileV3, dek: Buffer): void {
     let plaintext: string
     try {
       const decipher = createDecipheriv('aes-256-gcm', dek, Buffer.from(file.iv, 'base64'))
+      if (file.version === 3) decipher.setAAD(headerAad(file))
       decipher.setAuthTag(Buffer.from(file.tag, 'base64'))
       plaintext = Buffer.concat([
         decipher.update(Buffer.from(file.data, 'base64')),
@@ -550,10 +720,12 @@ class Vault {
 
     this.dek = dek
     this.wraps = file.wraps
+    // v2 čítač nemá; navazovat je na čem až od prvního v3 zápisu.
+    this.counter = file.version === 3 ? file.counter : 0
     this.data = normalizeData(JSON.parse(plaintext) as Partial<VaultData>)
   }
 
-  /** Trezor verze 1: klíč byl odvozený přímo z hesla. Po odemčení převedeme na v2. */
+  /** Trezor verze 1: klíč byl odvozený přímo z hesla. Po odemčení převedeme na v3. */
   private async unlockLegacy(file: VaultFileV1, masterPassword: string): Promise<void> {
     const salt = Buffer.from(file.kdf.salt, 'base64')
     const key = await deriveKek(masterPassword, salt, file.kdf)
@@ -574,6 +746,7 @@ class Vault {
 
     this.dek = randomBytes(32)
     this.data = normalizeData(JSON.parse(plaintext) as Partial<VaultData>)
+    this.counter = 0
     this.wraps = [await makeWrap('password', masterPassword, this.dek)]
     await this.persist()
   }
@@ -671,16 +844,29 @@ class Vault {
     if (!this.dek || !this.data) throw appError('error.vaultLocked')
     if (this.wraps.length === 0) throw appError('error.noUnlockMethod')
 
+    // Čítač roste s každým zápisem. Tady ho jen chrání AAD; porovnat ho s dřív
+    // viděnou hodnotou, a tím poznat vrácení staré kopie souboru, je C6.
+    const counter = this.counter + 1
+    if (!Number.isSafeInteger(counter)) throw appError('error.vaultCorrupt')
+
     const iv = randomBytes(12)
+    const aad = headerAad({
+      version: VAULT_VERSION,
+      cipher: 'aes-256-gcm',
+      counter,
+      wraps: this.wraps
+    })
     const cipher = createCipheriv('aes-256-gcm', this.dek, iv)
+    cipher.setAAD(aad)
     const ciphertext = Buffer.concat([
       cipher.update(Buffer.from(JSON.stringify(this.data), 'utf8')),
       cipher.final()
     ])
 
-    const file: VaultFileV2 = {
-      version: 2,
+    const file: VaultFileV3 = {
+      version: VAULT_VERSION,
       cipher: 'aes-256-gcm',
+      counter,
       iv: iv.toString('base64'),
       tag: cipher.getAuthTag().toString('base64'),
       data: ciphertext.toString('base64'),
@@ -695,6 +881,9 @@ class Vault {
     const tmp = this.filePath + '.tmp'
     await fsp.writeFile(tmp, JSON.stringify(file), { encoding: 'utf8', mode: 0o600 })
     await fsp.rename(tmp, this.filePath)
+    // Až po úspěšném přejmenování. Jinak by paměť tvrdila vyšší číslo, než jaké
+    // je v souboru, a příští zápis by v řadě udělal díru.
+    this.counter = counter
   }
 }
 
