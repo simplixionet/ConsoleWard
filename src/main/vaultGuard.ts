@@ -218,6 +218,13 @@ export async function readAnchorFile(file: string, sealer: GuardSealer): Promise
     if (!stat.isFile()) return { kind: 'unreadable', reason: 'not a regular file' }
     if (stat.size > GUARD_MAX_BYTES) return { kind: 'unreadable', reason: 'too large' }
 
+    /*
+     * Dva stropy, které se navzájem zálohují: `stat.size` je rychlá cesta,
+     * tenhle je ta skutečná pojistka, protože velikost ze `stat` je výpověď
+     * o minulosti a soubor mohl mezitím povyrůst. Mutace to ukázala poctivě —
+     * odebrat jeden z nich testy nezčervená, odebrat oba ano. Neber to jako
+     * důkaz, že je jeden zbytečný.
+     */
     const buf = Buffer.alloc(GUARD_MAX_BYTES + 1)
     let filled = 0
     while (filled < buf.length) {

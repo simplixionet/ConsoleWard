@@ -276,6 +276,22 @@ describe('vault.guard na disku', () => {
     assert.match(read.kind === 'unreadable' ? read.reason : '', /too large/)
   })
 
+  /*
+   * The case that actually measures the ceiling. Garbage past the limit gets
+   * refused by the parser whatever the size checks do, so it proves nothing --
+   * a valid anchor padded with whitespace does: JSON.parse accepts trailing
+   * space, so without a bound the read would truncate at the limit and hand
+   * back a perfectly good anchor from a file it never finished looking at.
+   */
+  it('platná kotva s přetečením za sebou taky neprojde', async () => {
+    const file = path.join(await tmpDir(), 'vault.guard')
+    const valid = serializeGuard(3, 1000, sealer)
+    await fsp.writeFile(file, valid + ' '.repeat(GUARD_MAX_BYTES), 'utf8')
+
+    const read = await readAnchorFile(file, sealer)
+    assert.equal(read.kind, 'unreadable', 'nesmí vrátit kotvu ze souboru, který nedočetl')
+  })
+
   it('adresář místo souboru neshodí čtení', async () => {
     const dir = await tmpDir()
     const file = path.join(dir, 'vault.guard')
