@@ -291,6 +291,7 @@
   "error.notRegularFile": "Questo non è un file ordinario: scegli una chiave salvata su disco.",
   "error.invalidSetting": "Valore non valido per l'impostazione «{{field}}».",
   "error.unknownSetting": "Le impostazioni contengono un elemento che questa versione non conosce, quindi non è stato salvato nulla.",
+  "error.unexpected": "Qualcosa è andato storto. I dettagli sono nel log dell'applicazione.",
   "error.sessionNotReady": "La sessione non è pronta.",
   "error.sessionNotFound": "La sessione non esiste.",
   "error.commandRunning": "In questa sessione è già in esecuzione un comando.",

@@ -621,6 +621,14 @@ class Vault {
   async removeRecoveryKey(password: string): Promise<void> {
     this.requireUnlocked()
     const wrap = this.wraps.find((w) => w.type === 'password')
+    // Unreachable today, and kept anyway. Every path to an unlocked vault
+    // installs a password wrap — `create` writes one, `unlock` refuses a file
+    // without one (`error.noPasswordSet`), `unlockLegacy` builds one, and
+    // `reseal` rejects a secret list that has none — so no public API can
+    // produce the state this guards against. It stays because it is an
+    // invariant assertion, not a user-facing error: the day one of those four
+    // paths changes, this is a translated message rather than a TypeError
+    // thrown out of `openWrap(undefined, …)` in the middle of a rotation.
     if (!wrap) throw appError('error.lastUnlockMethod')
 
     try {

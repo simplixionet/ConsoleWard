@@ -291,6 +291,7 @@
   "error.notRegularFile": "Isso não é um arquivo comum — escolha uma chave salva no disco.",
   "error.invalidSetting": "Valor inválido para a configuração “{{field}}”.",
   "error.unknownSetting": "As configurações contêm um item que esta versão não conhece, então nada foi salvo.",
+  "error.unexpected": "Algo deu errado. Os detalhes estão no log do aplicativo.",
   "error.sessionNotReady": "A sessão não está pronta.",
   "error.sessionNotFound": "A sessão não existe.",
   "error.commandRunning": "Já há um comando em execução nesta sessão.",

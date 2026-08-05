@@ -291,6 +291,7 @@
   "error.notRegularFile": "Dit is geen gewoon bestand — kies een sleutel die op de schijf staat.",
   "error.invalidSetting": "Ongeldige waarde voor de instelling ‘{{field}}’.",
   "error.unknownSetting": "De instellingen bevatten een item dat deze versie niet kent, dus er is niets opgeslagen.",
+  "error.unexpected": "Er is iets misgegaan. De details staan in het applicatielogboek.",
   "error.sessionNotReady": "De sessie is niet gereed.",
   "error.sessionNotFound": "De sessie bestaat niet.",
   "error.commandRunning": "In deze sessie loopt al een commando.",

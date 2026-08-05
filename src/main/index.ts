@@ -128,7 +128,14 @@ function applyCsp(): void {
   })
 
   // Aplikace nepotřebuje kameru, mikrofon ani nic podobného.
+  //
+  // Both handlers, because Electron asks through two different doors. The
+  // request handler covers the asynchronous permission prompts; the check
+  // handler covers the SYNCHRONOUS path, which several permissions take
+  // instead — and an unset check handler defaults to allowing them. Setting
+  // only one of the two leaves the other wide open, which is what this was.
   electronSession.defaultSession.setPermissionRequestHandler((_wc, _perm, cb) => cb(false))
+  electronSession.defaultSession.setPermissionCheckHandler(() => false)
 }
 
 /* ------------------------------------------------------- automatické zamčení */
@@ -205,9 +212,28 @@ function ok<T>(value: T): Result<T> {
   return { ok: true, value }
 }
 
+/**
+ * The error the renderer is allowed to see.
+ *
+ * An `AppError` was raised by this application deliberately: its message is a
+ * translated sentence written for the person reading it, so it goes through
+ * whole. Anything else came from node, from Electron or from a library, and
+ * those messages carry absolute paths (`ENOENT: … C:\Users\stan\AppData\…`),
+ * internal state and sometimes a fragment of the input that caused them. The
+ * renderer displays what it is given, so that lands in front of the user, in a
+ * window whose content is not something we want to be quotable in a screenshot
+ * or a bug report.
+ *
+ * The raw error still reaches the console, where the developer wants it and
+ * where it is not part of the UI.
+ */
 function fail(err: unknown): Result<never> {
-  const message = err instanceof Error ? err.message : String(err)
-  return { ok: false, error: message }
+  const key = (err as { key?: unknown } | null | undefined)?.key
+  if (typeof key === 'string' && err instanceof Error) {
+    return { ok: false, error: err.message }
+  }
+  console.error('ipc:', err)
+  return { ok: false, error: t('error.unexpected') }
 }
 
 /** Registrace handleru s jednotným zabalením chyb do `Result`. */
@@ -339,7 +365,7 @@ function registerIpc(): void {
     vault
       .read()
       .connections.map(toMeta)
-      .sort((a, b) => a.name.localeCompare(b.name, 'cs'))
+      .sort(byName)
   )
 
   handle(CH.connSave, async (input: ConnectionInput): Promise<ConnectionMeta> => {
@@ -407,7 +433,7 @@ function registerIpc(): void {
 
   /* příkazy a poznámky */
   handle(CH.snipList, (): Snippet[] =>
-    [...vault.read().snippets].sort((a, b) => a.title.localeCompare(b.title, 'cs'))
+    [...vault.read().snippets].sort((a, b) => collator().compare(a.title, b.title))
   )
 
   handle(CH.snipSave, async (input: SnippetInput): Promise<Snippet> => {
@@ -491,7 +517,11 @@ function registerIpc(): void {
 
   /* známé hostitele */
   handle(CH.hostsList, (): KnownHost[] =>
-    [...vault.read().knownHosts].sort((a, b) => a.hostKey.localeCompare(b.hostKey))
+    // Not a collator: a host key is base64, an opaque identifier nobody reads
+    // as a word. Locale-aware collation would reorder it by rules that mean
+    // nothing here and differ between users; a code-unit sort is stable
+    // everywhere, which is the only property this list needs.
+    [...vault.read().knownHosts].sort((a, b) => (a.hostKey < b.hostKey ? -1 : 1))
   )
 
   handle(CH.hostsForget, async (hostKey: string) => {
@@ -617,6 +647,26 @@ function registerIpc(): void {
     await setLocale(saved.locale)
     return saved.locale
   })
+}
+
+/**
+ * Sorts the way the user's own language does.
+ *
+ * Was `localeCompare(x, 'cs')` on two lists and a bare `localeCompare` on a
+ * third — so a German user got Czech collation for their connections and
+ * whatever the OS felt like for their known hosts. Neither matched the language
+ * they had chosen in the app.
+ *
+ * Built per call rather than cached: the locale changes while the app runs, and
+ * a collator captured at module load would keep sorting by the old one. These
+ * lists are short and rebuilt on demand, so the cost does not matter.
+ */
+function collator(): Intl.Collator {
+  return new Intl.Collator(currentLocale(), { sensitivity: 'base', numeric: true })
+}
+
+function byName(a: { name: string }, b: { name: string }): number {
+  return collator().compare(a.name, b.name)
 }
 
 function normalizeNewlines(text: string): string {

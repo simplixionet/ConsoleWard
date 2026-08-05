@@ -291,6 +291,7 @@
   "error.notRegularFile": "That is not an ordinary file — pick a key stored on disk.",
   "error.invalidSetting": "Invalid value for the setting “{{field}}”.",
   "error.unknownSetting": "The settings contain an item this version does not know, so nothing was saved.",
+  "error.unexpected": "Something went wrong. The details are in the application log.",
   "error.sessionNotReady": "The session is not ready.",
   "error.sessionNotFound": "The session does not exist.",
   "error.commandRunning": "A command is already running in this session.",

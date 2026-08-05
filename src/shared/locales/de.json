@@ -291,6 +291,7 @@
   "error.notRegularFile": "Das ist keine gewöhnliche Datei — wähle einen auf der Festplatte gespeicherten Schlüssel.",
   "error.invalidSetting": "Ungültiger Wert für die Einstellung „{{field}}“.",
   "error.unknownSetting": "Die Einstellungen enthalten einen Eintrag, den diese Version nicht kennt — es wurde nichts gespeichert.",
+  "error.unexpected": "Etwas ist schiefgelaufen. Die Details stehen im Anwendungsprotokoll.",
   "error.sessionNotReady": "Die Sitzung ist nicht bereit.",
   "error.sessionNotFound": "Die Sitzung existiert nicht.",
   "error.commandRunning": "In dieser Sitzung läuft bereits ein Befehl.",

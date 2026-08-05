@@ -291,6 +291,7 @@
   "error.notRegularFile": "Ce n'est pas un fichier ordinaire : choisis une clé enregistrée sur le disque.",
   "error.invalidSetting": "Valeur invalide pour le réglage « {{field}} ».",
   "error.unknownSetting": "Les réglages contiennent un élément que cette version ne connaît pas : rien n'a été enregistré.",
+  "error.unexpected": "Quelque chose s'est mal passé. Les détails sont dans le journal de l'application.",
   "error.sessionNotReady": "La session n'est pas prête.",
   "error.sessionNotFound": "La session n'existe pas.",
   "error.commandRunning": "Une commande est déjà en cours dans cette session.",

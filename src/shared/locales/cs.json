@@ -293,6 +293,7 @@
   "error.notRegularFile": "Tohle není běžný soubor — vyber klíč uložený na disku.",
   "error.invalidSetting": "Neplatná hodnota nastavení „{{field}}“.",
   "error.unknownSetting": "Nastavení obsahuje položku, kterou tahle verze nezná, takže se nic neuložilo.",
+  "error.unexpected": "Něco se pokazilo. Podrobnosti jsou v logu aplikace.",
   "error.sessionNotReady": "Relace není připravená.",
   "error.sessionNotFound": "Relace neexistuje.",
   "error.commandRunning": "V této relaci už jeden příkaz běží.",
