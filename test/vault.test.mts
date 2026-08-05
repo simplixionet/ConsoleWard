@@ -1907,3 +1907,22 @@ test('obnova obnovovacím klíčem taky pozná vrácení souboru', async () => {
   await vault.unlockWithRecovery(recoveryKey, OTHER_PASSWORD)
   assert.equal(vault.rollback.kind, 'rollback')
 })
+
+/*
+ * The vault write has already landed by the time the anchor is touched, so a
+ * failure here must not be reported as a failed write -- the caller would undo
+ * its in-memory state over something that actually succeeded. A directory in
+ * the anchor's place is the portable way to make the write fail.
+ */
+test('nezapsatelná kotva neshodí zápis trezoru', async () => {
+  fresh()
+  await vault.create(PASSWORD)
+
+  fs.rmSync(guardPath())
+  fs.mkdirSync(guardPath())
+
+  await vault.mutate((d) => d.connections.push(sampleConnection()))
+
+  assert.equal(vault.read().connections.length, 1, 'změna musí projít i bez kotvy')
+  assert.ok(readVaultFile().counter! >= 2, 'trezor se musí zapsat')
+})

@@ -23,9 +23,10 @@
  * recovery wrap ani splácnout wrapy ze starší kopie — tag na těle přestane
  * sedět a trezor se neotevře.
  *
- * `counter` roste s každým zápisem. Tady ho AAD jen chrání před přepsáním;
- * porovnání proti dřív viděné hodnotě, kterým se pozná vrácení celé staré
- * kopie souboru, tu **není** — je to samostatný krok (C6).
+ * `counter` roste s každým zápisem a AAD ho chrání před přepsáním. To samo
+ * o sobě nepozná podstrčení **celé starší kopie** souboru — ta má svůj čítač
+ * taky platný, jen menší. Poslední viděná hodnota proto leží mimo tenhle
+ * soubor, v `vault.guard` (viz `vaultGuard.ts`), a porovnává se při odemčení.
  *
  * Starší formáty se při odemčení převedou na verzi 3:
  *   verze 1 – klíč odvozený přímo z hesla, bez DEK a bez wrapů
@@ -137,7 +138,7 @@ interface VaultFileV2 {
 interface VaultFileV3 {
   version: 3
   cipher: 'aes-256-gcm'
-  /** Roste s každým zápisem. Chrání ho AAD; porovnávat ho bude až C6. */
+  /** Roste s každým zápisem. Chrání ho AAD, porovnává ho `vaultGuard`. */
   counter: number
   iv: string
   tag: string
@@ -1136,7 +1137,7 @@ class Vault {
     if (this.wraps.length === 0) throw appError('error.noUnlockMethod')
 
     // Čítač roste s každým zápisem. Tady ho jen chrání AAD; porovnat ho s dřív
-    // viděnou hodnotou, a tím poznat vrácení staré kopie souboru, je C6.
+    // viděnou hodnotou dělá `recordAnchor` níž, po úspěšném přejmenování.
     const counter = this.counter + 1
     if (!Number.isSafeInteger(counter)) throw appError('error.vaultCorrupt')
 
