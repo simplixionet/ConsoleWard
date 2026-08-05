@@ -107,7 +107,11 @@ export class ApprovalQueue {
     // throw away an approval they already gave — and would hand a client a way
     // to silence an answer by flooding the queue while the command executes.
     if (req.origin !== 'command_output') this.admit()
-    const raise = this.shouldRaise()
+    // A forced dialog is the one case where the human was explicitly promised
+    // no dialog at all. It jumps the quiet window — otherwise it can sit behind
+    // the terminal until the five-minute timer denies it on their behalf, and
+    // they never learn a credential was about to be sent.
+    const raise = req.autoShareOverridden === true || this.shouldRaise()
     return new Promise<ShareAnswer>((resolve) => {
       const timer = setTimeout(() => {
         if (this.shares.delete(req.id)) resolve({ shared: false, text: '' })

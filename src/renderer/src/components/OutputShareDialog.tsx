@@ -96,6 +96,10 @@ export default function OutputShareDialog({ request, onAnswer }: Props) {
             <div className="ai-reason">{request.reason || t('mcp.noReason')}</div>
           </div>
 
+          {request.autoShareOverridden && (
+            <div className="warn-box danger-box">{t('mcp.autoShareOverridden')}</div>
+          )}
+
           {matches.length > 0 && (
             <div className={highSeverity ? 'warn-box danger-box' : 'warn-box'}>
               <b>{t('mcp.detectedLead')}</b> {summaryText}. {t('mcp.detectedTail')}

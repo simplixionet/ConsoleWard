@@ -161,6 +161,29 @@ test('the share that completes an approved command is exempt from the cap', asyn
 
 /* ---------------------------------------------------------------- fokus */
 
+test('a dialog that overrides auto-share raises the window even mid-batch', async () => {
+  const { queue, spy } = fresh()
+
+  // A command is already on screen, so the batch has had its one raise.
+  const pending = [queue.askCommand(command())]
+  assert.equal(spy.raises(), 1, 'the first request of a batch did not raise the window')
+
+  // Its output tripped the secret detector. The human ticked auto-share and was
+  // told they would not be asked, so a dialog left behind the terminal would be
+  // denied on their behalf by the timeout — and they would never learn a
+  // credential was about to be sent.
+  const forced = { ...share('command_output'), autoShareOverridden: true }
+  pending.push(queue.askShare(forced))
+  assert.equal(spy.raises(), 2, 'the forced dialog opened without raising the window')
+
+  // An ordinary follow-up share does not get that exemption.
+  pending.push(queue.askShare(share('command_output')))
+  assert.equal(spy.raises(), 2, 'an ordinary share raised the window mid-batch')
+
+  queue.rejectAll()
+  await Promise.all(pending)
+})
+
 test('the window is raised once for a batch, not once per request', async () => {
   const { queue, spy } = fresh()
 

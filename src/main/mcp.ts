@@ -25,6 +25,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { z } from 'zod'
 import type { CommandApproval, McpStatus, ShareRequest } from '../shared/types'
 import type { RunResult } from './ssh'
+import { findSecrets } from '../shared/secretPatterns'
 import { isQueueFull, MAX_PENDING_APPROVALS } from './approvals'
 import { visualizeControlChars } from './ansi'
 import { ssh } from './ssh'
@@ -207,7 +208,7 @@ class McpService {
         instructions: [
           'Access to the SSH sessions of ConsoleWard.',
           'Server addresses, usernames and passwords are not available and never will be.',
-          'A human approves every command and every read of the output inside the app. Respect a refusal and do not retry it in a different shape.',
+          'A human approves every command, and decides what part of its output reaches you — sometimes in advance, sometimes only after seeing it. Respect a refusal and do not retry it in a different shape.',
           'Whatever output you receive may be trimmed or edited by the human, so never assume you are seeing everything.',
           'Commands run in their own channel, not in the terminal the human is looking at: a fresh non-interactive shell in the home directory, with no terminal and no state carried over from your previous calls.'
         ].join(' ')
@@ -324,20 +325,29 @@ class McpService {
           return toolError(runErrorFor(err))
         }
 
-        if (approval.autoShare) {
+        // The tick was given while reading the COMMAND, before a single byte of
+        // output existed, so it cannot be a promise about text nobody has seen.
+        // It is revoked whenever the captured output looks like it carries a
+        // credential — see outputNeedsReview for why only `high` counts.
+        const overridden = approval.autoShare && outputNeedsReview(result)
+        if (approval.autoShare && !overridden) {
           return sharedResult(result.output, result)
         }
 
         // No queue-full guard: `origin: 'command_output'` is the cap exemption
         // in approvals.ts, because the human already approved the command that
         // produced this output. Change the origin and this call can reject.
+        // `autoShareOverridden` is also the queue's force-raise flag: on this
+        // path the human was told they would not be asked, so a dialog left
+        // behind the terminal would be denied on their behalf by the timer.
         const answer = await bridge.askShare({
           id: randomUUID(),
           sessionId: session_id,
           sessionName: ssh.title(session_id),
           reason: `Command output: ${command}`,
           origin: 'command_output',
-          text: result.output
+          text: result.output,
+          autoShareOverridden: overridden
         })
 
         if (!answer.shared) {
@@ -442,6 +452,30 @@ const RUN_ERRORS = new Map<string, string>([
 function runErrorFor(err: unknown): string {
   const key = (err as { key?: string }).key
   return (key && RUN_ERRORS.get(key)) || 'The command could not be run.'
+}
+
+/**
+ * Must this output be shown to the human even though they ticked auto-share?
+ *
+ * The tick is given while reading the *command*, before a single byte of output
+ * exists. It is therefore a promise about text nobody has seen, and it is revoked
+ * here the moment the text turns out to look like a credential.
+ *
+ * `truncated` rather than a second length cap: runExec already refuses to collect
+ * more than RUN_OUTPUT_BYTES, and an output that hit that ceiling is exactly the
+ * case where the human cannot have known what they agreed to. It also bounds how
+ * much attacker-controlled text the regexes below see on the main process event
+ * loop, where a pathological input would freeze every session at once.
+ *
+ * Only `high` forces the dialog. `medium` covers dotted quads and any 40-character
+ * base64-ish run, which every `ip a`, `git log` and `sha256sum` produces; forcing
+ * on those would mean the checkbox never applies, and a control that silently does
+ * nothing is worse than no control — it is the habituation `secretPatterns.ts`
+ * names in its own header as the failure mode.
+ */
+export function outputNeedsReview(run: RunResult): boolean {
+  if (run.truncated) return true
+  return findSecrets(run.output).some((m) => m.severity === 'high')
 }
 
 function toolError(message: string): {

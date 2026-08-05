@@ -191,6 +191,14 @@ export interface ShareRequest {
   origin: 'read_terminal' | 'command_output'
   /** Předvyplněný text (už bez ANSI sekvencí). */
   text: string
+  /**
+   * The human ticked auto-share, but the output tripped the secret detector and
+   * the dialog opened anyway. The dialog must say so — an override it cannot
+   * explain reads as the checkbox being broken. It also tells the approval
+   * queue to raise the window: on this path the human was promised no dialog,
+   * so an unnoticed one would be denied on their behalf by the timeout.
+   */
+  autoShareOverridden?: boolean
 }
 
 /** Obálka pro výsledky IPC – žádné výjimky přes hranici procesu. */
