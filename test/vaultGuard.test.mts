@@ -2,12 +2,19 @@
 // Copyright (C) 2026 Simplixio — Stanislav Opletal <info@simplixio.net>
 
 import { strict as assert } from 'node:assert'
-import { describe, it } from 'node:test'
+import { after, describe, it } from 'node:test'
+import fsp from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
 import {
+  GUARD_MAX_BYTES,
   GUARD_VERSION,
   parseGuard,
+  readAnchorFile,
+  removeAnchorFile,
   serializeGuard,
   verdict,
+  writeAnchorFile,
   type Anchor,
   type GuardSealer
 } from '../src/main/vaultGuard.ts'
@@ -211,5 +218,99 @@ describe('modul nesmí sáhnout na Electron', () => {
     const fs = await import('node:fs/promises')
     const source = await fs.readFile(new URL('../src/main/vaultGuard.ts', import.meta.url), 'utf8')
     assert.ok(!/from ['"]electron['"]/.test(source), 'vaultGuard.ts nesmí importovat electron')
+  })
+})
+
+describe('vault.guard na disku', () => {
+  const sealer = fakeSealer()
+  const dirs: string[] = []
+
+  async function tmpDir(): Promise<string> {
+    const made = await fsp.mkdtemp(path.join(os.tmpdir(), 'cw-guard-'))
+    dirs.push(made)
+    return made
+  }
+
+  after(async () => {
+    for (const d of dirs) await fsp.rm(d, { recursive: true, force: true })
+  })
+
+  it('zapíše a přečte zpátky', async () => {
+    const file = path.join(await tmpDir(), 'vault.guard')
+    await writeAnchorFile(file, 11, 4242, sealer)
+
+    const read = await readAnchorFile(file, sealer)
+    assert.equal(read.kind, 'ok')
+    assert.deepEqual(read.kind === 'ok' && read.anchor, {
+      counter: 11,
+      at: 4242,
+      protected: true
+    })
+  })
+
+  it('chybějící soubor je absent, ne chyba', async () => {
+    const file = path.join(await tmpDir(), 'neni-tam.guard')
+    assert.deepEqual(await readAnchorFile(file, sealer), { kind: 'absent' })
+  })
+
+  /*
+   * The distinction this whole file rests on. The caller overwrites an absent
+   * anchor and refuses to touch an unreadable one, so if a corrupt file read as
+   * absent, damaging it would be enough to switch rollback detection off -- and
+   * damaging a file is exactly what the attacker being modelled here can do.
+   */
+  it('poškozený soubor je unreadable, NIKDY absent', async () => {
+    const file = path.join(await tmpDir(), 'vault.guard')
+    for (const junk of ['', '{{{', '[]', '{"version":999}']) {
+      await fsp.writeFile(file, junk, 'utf8')
+      const read = await readAnchorFile(file, sealer)
+      assert.equal(read.kind, 'unreadable', `pro ${JSON.stringify(junk)}`)
+    }
+  })
+
+  it('přerostlý soubor se nenačte celý', async () => {
+    const file = path.join(await tmpDir(), 'vault.guard')
+    await fsp.writeFile(file, 'x'.repeat(GUARD_MAX_BYTES + 10), 'utf8')
+    const read = await readAnchorFile(file, sealer)
+    assert.equal(read.kind, 'unreadable')
+    assert.match(read.kind === 'unreadable' ? read.reason : '', /too large/)
+  })
+
+  it('adresář místo souboru neshodí čtení', async () => {
+    const dir = await tmpDir()
+    const file = path.join(dir, 'vault.guard')
+    await fsp.mkdir(file)
+    assert.equal((await readAnchorFile(file, sealer)).kind, 'unreadable')
+  })
+
+  it('přepis nechá platnou kotvu a žádný .tmp', async () => {
+    const dir = await tmpDir()
+    const file = path.join(dir, 'vault.guard')
+    await writeAnchorFile(file, 1, 1000, sealer)
+    await writeAnchorFile(file, 2, 2000, sealer)
+
+    const read = await readAnchorFile(file, sealer)
+    assert.equal(read.kind === 'ok' && read.anchor.counter, 2)
+    assert.deepEqual(await fsp.readdir(dir), ['vault.guard'], 'dočasný soubor nesmí zůstat')
+  })
+
+  /*
+   * An anchor outliving its vault would report a rollback that never happened:
+   * a freshly created vault starts at counter 0, which is below anything the
+   * old anchor recorded.
+   */
+  it('smazání je tiché a opakovatelné', async () => {
+    const file = path.join(await tmpDir(), 'vault.guard')
+    await writeAnchorFile(file, 5, 1000, sealer)
+    await removeAnchorFile(file)
+    assert.equal((await readAnchorFile(file, sealer)).kind, 'absent')
+    await removeAnchorFile(file)
+  })
+
+  it('kotva se zapisuje jen pro majitele', { skip: process.platform === 'win32' }, async () => {
+    const file = path.join(await tmpDir(), 'vault.guard')
+    await writeAnchorFile(file, 1, 1000, sealer)
+    const stat = await fsp.stat(file)
+    assert.equal(stat.mode & 0o777, 0o600)
   })
 })

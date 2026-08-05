@@ -24,8 +24,24 @@
  * — a shodilo by je při importu, ne v jednom testu.
  */
 
+import { constants as fsConstants } from 'node:fs'
+import fsp from 'node:fs/promises'
+
 /** Verze formátu `vault.guard`. Neznámou verzi nečteme, ale ani nepřepisujeme naslepo. */
 export const GUARD_VERSION = 1 as const
+
+/**
+ * Strop pro čtení kotvy.
+ *
+ * Kotva má pár set bajtů. Limit je tu proto, že soubor leží v adresáři, do
+ * kterého může psát i něco jiného, a načíst odtud gigabajt při odemykání by byl
+ * laciný způsob, jak aplikaci položit.
+ */
+export const GUARD_MAX_BYTES = 64 * 1024
+
+// Windows nemá O_NONBLOCK a přímý odkaz by z celého příznakového slova udělal
+// NaN. Stejný důvod jako v textFile.ts.
+const O_NONBLOCK = (fsConstants as { O_NONBLOCK?: number }).O_NONBLOCK ?? 0
 
 /**
  * Zapečetění kotvy platformním trezorem hesel.
@@ -171,4 +187,83 @@ export function parseGuard(raw: string, sealer: GuardSealer): GuardRead {
     kind: 'ok',
     anchor: { counter: data.counter, at: data.at, protected: file.protected }
   }
+}
+
+/* ------------------------------------------------------------ práce se souborem */
+
+/**
+ * Přečte `vault.guard`.
+ *
+ * Chybějící soubor je `absent`, cokoliv jiného `unreadable` — mezi „kotva tu
+ * není" a „kotva tu je, ale nerozumím jí" se **nesmí** míchat. Volající první
+ * případ přepisuje a druhý ne; kdyby splynuly, stačí kotvu poškodit a detekce
+ * se sama vypne.
+ *
+ * Otevírá se dřív, než se ptá: `fstat` na otevřeném deskriptoru odpoví
+ * `isFile() === false` i na pojmenovanou rouru, kterou `stat` nad cestou hlásí
+ * jako soubor. Ta by jinak prošla limitem a čtení by se zaseklo na vlákně,
+ * které nejde zrušit — přesně při odemykání.
+ */
+export async function readAnchorFile(file: string, sealer: GuardSealer): Promise<GuardRead> {
+  let handle: fsp.FileHandle
+  try {
+    handle = await fsp.open(file, fsConstants.O_RDONLY | O_NONBLOCK)
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return { kind: 'absent' }
+    return { kind: 'unreadable', reason: `cannot open: ${(err as Error).message}` }
+  }
+
+  try {
+    const stat = await handle.stat()
+    if (!stat.isFile()) return { kind: 'unreadable', reason: 'not a regular file' }
+    if (stat.size > GUARD_MAX_BYTES) return { kind: 'unreadable', reason: 'too large' }
+
+    const buf = Buffer.alloc(GUARD_MAX_BYTES + 1)
+    let filled = 0
+    while (filled < buf.length) {
+      const { bytesRead } = await handle.read(buf, filled, buf.length - filled, filled)
+      if (bytesRead === 0) break
+      filled += bytesRead
+    }
+    if (filled > GUARD_MAX_BYTES) return { kind: 'unreadable', reason: 'too large' }
+
+    return parseGuard(buf.subarray(0, filled).toString('utf8'), sealer)
+  } catch (err) {
+    return { kind: 'unreadable', reason: `cannot read: ${(err as Error).message}` }
+  } finally {
+    await handle.close().catch(() => {})
+  }
+}
+
+/**
+ * Zapíše kotvu.
+ *
+ * Přes dočasný soubor a `rename`, aby přerušený zápis nenechal na disku
+ * useknutou kotvu — tu by příští start četl jako `unreadable` a detekce by
+ * tiše zmizela kvůli výpadku proudu.
+ *
+ * **Volá se až po úspěšném zápisu trezoru, nikdy před ním.** Opačné pořadí
+ * nechá po pádu kotvu napřed a `verdict` pak hlásí vrácení souboru při každém
+ * nečistém vypnutí.
+ */
+export async function writeAnchorFile(
+  file: string,
+  counter: number,
+  at: number,
+  sealer: GuardSealer
+): Promise<void> {
+  const text = serializeGuard(counter, at, sealer)
+  const tmp = `${file}.tmp`
+  await fsp.writeFile(tmp, text, { encoding: 'utf8', mode: 0o600 })
+  await fsp.rename(tmp, file)
+}
+
+/**
+ * Smaže kotvu. Chybějící soubor není chyba.
+ *
+ * Patří k mazání trezoru: kotva, která přežije svůj trezor, ohlásí u nově
+ * založeného (čítač zpátky na nule) vrácení souboru, které se nestalo.
+ */
+export async function removeAnchorFile(file: string): Promise<void> {
+  await fsp.rm(file, { force: true })
 }
