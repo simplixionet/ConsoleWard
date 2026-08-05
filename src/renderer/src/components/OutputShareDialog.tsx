@@ -331,6 +331,16 @@ function ReviewStage({
             </div>
           </div>
 
+          {/*
+            The reason belongs on this step too, not only on the first one. This
+            is where "send or not" is actually decided, and deciding it without
+            what was asked for in front of you is deciding half of it.
+          */}
+          <div>
+            <div className="meta-label">{t('mcp.aiReason')}</div>
+            <div className="ai-reason">{request.reason || t('mcp.noReason')}</div>
+          </div>
+
           {request.autoShareOverridden && (
             <div className="warn-box danger-box">{t('mcp.autoShareOverridden')}</div>
           )}
