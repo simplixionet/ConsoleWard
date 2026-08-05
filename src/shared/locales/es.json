@@ -261,7 +261,7 @@
   "error.vaultLocked": "La caja fuerte está bloqueada.",
   "error.vaultExists": "La caja fuerte ya existe.",
   "error.vaultMissing": "La caja fuerte aún no existe.",
-  "error.vaultCorrupt": "El archivo de la caja fuerte está dañado (JSON no válido).",
+  "error.vaultCorrupt": "El archivo de la caja fuerte está dañado.",
   "error.vaultUnsupported": "Versión o formato de caja fuerte no compatible.",
   "error.wrongPassword": "Contraseña maestra incorrecta.",
   "error.wrongOldPassword": "La contraseña anterior no coincide.",

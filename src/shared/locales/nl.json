@@ -261,7 +261,7 @@
   "error.vaultLocked": "De kluis is vergrendeld.",
   "error.vaultExists": "De kluis bestaat al.",
   "error.vaultMissing": "De kluis bestaat nog niet.",
-  "error.vaultCorrupt": "Het kluisbestand is beschadigd (ongeldige JSON).",
+  "error.vaultCorrupt": "Het kluisbestand is beschadigd.",
   "error.vaultUnsupported": "Niet-ondersteunde kluisversie of -indeling.",
   "error.wrongPassword": "Verkeerd hoofdwachtwoord.",
   "error.wrongOldPassword": "Het oude wachtwoord klopt niet.",

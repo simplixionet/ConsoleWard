@@ -261,7 +261,7 @@
   "error.vaultLocked": "La cassaforte è bloccata.",
   "error.vaultExists": "La cassaforte esiste già.",
   "error.vaultMissing": "La cassaforte non esiste ancora.",
-  "error.vaultCorrupt": "Il file della cassaforte è danneggiato (JSON non valido).",
+  "error.vaultCorrupt": "Il file della cassaforte è danneggiato.",
   "error.vaultUnsupported": "Versione o formato della cassaforte non supportati.",
   "error.wrongPassword": "Password principale errata.",
   "error.wrongOldPassword": "La password precedente non corrisponde.",

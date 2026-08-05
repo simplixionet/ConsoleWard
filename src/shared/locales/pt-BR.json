@@ -261,7 +261,7 @@
   "error.vaultLocked": "O cofre está bloqueado.",
   "error.vaultExists": "O cofre já existe.",
   "error.vaultMissing": "O cofre ainda não existe.",
-  "error.vaultCorrupt": "O arquivo do cofre está danificado (JSON inválido).",
+  "error.vaultCorrupt": "O arquivo do cofre está danificado.",
   "error.vaultUnsupported": "Versão ou formato de cofre não suportado.",
   "error.wrongPassword": "Senha mestra incorreta.",
   "error.wrongOldPassword": "A senha anterior não confere.",

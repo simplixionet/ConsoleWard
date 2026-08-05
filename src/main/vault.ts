@@ -40,6 +40,20 @@ const KDF_PARAMS = { N: 1 << 17, r: 8, p: 1, keylen: 32 }
 // scrypt potřebuje ~128 * N * r bajtů; Node má výchozí strop 32 MB, zvedáme ho.
 const MAXMEM = 320 * 1024 * 1024
 
+/**
+ * What `assertKdf` accepts out of a vault file.
+ *
+ * Deliberately **not** derived from `KDF_PARAMS`. Raising the cost of new
+ * vaults must never lock anyone out of a vault sealed under the old cost, so
+ * this is the record of what has actually been written, and it only widens.
+ * Every version of this project wrote `N = 1 << 17, r = 8, p = 1, keylen = 32`
+ * and a 32-byte salt, so the historical set is a single point today.
+ *
+ * `maxN` is the largest N that fits in `MAXMEM` (128 * r * (N + p + 2)) — raise
+ * the two together, or newly written vaults start reading as corrupt.
+ */
+const KDF_ACCEPTED = { minN: 1 << 17, maxN: 1 << 18, r: 8, p: 1, keylen: 32, minSaltBytes: 16 }
+
 type WrapType = 'password' | 'recovery'
 
 interface KdfSpec {
@@ -158,6 +172,42 @@ export function normalizeRecoveryKey(input: string): string {
 }
 
 /* ------------------------------------------------------------- balení DEK */
+
+/**
+ * Rejects KDF parameters that this application did not write.
+ *
+ * `deriveKek` feeds N, r, p and keylen from the file straight into scrypt, so
+ * whoever can write `vault.enc` picks the cost. `maxmem` is a far weaker guard
+ * than it looks: it bounds 128 * r * (N + p + 2), which at our N and r still
+ * admits `p = 196606`. Measured at ~146 ms per unit of p, that is about eight
+ * hours of one libuv threadpool thread for a single unlock, and the pool has
+ * four — every `fsp.*` call in the application queues behind them. `keylen` is
+ * not bounded by `maxmem` at all: `keylen: 1_000_000_000` is accepted and
+ * allocates a gigabyte. And nothing sets a floor, so N could read 1024.
+ *
+ * Checked here rather than in `openWrap` because `unlockLegacy` reaches
+ * `deriveKek` without passing through it, and because all five `openWrap`
+ * callers wrap it in a `catch {}` that rewrites every throw into "wrong
+ * password" — the user would be blamed for a file that is malformed.
+ */
+function assertKdf(kdf: unknown): void {
+  const k = (kdf ?? {}) as Record<string, unknown>
+  const { name, salt, N, r, p, keylen } = k
+  const bad =
+    name !== 'scrypt' ||
+    typeof salt !== 'string' ||
+    typeof N !== 'number' ||
+    !Number.isInteger(N) ||
+    N < KDF_ACCEPTED.minN ||
+    N > KDF_ACCEPTED.maxN ||
+    (N & (N - 1)) !== 0 ||
+    r !== KDF_ACCEPTED.r ||
+    p !== KDF_ACCEPTED.p ||
+    keylen !== KDF_ACCEPTED.keylen ||
+    // The field is base64, so the string length says nothing about the entropy.
+    Buffer.from(salt, 'base64').length < KDF_ACCEPTED.minSaltBytes
+  if (bad) throw appError('error.vaultCorrupt')
+}
 
 async function deriveKek(secret: string, salt: Buffer, kdf?: KdfSpec): Promise<Buffer> {
   const params = kdf ?? { ...KDF_PARAMS, name: 'scrypt' as const, salt: '' }
@@ -469,6 +519,16 @@ class Vault {
     // rozhodnutí. Prázdné pole je legitimní a řeší se dál jako chybějící heslo.
     if (file.version === 2 && !Array.isArray((file as VaultFileV2).wraps)) {
       throw appError('error.vaultCorrupt')
+    }
+    // The one place where file bytes become KDF parameters, so the one place
+    // that has to check them — before a key is derived from them, which is the
+    // only moment at which checking still helps. Wraps held in memory come only
+    // from `makeWrap()` or from a file that passed through here, which is why
+    // `openWrap()` does not repeat the check.
+    if (file.version === 1) {
+      assertKdf(file.kdf)
+    } else {
+      for (const wrap of file.wraps) assertKdf(wrap?.kdf)
     }
     return file
   }

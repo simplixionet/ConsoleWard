@@ -261,7 +261,7 @@
   "error.vaultLocked": "Le coffre est verrouillé.",
   "error.vaultExists": "Le coffre existe déjà.",
   "error.vaultMissing": "Le coffre n'existe pas encore.",
-  "error.vaultCorrupt": "Le fichier du coffre est endommagé (JSON invalide).",
+  "error.vaultCorrupt": "Le fichier du coffre est endommagé.",
   "error.vaultUnsupported": "Version ou format de coffre non pris en charge.",
   "error.wrongPassword": "Mot de passe maître incorrect.",
   "error.wrongOldPassword": "L'ancien mot de passe ne correspond pas.",

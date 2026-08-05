@@ -211,6 +211,42 @@ async function writeLegacyVault(password: string, payload: unknown): Promise<voi
   })
 }
 
+/**
+ * One real vault, built once and reused as the base for every forged file in
+ * the KDF section. `create()` costs two scrypt derivations, and those tests
+ * need a structurally genuine file to mutate rather than a fresh vault.
+ */
+let goodFile: OnDiskVault | null = null
+
+async function baseVaultFile(): Promise<OnDiskVault> {
+  if (!goodFile) {
+    fresh()
+    await vault.create(PASSWORD)
+    goodFile = readVaultFile()
+  }
+  return goodFile
+}
+
+/**
+ * Writes a fresh vault whose `type` wrap carries the patched `kdf`, leaving the
+ * singleton locked. A `null` patch drops the `kdf` object entirely —
+ * `JSON.stringify` omits an `undefined` value, which is exactly the shape of a
+ * file that lost the field.
+ */
+async function forgeKdf(
+  type: 'password' | 'recovery',
+  patch: Partial<OnDiskWrap['kdf']> | null
+): Promise<void> {
+  const base = await baseVaultFile()
+  fresh()
+  writeVaultFile({
+    ...base,
+    wraps: base.wraps.map((w) =>
+      w.type === type ? { ...w, kdf: patch === null ? undefined : { ...w.kdf, ...patch } } : w
+    )
+  })
+}
+
 after(() => {
   vault.lock()
   for (const made of madeDirs) fs.rmSync(made, { recursive: true, force: true })
@@ -1032,4 +1068,136 @@ test('unlock() reports a damaged file when the wraps array is missing', async ()
   writeVaultFile({ ...file, wraps: null })
   vault.lock()
   await rejectsWithKey(() => vault.unlock(PASSWORD), 'error.vaultCorrupt', 'a null wraps field')
+})
+
+/* ------------------------------------------------------- KDF parametry */
+
+test('unlock() refuses a wrap whose KDF is not scrypt', async () => {
+  // The sharpest of these: `deriveKek` never reads `name`, so with no check the
+  // file opens normally and the field is decorative.
+  await forgeKdf('password', { name: 'argon2id' })
+  await rejectsWithKey(() => vault.unlock(PASSWORD), 'error.vaultCorrupt', 'name = argon2id')
+  assert.equal(vault.isUnlocked(), false, 'a foreign KDF name still opened the vault')
+})
+
+test('unlock() refuses a wrap whose N is below the floor', async () => {
+  await forgeKdf('password', { N: 1024 })
+  await rejectsWithKey(() => vault.unlock(PASSWORD), 'error.vaultCorrupt', 'N = 1024')
+  await forgeKdf('password', { N: 2 })
+  await rejectsWithKey(() => vault.unlock(PASSWORD), 'error.vaultCorrupt', 'N = 2')
+})
+
+test('unlock() refuses an N over the memory ceiling or off the power of two', async () => {
+  // Unchecked, both of these reach scrypt as a synchronous RangeError, which
+  // the caller's `catch {}` reports to the user as a wrong password.
+  await forgeKdf('password', { N: 1 << 19 })
+  await rejectsWithKey(() => vault.unlock(PASSWORD), 'error.vaultCorrupt', 'N = 1 << 19')
+  await forgeKdf('password', { N: 131073 })
+  await rejectsWithKey(() => vault.unlock(PASSWORD), 'error.vaultCorrupt', 'N = 131073')
+})
+
+test('unlock() refuses a wrap whose r is not 8', async () => {
+  await forgeKdf('password', { r: 4 })
+  await rejectsWithKey(() => vault.unlock(PASSWORD), 'error.vaultCorrupt', 'r = 4')
+})
+
+test('unlock() refuses a p other than 1 without ever running the KDF', async () => {
+  // `maxmem` accepts p up to 196606 at our N and r, and scrypt costs ~146 ms per
+  // unit of p — roughly eight hours on one of the four libuv threads, with every
+  // `fsp.*` call in the application queued behind it. The fixture uses 64 so an
+  // unguarded build finishes and fails instead of hanging the suite; the time
+  // bound is what proves the KDF was never started.
+  await forgeKdf('password', { p: 64 })
+  const started = Date.now()
+  await rejectsWithKey(() => vault.unlock(PASSWORD), 'error.vaultCorrupt', 'p = 64')
+  const spent = Date.now() - started
+  assert.ok(spent < 2000, `the rejection took ${spent} ms — the KDF ran before the check`)
+})
+
+test('unlock() refuses a keylen other than 32', async () => {
+  // `maxmem` does not bound keylen at all: unguarded, `keylen: 1_000_000_000` is
+  // accepted and allocates a gigabyte before AES ever objects to the key length.
+  await forgeKdf('password', { keylen: 64 })
+  await rejectsWithKey(() => vault.unlock(PASSWORD), 'error.vaultCorrupt', 'keylen = 64')
+  await forgeKdf('password', { keylen: 50_000_000 })
+  const started = Date.now()
+  await rejectsWithKey(() => vault.unlock(PASSWORD), 'error.vaultCorrupt', 'keylen = 50 MB')
+  const spent = Date.now() - started
+  assert.ok(spent < 2000, `the rejection took ${spent} ms — the KDF ran before the check`)
+})
+
+test('unlock() refuses a salt shorter than sixteen bytes', async () => {
+  // The salt is stored base64, so the length has to be read off the decoded
+  // bytes — eight bytes encode to twelve characters.
+  await forgeKdf('password', { salt: randomBytes(8).toString('base64') })
+  await rejectsWithKey(() => vault.unlock(PASSWORD), 'error.vaultCorrupt', 'an 8 byte salt')
+  await forgeKdf('password', { salt: '' })
+  await rejectsWithKey(() => vault.unlock(PASSWORD), 'error.vaultCorrupt', 'an empty salt')
+
+  // The boundary itself: 15 bytes is refused, 16 gets past the KDF gate and
+  // fails on the GCM tag instead, because the floor is 16 and not "whatever
+  // makeWrap happens to write today".
+  await forgeKdf('password', { salt: randomBytes(15).toString('base64') })
+  await rejectsWithKey(() => vault.unlock(PASSWORD), 'error.vaultCorrupt', 'a 15 byte salt')
+  await forgeKdf('password', { salt: randomBytes(16).toString('base64') })
+  await rejectsWithKey(() => vault.unlock(PASSWORD), 'error.wrongPassword', 'a 16 byte salt')
+})
+
+test('unlock() refuses a wrap carrying no kdf object at all', async () => {
+  // Unguarded, `wrap.kdf.salt` throws a TypeError that the caller swallows as a
+  // wrong password: a damaged file blamed on the user.
+  await forgeKdf('password', null)
+  const err = await rejectsWithKey(() => vault.unlock(PASSWORD), 'error.vaultCorrupt', 'no kdf')
+  assert.notEqual(err.name, 'TypeError', 'a wrap with no kdf crashed instead of reporting')
+})
+
+test('unlock() validates the recovery wrap too, not only the one it opens', async () => {
+  // The check belongs to reading the file, not to opening a wrap. A hostile
+  // recovery wrap costs nothing until someone recovers — and by then every
+  // `persist()` in between has carried it forward untouched.
+  await forgeKdf('recovery', { p: 64 })
+  await rejectsWithKey(() => vault.unlock(PASSWORD), 'error.vaultCorrupt', 'hostile recovery wrap')
+})
+
+test('a v1 vault with hostile KDF parameters is refused before deriving', async () => {
+  // `unlockLegacy` calls `deriveKek(…, file.kdf)` directly, outside the wrap
+  // path, and its `Buffer.from(file.kdf.salt, …)` sits outside any try — so an
+  // unguarded build throws a raw TypeError at the unlock screen for a missing
+  // kdf, and runs the attacker's p for a present one. `migrateLegacyProfile`
+  // copies such a file in from a sibling profile directory.
+  fresh()
+  await writeLegacyVault(PASSWORD, { connections: [sampleConnection()] })
+  const legacy = JSON.parse(fs.readFileSync(vaultPath(), 'utf8')) as { kdf: OnDiskWrap['kdf'] }
+
+  writeVaultFile({ ...legacy, kdf: { ...legacy.kdf, p: 64 } })
+  const started = Date.now()
+  const err = await rejectsWithKey(() => vault.unlock(PASSWORD), 'error.vaultCorrupt', 'v1 p = 64')
+  assert.notEqual(err.name, 'TypeError', 'a damaged v1 file crashed instead of reporting')
+  const spent = Date.now() - started
+  assert.ok(spent < 2000, `the v1 path spent ${spent} ms deriving before it checked`)
+
+  writeVaultFile({ ...legacy, kdf: undefined })
+  await rejectsWithKey(() => vault.unlock(PASSWORD), 'error.vaultCorrupt', 'v1 with no kdf')
+
+  // The untouched legacy file must still migrate: the floor cannot lock out the
+  // one format that predates it, and the migration gets exactly one attempt.
+  writeVaultFile(legacy)
+  await vault.unlock(PASSWORD)
+  assert.equal(readVaultFile().version, 2, 'the KDF check blocked the v1 migration')
+  assert.equal(vault.read().connections.length, 1, 'the legacy data was lost')
+})
+
+test('the KDF check leaves a genuine file alone and leaves room to raise N', async () => {
+  // A validator that refused everything would satisfy every test above.
+  const base = await baseVaultFile()
+  fresh()
+  writeVaultFile(base)
+  await vault.unlock(PASSWORD)
+  assert.equal(vault.isUnlocked(), true, 'the KDF check refused a file the vault wrote itself')
+
+  // N = 1 << 18 is inside the accepted range, so it has to fail on the GCM tag
+  // rather than on the parameters — the ceiling must leave room to raise the
+  // cost without every vault already on disk reading as corrupt.
+  await forgeKdf('password', { N: 1 << 18 })
+  await rejectsWithKey(() => vault.unlock(PASSWORD), 'error.wrongPassword', 'N = 1 << 18')
 })

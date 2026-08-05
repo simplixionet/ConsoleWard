@@ -263,7 +263,7 @@
   "error.vaultLocked": "Trezor je zamčený.",
   "error.vaultExists": "Trezor už existuje.",
   "error.vaultMissing": "Trezor zatím neexistuje.",
-  "error.vaultCorrupt": "Soubor trezoru je poškozený (neplatný JSON).",
+  "error.vaultCorrupt": "Soubor trezoru je poškozený.",
   "error.vaultUnsupported": "Nepodporovaná verze nebo formát trezoru.",
   "error.wrongPassword": "Nesprávné hlavní heslo.",
   "error.wrongOldPassword": "Staré heslo nesouhlasí.",

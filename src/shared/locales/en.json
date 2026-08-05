@@ -261,7 +261,7 @@
   "error.vaultLocked": "The vault is locked.",
   "error.vaultExists": "The vault already exists.",
   "error.vaultMissing": "The vault does not exist yet.",
-  "error.vaultCorrupt": "The vault file is damaged (invalid JSON).",
+  "error.vaultCorrupt": "The vault file is damaged.",
   "error.vaultUnsupported": "Unsupported vault version or format.",
   "error.wrongPassword": "Wrong master password.",
   "error.wrongOldPassword": "The old password does not match.",

@@ -261,7 +261,7 @@
   "error.vaultLocked": "Der Tresor ist gesperrt.",
   "error.vaultExists": "Der Tresor existiert bereits.",
   "error.vaultMissing": "Der Tresor existiert noch nicht.",
-  "error.vaultCorrupt": "Die Tresordatei ist beschädigt (ungültiges JSON).",
+  "error.vaultCorrupt": "Die Tresordatei ist beschädigt.",
   "error.vaultUnsupported": "Nicht unterstützte Tresorversion oder -format.",
   "error.wrongPassword": "Falsches Hauptpasswort.",
   "error.wrongOldPassword": "Das alte Passwort stimmt nicht.",
