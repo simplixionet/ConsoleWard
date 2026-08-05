@@ -10,7 +10,7 @@
  *        dictionary file exists for each (SC-1).
  *   D2 — key parity, plural-aware (SC-3). NOT strict equality with English:
  *        Czech correctly carries two plural keys English does not have.
- *   D3 — every {{placeholder}} in the 61 security-critical keys survives
+ *   D3 — every {{placeholder}} in the 81 security-critical keys survives
  *        translation intact (SC-4).
  *   D4 — informational review table of the security strings that carry a
  *        negation or a limiter. Feeds the human checkpoint. Never fails.

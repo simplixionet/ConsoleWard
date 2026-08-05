@@ -3,7 +3,7 @@
 
 name: Release
 
-# Tag-driven. Pushing v0.1.0 builds the Windows installer and drafts a release
+# Tag-driven. Pushing v1.0.0 builds the Windows installer and drafts a release
 # from it. Nothing publishes on a branch push.
 on:
   push:
@@ -25,21 +25,63 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # 24, matching ci.yml and `engines` in package.json. On 22 the test
+      # harness depends on which 22.x the runner resolves; the reasoning is
+      # written out in full in ci.yml.
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
 
       - name: Install
         run: npm ci
 
-      # The same gates CI runs. A tag should not produce an installer that
-      # would have failed a pull request.
+      # The gates CI runs, in CI's order. A tag must not produce an installer
+      # that would have failed a pull request — and this is the last chance to
+      # notice, because what leaves here is what people download.
+      #
+      # CI's separate `npm run build` is absent on purpose: `npm run dist`
+      # below starts with exactly that build, so running it twice would only
+      # slow the tag down. check:i18n-ui is absent for the same reason it is
+      # absent from CI — it needs a real desktop session. Run it locally
+      # before tagging.
+      - name: Tests
+        run: npm test
+
       - name: Typecheck
         run: npm run typecheck
 
       - name: Locale dictionaries
         run: npm run check:i18n
+
+      # NOTICE is listed in build.files, so it is copied inside the installer
+      # verbatim. A stale one ships a precise, checkable and wrong claim about
+      # what the user just installed — and unlike in CI, nobody can amend it
+      # afterwards without cutting a new tag.
+      - name: Third-party notices are current
+        run: npm run check:notice
+
+      - name: Icon is present and parses as an ICO
+        shell: bash
+        run: |
+          node -e "
+            const fs = require('fs')
+            const b = fs.readFileSync('build/icon.ico')
+            if (b.readUInt16LE(0) !== 0 || b.readUInt16LE(2) !== 1) throw new Error('not an ICO')
+            const n = b.readUInt16LE(4)
+            if (n < 1) throw new Error('ICO has no frames')
+            let end = 0
+            for (let i = 0; i < n; i++) {
+              const at = 6 + i * 16
+              const len = b.readUInt32LE(at + 8)
+              const off = b.readUInt32LE(at + 12)
+              const png = b.subarray(off, off + 4)
+              if (png[0] !== 0x89 || png[1] !== 0x50) throw new Error('frame ' + i + ' is not a PNG')
+              end = Math.max(end, off + len)
+            }
+            if (end !== b.length) throw new Error('frame offsets do not reach end of file')
+            console.log('icon.ico ok: ' + n + ' frames, ' + b.length + ' bytes')
+          "
 
       # The tag must match the version in package.json, or the release will
       # claim to be something the installer is not.
@@ -78,15 +120,88 @@ jobs:
     runs-on: ubuntu-latest
 
     # The only job that writes. Scoped here rather than at workflow level so
-    # the build job cannot touch the repository.
+    # the build job cannot touch the repository. id-token and attestations are
+    # what attest-build-provenance needs to mint and store the attestation;
+    # they stay in this job for the same reason contents: write does.
     permissions:
       contents: write
+      id-token: write
+      attestations: write
 
     steps:
       - uses: actions/download-artifact@v4
         with:
           name: consoleward-windows
           path: dist
+
+      # The notes tell people to verify a checksum, so something has to publish
+      # one. Computed from inside dist so the file records bare names: whoever
+      # downloads the assets into one folder can run `sha256sum -c` against it
+      # unchanged. Written outside dist first so it never hashes itself.
+      - name: Checksums
+        run: (cd dist && sha256sum -- *) > SHA256SUMS.txt
+
+      # The digests go in the body as well as in the file. An attacker who can
+      # swap an asset can swap the checksums file next to it just as easily,
+      # so the copy that matters is the one a human can read on the page.
+      #
+      # Both heredocs are quoted so the backticks and `$` in the examples reach
+      # the file verbatim; @VERSION@ is filled in afterwards, from the tag the
+      # build job already proved equal to package.json. The repository is named
+      # by expression rather than spelled out, because ${{ }} is substituted
+      # before the shell ever sees the script — and because a release cut from
+      # a different repository must not tell people to verify against this one.
+      - name: Release notes
+        run: |
+          cat > NOTES.md <<'HEAD'
+          See [CHANGELOG.md](CHANGELOG.md) for what changed.
+
+          **Windows only.** macOS and Linux targets are configured but have
+          not been built or tested.
+
+          The installer is unsigned — Windows SmartScreen will warn on first
+          run. Verify it before trusting it.
+
+          ### SHA-256
+
+          ```
+          HEAD
+          cat SHA256SUMS.txt >> NOTES.md
+          cat >> NOTES.md <<'TAIL'
+          ```
+
+          Put the downloads in one folder and check them:
+
+          ```
+          sha256sum -c SHA256SUMS.txt
+          ```
+
+          or, in PowerShell (the hash comes back uppercase — compare
+          case-insensitively):
+
+          ```
+          Get-FileHash '.\ConsoleWard Setup @VERSION@.exe' -Algorithm SHA256
+          ```
+
+          ### Provenance
+
+          Every asset above is attested to the workflow run that built it. With
+          the GitHub CLI:
+
+          ```
+          gh attestation verify '.\ConsoleWard Setup @VERSION@.exe' --repo ${{ github.repository }}
+          ```
+          TAIL
+          sed -i "s/@VERSION@/${GITHUB_REF_NAME#v}/g" NOTES.md
+
+      # Binds these exact bytes to this workflow, this repository and this tag,
+      # which is the closest thing to a signature an unsigned installer gets.
+      # Before the draft step: if provenance cannot be recorded, nothing should
+      # reach the release page.
+      - name: Build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/*
 
       # Draft, not published. A human reads the notes, checks the installer and
       # presses the button — the same principle the product itself is built on.
@@ -95,12 +210,7 @@ jobs:
         with:
           draft: true
           generate_release_notes: true
-          files: dist/*
-          body: |
-            See [CHANGELOG.md](CHANGELOG.md) for what changed.
-
-            **Windows only.** macOS and Linux targets are configured but have
-            not been built or tested.
-
-            The installer is unsigned — Windows SmartScreen will warn on first
-            run. Verify the checksum before trusting it.
+          files: |
+            dist/*
+            SHA256SUMS.txt
+          body_path: NOTES.md

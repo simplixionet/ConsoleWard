@@ -50,12 +50,25 @@ Windows installer (NSIS plus a portable build, written to `release/`):
 npm run dist
 ```
 
-Checks:
+Checks. These five are the gates CI runs on every push:
 
 ```bash
-npm run typecheck      # tsc --noEmit, the only automated gate
+npm test               # the test suite, on node's own runner
+npm run typecheck      # tsc --noEmit
+npm run build          # must succeed
 npm run check:i18n     # locale parity, plural categories, placeholder integrity
-npm run check:i18n-ui  # drives the built app and proves every locale renders
+npm run check:notice   # NOTICE matches the dependency tree
+```
+
+CI adds two inline checks to those: that `build/icon.ico` parses as an ICO, and
+that every source file carries an SPDX header.
+
+One gate stays local. It drives the built app over the Chrome DevTools Protocol
+and needs a real desktop session, so on a headless runner it would either hang
+or pass vacuously — which is worse than not running it:
+
+```bash
+npm run check:i18n-ui  # proves every locale actually renders
 ```
 
 ## What it does
@@ -276,7 +289,8 @@ credentials already are.
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Adding a UI language is three small edits and is
-documented there.
+documented there. Taking part also means [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), which
+is short and says what you would expect.
 
 Source comments are currently in Czech. Translating them is real work rather than a
 find-and-replace — they explain *why*, not *what* — and it is tracked as an open item.

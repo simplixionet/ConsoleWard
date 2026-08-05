@@ -10,14 +10,14 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 Nothing yet.
 
 <!--
-Security work done before the first release is folded into 0.1.0 below rather
+Security work done before the first release is folded into 1.0.0 below rather
 than listed here. Nothing has shipped, so there is no version for a reader to
 have been running and no change for them to notice — an "Unreleased / Fixed"
 section against a release that never happened describes the development process
 rather than the software, and this file is for the latter.
 -->
 
-## [0.1.0] — unreleased
+## [1.0.0] — 2026-08-05
 
 First public release. Everything below is the initial implementation rather than
 a change from a previous version.
@@ -170,11 +170,14 @@ a change from a previous version.
   old recovery wrap cannot be rebuilt under the new data key, because the
   recovery key is stored nowhere.
 - **Translations are machine-produced** and have not been natively reviewed. The
-  61 security-critical strings were checked mechanically for placeholder
+  81 security-critical strings were checked mechanically for placeholder
   integrity and read by a human for dropped negations.
-- **Connection and command sorting uses Czech collation for every user.**
+- **Folder headings sort by the runtime's default locale, not the chosen one.**
+  Connections, commands and known hosts are sorted with an `Intl.Collator` built
+  from the active UI language, but the folder headings the sidebar groups them
+  under still use a bare `localeCompare`.
 - **macOS and Linux targets are configured but untested**, and have no icons.
 - **Source comments are in Czech.**
 
-[Unreleased]: https://github.com/simplixionet/ConsoleWard/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/simplixionet/ConsoleWard/releases/tag/v0.1.0
+[Unreleased]: https://github.com/simplixionet/ConsoleWard/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/simplixionet/ConsoleWard/releases/tag/v1.0.0

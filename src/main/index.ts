@@ -735,8 +735,17 @@ if (!gotLock) {
 
   void app.whenReady().then(async () => {
     // Projekt se dřív jmenoval jinak; přeneseme trezor ze staré složky profilu.
-    const migratedFrom = await migrateLegacyProfile(['PuttyUI', 'putty-ui']).catch(() => null)
-    if (migratedFrom) console.log('Trezor přenesen ze složky:', migratedFrom)
+    const migratedFrom = await migrateLegacyProfile(['PuttyUI', 'putty-ui']).catch(
+      (err: unknown) => {
+        // Non-fatal — a failed move must not keep the app from starting. But it
+        // is the upgrade path where the user's vault is still in the old profile
+        // directory, so silence here reads to them as a vault that vanished, and
+        // this log is the only thing that says otherwise.
+        console.error('Legacy profile migration failed:', err)
+        return null
+      }
+    )
+    if (migratedFrom) console.log('Vault migrated from legacy profile directory:', migratedFrom)
 
     await initI18n()
 
@@ -760,9 +769,24 @@ if (!gotLock) {
     })
   })
 
+  /**
+   * On macOS the last window closing is not the end of the app.
+   *
+   * Everywhere else this quits, and `before-quit` then rejects approvals, stops
+   * the gateway and locks the vault. On darwin the process stays resident with
+   * no window at all — `before-quit` does not run until the user actually
+   * quits — so without this the vault would sit unlocked in memory and the MCP
+   * gateway would keep answering tool calls whose approval dialog has nowhere
+   * to appear. `doLock()` is the same teardown an auto-lock does; `activate`
+   * builds a fresh window onto the lock screen.
+   */
   app.on('window-all-closed', () => {
     ssh.disconnectAll()
-    if (process.platform !== 'darwin') app.quit()
+    if (process.platform !== 'darwin') {
+      app.quit()
+      return
+    }
+    doLock()
   })
 
   app.on('before-quit', () => {

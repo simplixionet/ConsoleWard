@@ -7,6 +7,9 @@ Thanks for looking. This is a security tool, which shapes most of what follows.
 **Do not report a vulnerability here.** See [SECURITY.md](SECURITY.md) for the
 private channels.
 
+Taking part also means [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md). It is short,
+and it is the standard everyone here is held to.
+
 ## Getting set up
 
 ```bash
@@ -49,6 +52,12 @@ things make that work and none of them should be changed casually:
   extensionless relative imports the source uses, and adds `type: 'json'` to
   dictionary imports.
 - Modules that reach Electron are replaced with `mock.module('electron', …)`.
+- Both flags in the `test` script are load-bearing. `--import ./test/setup.mts`
+  is what registers the resolve hook above, and it has to happen before any test
+  module is loaded — hence `--import` rather than an import inside a test file.
+  `--experimental-test-module-mocks` is what puts `mock.module` on the `test`
+  namespace at all; without it the call is not a function and every file that
+  stubs Electron dies at import time.
 - Main-process files import shared code **relatively** (`'../shared/x'`), never
   through the `@shared` alias. The resolver knows nothing about the alias, so
   `@shared` in `src/main/` builds and type-checks cleanly and then fails only at
@@ -86,8 +95,9 @@ Three edits, and the checks will tell you if you missed one.
 `src/shared/locales/<code>.json`, where `<code>` is the BCP 47 tag — `pt-BR`,
 not `pt_br`. Translate the values, leave the keys alone.
 
-Two keys are pluralised: `term.connCount` and `term.snipCount`. Supply a variant
-for every CLDR category your language uses for integers, and **only** those.
+Four keys are pluralised: `term.connCount`, `term.snipCount`, `mcp.pickLines`
+and `mcp.pickChars`. Supply a variant for every CLDR category your language uses
+for integers, and **only** those.
 `npm run check:i18n` derives the list from `Intl.PluralRules` and will tell you
 exactly which are missing. Do not copy English's `_one` / `_other` blindly —
 Czech needs `_few` as well, Polish and Russian need `_many`, and Japanese needs
@@ -120,9 +130,13 @@ them renders English.
 
 Very welcome — they are machine-produced and have not been natively reviewed.
 
-The strings under `hostkey.`, `mcp.`, `secret.` and `recovery.` are
+The strings under `hostkey.`, `mcp.`, `secret.`, `recovery.` and `vault.` are
 **security-critical**: they are the host-key change warning, the command
-approval dialog, and the recovery-key notice. A translation that softens
+approval and output-sharing dialogs, the labels the secret highlighter puts on
+what it found, the recovery-key notice, and the vault-rollback warning. The list
+lives in `SECURITY_NAMESPACES` in `scripts/check-i18n-dictionaries.mjs`, which
+is also what makes `check:i18n` hold those keys to placeholder integrity. A
+translation that softens
 "continue **only** if you have verified through another channel" into
 "continue if you have verified" is a security bug, not a wording preference.
 Please flag those explicitly in the pull request so they get read carefully.

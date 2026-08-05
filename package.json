@@ -1,7 +1,7 @@
 {
   "name": "consoleward",
   "productName": "ConsoleWard",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Encrypted SSH client with an AI gate: every command and every byte of output needs your approval",
   "license": "GPL-3.0-or-later",
   "main": "./out/main/index.js",
@@ -52,12 +52,6 @@
     "electron-vite": "^5.0.0",
     "typescript": "^7.0.2",
     "vite": "^7.3.6"
-  },
-  "allowScripts": {
-    "electron@43.2.0": true,
-    "electron-winstaller@5.4.0": true,
-    "esbuild@0.25.12": true,
-    "esbuild@0.28.1": true
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",

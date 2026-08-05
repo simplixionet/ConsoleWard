@@ -59,6 +59,18 @@ const HUMAN_SESSIONS = [
   { id: 's2', connectionId: 'c2', title: 'root@10.0.0.5', status: 'ready' }
 ]
 
+/** What the stubbed terminal buffer offers `read_terminal`. */
+const PREVIEW = 'last twenty lines'
+
+/**
+ * Every command that actually reached the server, in order.
+ *
+ * A refusal has to leave this empty. Asserting only on what came back would
+ * pass against a build that ran the command and merely declined to report it,
+ * and it is the running that the dialog exists to prevent.
+ */
+let executed: string[] = []
+
 mock.module('../src/main/ssh.ts', {
   exports: {
     ssh: {
@@ -66,8 +78,11 @@ mock.module('../src/main/ssh.ts', {
       title: (): string => 'web01',
       list: () => HUMAN_SESSIONS,
       listForModel: () => MODEL_SESSIONS,
-      readText: (): string => 'last twenty lines',
-      runOnce: async () => run
+      readText: (): string => PREVIEW,
+      runOnce: async (_id: string, command: string) => {
+        executed.push(command)
+        return run
+      }
     }
   }
 })
@@ -207,6 +222,47 @@ describe('run_command: the auto-share tick cannot outrun the detector', () => {
   })
 })
 
+/* ------------------------------------------------ run_command: the refusal */
+
+describe('run_command: "no" stops the command, not just the answer', () => {
+  test('a denied command never runs and nothing comes back from it', async () => {
+    executed = []
+    run = ran('root:$6$Xy9/aB.rootHashGoesHere:19700:0:99999:7:::')
+    const shares: ShareSeen[] = []
+    mcp.bind({
+      askCommand: async () => ({ approved: false, autoShare: false }),
+      askShare: async (req) => {
+        shares.push(req as unknown as ShareSeen)
+        return { shared: true, text: req.text }
+      }
+    })
+
+    const result = await toolHandler('run_command')(
+      { session_id: 's1', command: 'cat /etc/shadow', reason: 'auditing accounts' },
+      {}
+    )
+
+    assert.deepEqual(
+      executed,
+      [],
+      'the command the human refused was sent to the server anyway; nothing the tool returns can ' +
+        'undo that, the file was already read'
+    )
+    assert.equal(shares.length, 0, 'a refused command still opened a dialog over its output')
+    assert.equal(result.isError, true, 'the refusal was reported to the model as an ordinary result')
+    assert.ok(
+      !result.content[0].text.includes('rootHashGoesHere'),
+      'output of a command the human refused reached the model'
+    )
+  })
+
+  test('an approved command does run, so the test above is not green by accident', async () => {
+    executed = []
+    await approveAndRun({ result: ran(LS_LA), autoShare: true, command: 'ls -la' })
+    assert.deepEqual(executed, ['ls -la'], 'the approved path never reaches runOnce at all')
+  })
+})
+
 /* ------------------------------------------------------------ list_sessions */
 
 describe('list_sessions withholds what its description promises to withhold', () => {
@@ -250,6 +306,50 @@ describe('read_terminal is unaffected', () => {
     assert.equal(shares.length, 1, 'read_terminal stopped asking')
     assert.equal(shares[0].origin, 'read_terminal')
     assert.ok(!shares[0].autoShareOverridden, 'read_terminal has no tick to override')
+  })
+
+  test('a declined preview never reaches the model', async () => {
+    const shares: ShareSeen[] = []
+    mcp.bind({
+      askCommand: async () => ({ approved: false, autoShare: false }),
+      askShare: async (req) => {
+        shares.push(req as unknown as ShareSeen)
+        return { shared: false, text: '' }
+      }
+    })
+
+    const result = await toolHandler('read_terminal')({ session_id: 's1', reason: 'why' }, {})
+
+    assert.equal(shares[0]?.text, PREVIEW, 'precondition: the dialog really was offered the buffer')
+    assert.equal(
+      result.isError,
+      true,
+      'a refusal came back as a successful read, so the model concludes the terminal is empty ' +
+        'rather than that it was told no'
+    )
+    assert.ok(
+      !result.content[0].text.includes(PREVIEW),
+      'the human declined and the buffer was sent regardless'
+    )
+  })
+
+  test('text handed back alongside a refusal is still not sent', async () => {
+    // `answerShare` blanks the text whenever the human says no, so today the
+    // field is empty by the time it arrives. The tool must not lean on that:
+    // what decides is the refusal itself, not whether the other side happened
+    // to clear its buffer first.
+    mcp.bind({
+      askCommand: async () => ({ approved: false, autoShare: false }),
+      askShare: async (req) => ({ shared: false, text: req.text })
+    })
+
+    const result = await toolHandler('read_terminal')({ session_id: 's1', reason: 'why' }, {})
+
+    assert.equal(result.isError, true, 'a refusal carrying text was treated as a share')
+    assert.ok(
+      !result.content[0].text.includes(PREVIEW),
+      'the buffer went out on a refusal because only the accompanying text was read'
+    )
   })
 })
 

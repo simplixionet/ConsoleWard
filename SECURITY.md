@@ -42,7 +42,7 @@ In scope, and most interesting first:
   approval, or `read_terminal` return content the human did not release, is the
   most serious class of bug this project has.
 - **Vault cryptography.** Key derivation, envelope wrapping, the GCM tag as the
-  only verifier, the v1→v2 migration.
+  only verifier, the v1→v3 and v2→v3 migrations.
 - **Host key verification.** Anything that lets a changed fingerprint through
   without explicit acceptance, or that overwrites a stored fingerprint on
   rejection.
@@ -79,7 +79,7 @@ you will get this answer:
   point on. What it cannot undo is a copy someone already took together with the
   matching secret — they have read what was in that copy. This was a real
   finding, fixed on 2026-08-05; before that, revocation revoked nothing at all.
-- **Translations are machine-produced.** The 61 security-critical strings are
+- **Translations are machine-produced.** The 81 security-critical strings are
   checked mechanically for placeholder integrity and were read by a human for
   dropped negations, but they have not had a native review. A weakened warning
   in a non-English locale is a real bug and worth reporting.
@@ -124,6 +124,18 @@ you will get this answer:
   — the anchor is written in plaintext and records that it is unprotected. It
   still catches every accidental rollback. It is not a defence against anyone who
   can write to your profile directory, and it does not claim to be.
+
+- **`removeRecoveryKey` carries a branch that cannot be reached.** Before it
+  re-keys the vault the function looks up the password wrap and throws
+  `error.lastUnlockMethod` if there is none, and no public API can produce that
+  state: `create` writes a password wrap, `unlock` refuses a file without one,
+  `unlockLegacy` builds one while migrating, and `reseal` rejects a secret list
+  that has none. So a report that the branch is dead is correct, and it is
+  staying anyway. It is an invariant assertion, not a user-facing error: the day
+  one of those four paths changes, what surfaces is a translated message rather
+  than a `TypeError` out of `openWrap(undefined, …)` in the middle of a DEK
+  rotation, with the wraps already half rebuilt. Removing it buys tidiness and
+  pays for it in the worst place in the file.
 
 ## Supported versions
 

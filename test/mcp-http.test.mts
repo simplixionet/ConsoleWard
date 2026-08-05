@@ -10,17 +10,47 @@
  * pure, so they need no server at all — which is why they were extracted rather
  * than left inline in the handler.
  *
+ * The last block is the exception, and it earns the cost of a real socket. The
+ * address the server binds to and the order its gates run in exist only inside
+ * the closure `start()` builds; nothing exported can be asked about either, and
+ * a test that restated the rule beside the code would pass against a build that
+ * had lost it. So that block starts the actual server and speaks HTTP to it.
+ *
  * `mcp.ts` reaches Electron transitively (mcp.ts -> vault.ts -> electron), so
  * electron and the two side modules are stubbed before the import.
  */
 
-import { describe, test, mock } from 'node:test'
+import { after, before, describe, test, mock } from 'node:test'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
+import { createServer, request, type ClientRequest, type Server } from 'node:http'
+import type { AddressInfo } from 'node:net'
+
+/** What the server below is started with; the checkAuth block uses its own. */
+const SERVER_TOKEN = 'PZ2s7Wd0m3n5FQ0RkGm4tYbXH1qLcJ8vE6oS9rT2uA0'
+
+/**
+ * Mutable, because the server reads the vault twice: once while starting and
+ * again on every request. Locking it under a running server is a state no
+ * exported helper can be put into, and it is the one the gateway is in for the
+ * moment between the vault locking and `stopOnLock` finishing.
+ */
+const vaultState = {
+  unlocked: true,
+  data: { settings: { mcpPort: 0 }, mcpToken: SERVER_TOKEN }
+}
 
 mock.module('electron', { exports: { app: { getPath: () => '' } } })
 mock.module('../src/main/vault.ts', {
-  exports: { vault: { isUnlocked: () => true, read: () => ({ settings: {} }) } }
+  exports: {
+    vault: {
+      isUnlocked: (): boolean => vaultState.unlocked,
+      read: () => vaultState.data,
+      mutate: async (fn: (data: typeof vaultState.data) => void): Promise<void> => {
+        fn(vaultState.data)
+      }
+    }
+  }
 })
 mock.module('../src/main/ssh.ts', {
   exports: { ssh: { isReady: () => true, title: () => 'web01', listForModel: () => [] } }
@@ -350,5 +380,258 @@ describe('readJsonBody', () => {
 
   test('a malformed body raises rather than returning something half-parsed', async () => {
     await assert.rejects(() => readJsonBody(request('POST', ['{"jsonrpc":'])), SyntaxError)
+  })
+})
+
+/* ------------------------------------------------- the server that listens */
+
+interface Answer {
+  status: number
+  body: string
+}
+
+/** An ordinary JSON-RPC call, enough to get past the gate and into the SDK. */
+const CALL = '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+
+const CLIENT_HEADERS = {
+  'content-type': 'application/json',
+  accept: 'application/json, text/event-stream'
+}
+
+/**
+ * One request to the running server, with every header a test needs to bend.
+ *
+ * `agent: false` so each call gets its own socket: the parked calls below have
+ * to be in flight at the same instant, and a pooled agent would serialise them
+ * onto one connection and quietly test nothing.
+ */
+function call(
+  port: number,
+  opts: { host?: string; origin?: string; token?: string | null; body?: string } = {}
+): Promise<Answer> {
+  const headers: Record<string, string> = { ...CLIENT_HEADERS }
+  if (opts.host !== undefined) headers.host = opts.host
+  if (opts.origin !== undefined) headers.origin = opts.origin
+  if (opts.token !== null) headers.authorization = `Bearer ${opts.token ?? SERVER_TOKEN}`
+
+  return new Promise<Answer>((resolve, reject) => {
+    const req = request(
+      { host: '127.0.0.1', port, method: 'POST', agent: false, headers },
+      (res) => {
+        let body = ''
+        res.setEncoding('utf8')
+        res.on('data', (chunk: string) => {
+          body += chunk
+        })
+        res.on('end', () => resolve({ status: res.statusCode ?? 0, body }))
+      }
+    )
+    req.on('error', reject)
+    req.end(opts.body ?? CALL)
+  })
+}
+
+/**
+ * A POST whose body never arrives, so the request sits past the gate holding a
+ * slot for as long as the test wants — the same shape as a call parked on a
+ * human answering a dialog, without needing a human.
+ *
+ * `release()` finishes the body rather than aborting the socket: the partial
+ * body is not JSON, so the server answers 500 through its ordinary catch and
+ * the handler's `finally` runs. An abort would exercise the teardown path as
+ * well, which is a different test.
+ */
+function park(port: number): { release: () => Promise<Answer> } {
+  let settle: (answer: Answer) => void = () => {}
+  const done = new Promise<Answer>((resolve) => {
+    settle = resolve
+  })
+  const req: ClientRequest = request(
+    {
+      host: '127.0.0.1',
+      port,
+      method: 'POST',
+      agent: false,
+      headers: { ...CLIENT_HEADERS, authorization: `Bearer ${SERVER_TOKEN}` }
+    },
+    (res) => {
+      let body = ''
+      res.setEncoding('utf8')
+      res.on('data', (chunk: string) => {
+        body += chunk
+      })
+      res.on('end', () => settle({ status: res.statusCode ?? 0, body }))
+    }
+  )
+  // Chunked, because no content-length was set: the server is reading a body
+  // that will not end until release() says so.
+  req.write('{')
+  return {
+    release: () => {
+      req.end()
+      return done
+    }
+  }
+}
+
+/** A port nobody is on, so the suite never fights the running app for 7345. */
+async function freePort(): Promise<number> {
+  const probe = createServer()
+  await new Promise<void>((resolve) => probe.listen(0, '127.0.0.1', resolve))
+  const { port } = probe.address() as AddressInfo
+  await new Promise<void>((resolve) => probe.close(() => resolve()))
+  return port
+}
+
+describe('the server that actually listens', () => {
+  let port = 0
+
+  before(async () => {
+    port = await freePort()
+    // Below 1024 clampPort would silently substitute the default and every test
+    // here would then talk to nothing.
+    assert.ok(port >= 1024, `the ephemeral port ${port} is one clampPort would replace`)
+    vaultState.unlocked = true
+    vaultState.data.settings.mcpPort = port
+    await mcp.start()
+  })
+
+  after(async () => {
+    vaultState.unlocked = true
+    await mcp.stop()
+  })
+
+  test('it listens on the loopback address and nowhere else', async () => {
+    // The single most important property of this server. On 0.0.0.0 every
+    // machine on the network can reach a gateway into the human's SSH sessions,
+    // and not one other check would notice: the Host header is written by the
+    // caller, so anything on the LAN can simply put `127.0.0.1:PORT` in it and
+    // satisfy the rebinding guard, which was only ever meant to stop a browser.
+    //
+    // Read off the socket rather than probed over the network on purpose. A
+    // probe from another interface is what an operator would try, and a
+    // firewall dropping that connection would make it pass against a server
+    // bound to the whole world — a false green on the one thing that must not
+    // have one.
+    const server = (mcp as unknown as { http: Server | null }).http
+    assert.ok(server, 'the server is not running at all')
+    const address = server.address() as AddressInfo
+    assert.equal(
+      address.address,
+      '127.0.0.1',
+      `the gateway is bound to ${address.address}; only 127.0.0.1 keeps it off the network`
+    )
+    assert.equal(address.port, port, 'the server took a port it was not configured with')
+    assert.equal(mcp.status().port, port, 'status() reports a port the server is not on')
+  })
+
+  test('a client with the right name and the right token gets in', async () => {
+    // The counterweight to every refusal below: a gate that refuses everything
+    // passes all of them and serves nobody.
+    const answer = await call(port)
+    assert.equal(answer.status, 200, `a legitimate call was refused: ${answer.body}`)
+    assert.match(answer.body, /run_command/, 'the tools never reached a client that was let in')
+  })
+
+  test('every wrong request gets the same 403, byte for byte', async () => {
+    // Both halves of the gate, asserted through the socket rather than through
+    // `hostAllowed` and `checkAuth` on their own, because what a caller learns
+    // is decided by the handler that calls them and not by either function.
+    //
+    // Byte for byte and not merely 403: this rejection is the only answer a
+    // page guessing at the port ever gets, so a difference of one character
+    // tells it which half it had right — and a right name is the page learning
+    // that ConsoleWard is listening here. Checking only the status hid a build
+    // where the Host gate was gone and the SDK's own rebinding guard answered
+    // instead: also a 403, with the offending Host echoed back inside it.
+    const wrong: [string, Parameters<typeof call>[1]][] = [
+      ['a foreign Host', { host: `evil.com:${port}` }],
+      ['a name that merely starts right', { host: `localhost.evil.com:${port}` }],
+      ['the neighbouring loopback address', { host: `127.0.0.2:${port}` }],
+      ['the v6 loopback', { host: `[::1]:${port}` }],
+      ['a page on another origin', { origin: 'http://evil.com' }],
+      ['the right origin under the wrong scheme', { origin: `https://localhost:${port}` }],
+      ['a wrong token', { token: 'not-the-token' }],
+      ['no token at all', { token: null }],
+      ['a token one character short of the real one', { token: SERVER_TOKEN.slice(0, -1) }]
+    ]
+
+    const answers: [string, string][] = []
+    for (const [what, opts] of wrong) {
+      const answer = await call(port, opts)
+      assert.equal(answer.status, 403, `${what} was answered ${answer.status}, not refused`)
+      answers.push([what, answer.body])
+    }
+
+    for (const [what, body] of answers) {
+      assert.equal(
+        body,
+        answers[0][1],
+        `${what} is answered differently from ${answers[0][0]}, so the two can be told apart`
+      )
+    }
+  })
+
+  test('a locked vault is 503, and only for a caller that proved both', async () => {
+    vaultState.unlocked = false
+    try {
+      const client = await call(port)
+      assert.equal(client.status, 503, `a locked vault answered ${client.status}`)
+      assert.match(client.body, /vault_locked/, 'the client cannot tell why it was refused')
+
+      // Behind the gate on purpose: a caller that has not proved both is not
+      // entitled to know whether the vault happens to be open.
+      const stranger = await call(port, { token: 'not-the-token' })
+      assert.equal(stranger.status, 403, 'the lock state was disclosed before the gate')
+      assert.ok(
+        !stranger.body.includes('vault'),
+        'the rejection told an unauthenticated caller about the vault'
+      )
+    } finally {
+      vaultState.unlocked = true
+    }
+  })
+
+  test(`call ${MAX_INFLIGHT_REQUESTS + 1} is refused rather than queued`, async () => {
+    // Each parked call pins a buffered body, an McpServer and a transport, and
+    // one waiting on a human pins them for up to five minutes. Node bounds none
+    // of that on its own — maxConnections is unset — so this cap is the only
+    // thing between a chatty client and the main process's memory.
+    //
+    // The bound is checked before anything is opened, and it is not decoration:
+    // this test fills the gateway to its stated limit, so a cap raised to a
+    // number that no longer bounds anything would have it open that many
+    // sockets instead of failing. Either way the number below has to mean
+    // something, and four megabytes of body times a thousand does not.
+    assert.ok(
+      MAX_INFLIGHT_REQUESTS <= 32,
+      `a cap of ${MAX_INFLIGHT_REQUESTS} in-flight calls bounds nothing; each one may pin ` +
+        `${MAX_BODY_BYTES} bytes of body plus a parked server and transport`
+    )
+    const parked = Array.from({ length: MAX_INFLIGHT_REQUESTS }, () => park(port))
+    let busy: Answer = { status: 0, body: '' }
+    try {
+      // The probe is an ordinary call, so nothing here reaches inside the
+      // server to ask what it counted. Polling because the parked calls are
+      // admitted asynchronously, bounded so a build with no cap fails in two
+      // seconds rather than hanging like a stuck CI job. On a build that has
+      // the cap the first probe is already refused and none of this runs.
+      const deadline = Date.now() + 2_000
+      busy = await call(port)
+      while (busy.status !== 503 && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 20))
+        busy = await call(port)
+      }
+    } finally {
+      await Promise.all(parked.map((p) => p.release()))
+    }
+
+    assert.equal(busy.status, 503, `a ${MAX_INFLIGHT_REQUESTS + 1}th call was admitted`)
+    assert.match(busy.body, /"reason":"busy"/, 'the client cannot tell a busy server from a broken one')
+
+    // And the slot comes back. The decrement lives in a `finally`; losing it
+    // would leave the gateway wedged in a permanent 503 with nothing wrong.
+    const afterwards = await call(port)
+    assert.equal(afterwards.status, 200, `the slots were never given back: ${afterwards.body}`)
   })
 })

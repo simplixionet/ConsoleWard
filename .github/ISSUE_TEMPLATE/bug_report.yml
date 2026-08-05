@@ -42,7 +42,11 @@ body:
     id: version
     attributes:
       label: ConsoleWard version
-      description: Help → About, or the installer filename.
+      description: >
+        There is no About dialog yet, so: the installer filename carries it
+        (`ConsoleWard Setup <version>.exe`), and on an installed copy so does
+        `ConsoleWard.exe` — right-click it, Properties → Details → File
+        version.
     validations:
       required: true
 

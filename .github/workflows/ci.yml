@@ -55,7 +55,7 @@ jobs:
         run: npm run build
 
       # Static locale gates: the shipping set, plural-aware key parity, and
-      # placeholder integrity across the 61 security-critical keys.
+      # placeholder integrity across the 81 security-critical keys.
       - name: Locale dictionaries
         run: npm run check:i18n
 
@@ -97,9 +97,22 @@ jobs:
       - name: Every source file carries an SPDX header
         shell: bash
         run: |
+          # The root config files are named by glob instead of scanning `.`
+          # recursively — from the root grep would walk node_modules, out and
+          # release, and spend minutes concluding nothing.
+          shopt -s nullglob
+          status=0
           missing=$(grep -rL "SPDX-License-Identifier" \
-            --include="*.ts" --include="*.tsx" --include="*.mjs" \
-            src scripts || true)
+            --include="*.ts" --include="*.tsx" --include="*.mts" --include="*.mjs" \
+            src scripts test ./*.ts ./*.tsx ./*.mts ./*.mjs) || status=$?
+          # With -L grep still reports 1 for "nothing matched anywhere" and 2
+          # for "could not read a path". The old `|| true` flattened both into
+          # a pass, so a renamed directory would have silenced the whole gate
+          # rather than failing it.
+          if [ "$status" -gt 1 ]; then
+            echo "SPDX scan could not run (grep exited $status)."
+            exit 1
+          fi
           if [ -n "$missing" ]; then
             echo "Missing SPDX header:"
             echo "$missing"

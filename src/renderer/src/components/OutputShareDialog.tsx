@@ -159,6 +159,9 @@ function ChooseStage({
 
 /* ------------------------------------------------- 2. označování v konzoli */
 
+/** Jak často se kontroluje, že terminál pořád existuje. Levné — sáhnutí do Mapy. */
+const LOST_POLL_MS = 500
+
 function PickStage({
   request,
   onPicked,
@@ -180,15 +183,7 @@ function PickStage({
       setLost(true)
       return
     }
-    const read = (): void => {
-      try {
-        setSelected(source.read())
-      } catch {
-        // Terminál se mezitím odpojil (relace zavřená za běhu dialogu).
-        setSelected('')
-        setLost(true)
-      }
-    }
+    const read = (): void => setSelected(source.read())
     /*
      * Wipe whatever was highlighted before the dialog opened. A selection the
      * human made ten minutes ago for some unrelated reason is not consent, and
@@ -202,7 +197,30 @@ function PickStage({
       /* nevadí, přečte se stejně */
     }
     read()
-    return source.subscribe(read)
+    const unsubscribe = source.subscribe(read)
+
+    /*
+     * Losing the console mid-selection has to be looked for, because nothing
+     * announces it: the registry has no "gone" event, and a disposed xterm does
+     * not fail on read — it stops reporting selection changes and answers with
+     * an empty string. Left unwatched, the panel would sit at "nothing selected
+     * yet" forever, which reads as "you have not highlighted anything" when the
+     * truth is "there is nothing left to highlight".
+     */
+    let watch = 0
+    const stop = (): void => {
+      window.clearInterval(watch)
+      unsubscribe()
+    }
+    watch = window.setInterval(() => {
+      if (terminalSelection(request.sessionId) === source) return
+      stop()
+      // Co bylo označeno v mezitím zavřené konzoli, dál nejde — „continue" je na nule zamčené.
+      setSelected('')
+      setLost(true)
+    }, LOST_POLL_MS)
+
+    return stop
   }, [request.sessionId])
 
   const chars = selected.length
