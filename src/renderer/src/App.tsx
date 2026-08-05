@@ -14,7 +14,7 @@ import type {
 } from '@shared/types'
 import { api, errorMessage, unwrap } from './api'
 import { reportActivity, resetActivityThrottle } from './activity'
-import { useT } from './i18n'
+import { useI18n } from './i18n'
 import { dispatch, focusTerminal, forget } from './terminalBus'
 import UnlockScreen from './components/UnlockScreen'
 import Sidebar, { type SidebarTab } from './components/Sidebar'
@@ -48,7 +48,7 @@ type DeleteTarget =
   | { kind: 'snippet'; item: Snippet }
 
 export default function App() {
-  const t = useT()
+  const { t, locale } = useI18n()
   const [vaultStatus, setVaultStatus] = useState<VaultStatus | null>(null)
   /** Časové razítko kotvy, jejíž varování už uživatel odklikl. */
   const [rollbackDismissed, setRollbackDismissed] = useState<number | null>(null)
@@ -362,7 +362,9 @@ export default function App() {
             {t('vault.rollbackBody', {
               found: vaultStatus.rollback.found,
               expected: vaultStatus.rollback.expected,
-              date: new Date(vaultStatus.rollback.at).toLocaleString()
+              // Jazykem aplikace, ne systému. Kdo si přepnul na češtinu na
+              // anglickém Windows, čte česky všechno ostatní.
+              date: new Date(vaultStatus.rollback.at).toLocaleString(locale)
             })}{' '}
             {t('vault.rollbackHostKeys')}
           </div>

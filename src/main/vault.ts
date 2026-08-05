@@ -45,6 +45,7 @@ import { appError } from './i18n'
 import { DEFAULT_SETTINGS } from './settings'
 import {
   readAnchorFile,
+  removeAnchorFile,
   verdict as guardVerdict,
   writeAnchorFile,
   type GuardSealer,
@@ -1265,6 +1266,13 @@ export async function migrateLegacyProfile(legacyNames: string[]): Promise<strin
     if (fs.existsSync(legacyBackup)) {
       await fsp.copyFile(legacyBackup, vault.filePath + '.bak').catch(() => {})
     }
+    /*
+     * Kotva po jiném trezoru tady nemá co dělat. Sem se dojde jen když
+     * `vault.enc` chybí, jenže smazat trezor a nechat vedle `vault.guard` jde
+     * — a pak by čerstvě přenesený soubor hlásil vrácení proti čítači, který
+     * nikdy nebyl jeho. Kotva patří k souboru, ne ke složce.
+     */
+    await removeAnchorFile(path.join(currentDir, 'vault.guard')).catch(() => {})
     return legacyDir
   }
   return null

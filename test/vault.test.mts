@@ -33,7 +33,9 @@ const madeDirs: string[] = []
 
 mock.module('electron', { exports: { app: { getPath: () => dir } } })
 
-const { vault, generateRecoveryKey, normalizeRecoveryKey } = await import('../src/main/vault.ts')
+const { vault, generateRecoveryKey, normalizeRecoveryKey, migrateLegacyProfile } = await import(
+  '../src/main/vault.ts'
+)
 
 /* ------------------------------------------------------------------ nářadí */
 
@@ -1925,4 +1927,40 @@ test('nezapsatelná kotva neshodí zápis trezoru', async () => {
 
   assert.equal(vault.read().connections.length, 1, 'změna musí projít i bez kotvy')
   assert.ok(readVaultFile().counter! >= 2, 'trezor se musí zapsat')
+})
+
+/*
+ * Migration only runs when there is no vault at the new location -- but
+ * deleting vault.enc and leaving vault.guard behind is something a person can
+ * do, and then the freshly transplanted vault would be measured against a
+ * counter that was never its own. The anchor belongs to the file, not the
+ * directory.
+ */
+test('přenos profilu zahodí kotvu po jiném trezoru', async () => {
+  fresh()
+  // Kotva po trezoru, který na tomhle místě býval a je pryč.
+  await vault.create(PASSWORD)
+  for (let i = 0; i < 3; i++) {
+    await vault.mutate((d) => d.connections.push(sampleConnection()))
+  }
+  const highCounter = readVaultFile().counter!
+  assert.ok(highCounter >= 4)
+  vault.lock()
+
+  // Starý profil vedle: `dir` je .../cw-vault-xxx, sourozencem bude 'putty-ui'.
+  const legacyDir = path.join(path.dirname(dir), 'putty-ui')
+  fs.mkdirSync(legacyDir, { recursive: true })
+  madeDirs.push(legacyDir)
+  fs.copyFileSync(vaultPath(), path.join(legacyDir, 'vault.enc'))
+
+  // Trezor smazán, kotva zůstala.
+  fs.rmSync(vaultPath())
+  assert.ok(fs.existsSync(guardPath()), 'předpoklad testu: kotva tu ještě je')
+
+  const from = await migrateLegacyProfile(['putty-ui'])
+  assert.equal(from, legacyDir, 'přenos musí proběhnout')
+  assert.ok(!fs.existsSync(guardPath()), 'cizí kotva nesmí přenos přežít')
+
+  await vault.unlock(PASSWORD)
+  assert.deepEqual(vault.rollback, { kind: 'unknown' }, 'přenesený trezor nesmí být obviněn')
 })
