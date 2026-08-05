@@ -614,22 +614,39 @@ describe('findSecrets: known gaps', () => {
     assert.ok(elapsed < 500, `findSecrets took ${elapsed.toFixed(0)} ms on 256 KB of "a.-"`)
   })
 
-  test('secret.privateKey does not rescan the buffer from every BEGIN header', () => {
+  test('secret.privateKey costs linear time, not quadratic', () => {
     // The same defect C8 fixed one pattern above, left behind at the time. An
     // unbounded `[\s\S]*?` makes every BEGIN with no END after it scan to the
-    // end of the buffer. Measured on this input: 6 / 25 / 98 / 388 ms at 32 /
-    // 64 / 128 / 256 KB — four times the cost for twice the input — against
-    // 11 / 21 / 42 / 82 ms once bounded.
+    // end of the buffer, so the cost squares with the input.
+    //
+    // Asserted as a RATIO rather than a millisecond budget. A wall-clock
+    // threshold has to sit between the two implementations, and here they are
+    // only 77 ms against 156 ms once the suite has warmed the JIT — close
+    // enough that any threshold separating them would flake on a slower CI
+    // machine, and a first attempt at 300 ms let the unbounded version through.
+    // The ratio does not care how fast the machine is: quadruple the input and
+    // linear work quadruples while quadratic work grows about sixteenfold.
     //
     // Since B4 this runs on the main process event loop, driven by whatever a
-    // compromised host prints, so the shape matters more than the constant.
-    const headers = '-----BEGIN PRIVATE KEY-----\n'.repeat(9600)
-    assert.ok(headers.length > 250 * 1024, 'exercise the real scan ceiling')
+    // compromised host prints, so the shape is what matters.
+    const line = '-----BEGIN PRIVATE KEY-----\n'
+    const timeAt = (kb: number): number => {
+      const text = line.repeat(Math.ceil((kb * 1024) / line.length)).slice(0, kb * 1024)
+      findSecrets(text) // warm, so the measurement below is not a compile
+      const started = performance.now()
+      findSecrets(text)
+      return performance.now() - started
+    }
 
-    const started = performance.now()
-    findSecrets(headers)
-    const elapsed = performance.now() - started
-    assert.ok(elapsed < 300, `findSecrets took ${elapsed.toFixed(0)} ms on 256 KB of headers`)
+    const small = Math.max(timeAt(32), 1)
+    const large = timeAt(128)
+    const growth = large / small
+
+    assert.ok(
+      growth < 8,
+      `four times the input cost ${growth.toFixed(1)}x the time ` +
+        `(${small.toFixed(0)} ms -> ${large.toFixed(0)} ms), which is quadratic, not linear`
+    )
   })
 
   test('a key too long to match as a block is still caught by its header', () => {
