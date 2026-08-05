@@ -14,9 +14,14 @@ Thumbs.db
 # GSD Core tooling — reinstall with:
 #   npx @opengsd/gsd-core@latest --claude --local
 # Kept out of the repo so 9.7 MB of MIT-licensed tooling does not dominate a
-# GPL-3.0 project. The project's own specification lives in .planning/, which
-# IS committed.
+# GPL-3.0 project.
 .claude/
+
+# Planning and design notes stay local. They carry precise file:line references
+# to weaknesses in this codebase — some fixed, some not — and shipping that
+# alongside the source of a security tool hands an attacker a map. Removed from
+# history before the repo went public; keep it that way.
+.planning/
 
 # Never commit a vault or a recovery key, wherever one lands
 vault.enc
