@@ -199,7 +199,11 @@ output as though it had seen everything.
 
 - listens **only on `127.0.0.1`**, never on `0.0.0.0`
 - bearer token required, stored in the vault
-- DNS-rebinding protection — a foreign `Host` or `Origin` header returns 403
+- DNS-rebinding protection — the `Host` and `Origin` headers are checked **before** the
+  token and before any body is read. A wrong name and a wrong token get the same 403,
+  byte for byte, so a web page cannot learn from the difference that anything is
+  listening on the port
+- at most 8 requests are handled at once; the rest get a 503 rather than being queued
 - locking the vault shuts the server down immediately and denies pending requests
 - an unanswered request auto-denies after 5 minutes
 

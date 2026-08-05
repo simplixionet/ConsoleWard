@@ -18,8 +18,14 @@
  *  - žádné „schválit vše" – každý příkaz zvlášť
  */
 
-import { createServer, type Server as HttpServer } from 'node:http'
-import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
+import {
+  createServer,
+  type IncomingHttpHeaders,
+  type IncomingMessage,
+  type Server as HttpServer,
+  type ServerResponse
+} from 'node:http'
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { z } from 'zod'
@@ -58,11 +64,30 @@ const QUEUE_FULL_MESSAGE =
   'was not shown to them and nothing was queued. Wait for the pending ones to be ' +
   'answered before sending another; retrying immediately will get the same answer.'
 
+/**
+ * How many requests may be in flight at once.
+ *
+ * Not a rate limit — the point is memory. Every request buffers its body, up to
+ * the limit `readJsonBody` allows, and one that reaches a dialog holds an
+ * McpServer and a transport for as long as the human takes, which
+ * APPROVAL_TIMEOUT_MS bounds at five minutes. Node bounds none of this on its
+ * own: maxConnections is unset and maxRequestsPerSocket is 0. The approval
+ * queue caps the human's side at three, so eight leaves room for an initialize
+ * and a tools/list alongside three blocked dialogs.
+ */
+const MAX_INFLIGHT_REQUESTS = 8
+
+const BUSY_MESSAGE =
+  `ConsoleWard is already handling ${MAX_INFLIGHT_REQUESTS} requests and will not start ` +
+  'another. This one was not queued. Let the earlier ones finish and send it again.'
+
 class McpService {
   private http: HttpServer | null = null
   private bridge: McpBridge | null = null
   private lastError: string | null = null
   private port = DEFAULT_PORT
+  /** Requests past the gate and not yet finished — see MAX_INFLIGHT_REQUESTS. */
+  private inFlight = 0
 
   bind(bridge: McpBridge): void {
     this.bridge = bridge
@@ -120,20 +145,49 @@ class McpService {
     const server = createServer((req, res) => {
       void (async () => {
         // Bezstavový režim: server i transport vznikají pro každý požadavek zvlášť.
-        // Sdílená instance zvládne jen první volání a další skončí chybou.
+        //
+        // Not because a shared McpServer is unusable — close() then connect()
+        // again works and the registered tools survive it. Because neither half
+        // can serve two requests AT ONCE: the stateless transport refuses its
+        // second request outright, and a Protocol holds exactly one transport
+        // and throws on a second connect. Sharing would therefore mean
+        // serialising every request, and a run_command holds its request for up
+        // to five minutes waiting on a human — the whole server would sit behind
+        // one dialog. Closing to admit the next request is no better: close()
+        // aborts the in-flight handler, which is the one that is waiting.
         let mcpServer: McpServer | null = null
         let transport: StreamableHTTPServerTransport | null = null
+        let slot = false
         try {
-          if (!this.checkAuth(req.headers.authorization, token)) {
-            res.writeHead(401, { 'content-type': 'application/json' })
-            res.end(JSON.stringify({ error: 'unauthorized' }))
+          // The name first, the credentials second, and both every time.
+          //
+          // A page in a browser can only ever put its own name in Host — that is
+          // the whole of DNS rebinding — so the name is what tells a client apart
+          // from an attack. Checking the token first meant a foreign Host never
+          // reached the rebinding guard at all and got a 401 instead of a 403,
+          // and the difference between the two answers is the page learning that
+          // ConsoleWard is listening on this port. Neither check may
+          // short-circuit the other, or the time to the rejection says which one
+          // failed; `&&` here would put the oracle straight back.
+          const named = hostAllowed(req.headers, allowedHosts, allowedOrigins)
+          const authed = this.checkAuth(req.headers.authorization, token)
+          if (!named || !authed) {
+            sendJson(res, 403, REJECTED)
             return
           }
+          // Behind the gate on purpose: a caller that has not proved both is not
+          // entitled to know whether the vault happens to be open.
           if (!vault.isUnlocked()) {
-            res.writeHead(503, { 'content-type': 'application/json' })
-            res.end(JSON.stringify({ error: 'vault_locked' }))
+            sendJson(res, 503, 'The ConsoleWard vault is locked.', 'vault_locked')
             return
           }
+
+          if (this.inFlight >= MAX_INFLIGHT_REQUESTS) {
+            sendJson(res, 503, BUSY_MESSAGE, 'busy')
+            return
+          }
+          this.inFlight++
+          slot = true
 
           const body = await readJsonBody(req)
           mcpServer = this.buildServer()
@@ -148,14 +202,30 @@ class McpService {
           await transport.handleRequest(req, res, body)
         } catch (err) {
           if (!res.headersSent) {
-            res.writeHead(500, { 'content-type': 'application/json' })
-            res.end(JSON.stringify({ error: String(err) }))
+            // `String(err)` used to land here. It shipped `AppError: Požadavek je
+            // příliš velký.` to an English-speaking client, and it echoed the
+            // caller's own bytes back inside a SyntaxError. Both go through the
+            // same keyed map the tools use.
+            const tooLarge = (err as { key?: unknown } | null)?.key === 'error.requestTooLarge'
+            sendJson(
+              res,
+              tooLarge ? 413 : 500,
+              modelErrorFor(err),
+              tooLarge ? 'too_large' : 'failed'
+            )
           } else {
             res.end()
           }
         } finally {
+          if (slot) this.inFlight--
           // Úklid až po odeslání odpovědi, jinak bychom uřízli běžící stream.
-          res.on('close', () => {
+          //
+          // `onceClosed` and not `res.on` because a client that gave up has
+          // closed the response ALREADY, and a listener added to a closed stream
+          // is never called — the transport and the server were then never
+          // closed at all. Measured: on an aborted request `res.closed` is true
+          // by the time this runs.
+          onceClosed(res, () => {
             void transport?.close()
             void mcpServer?.close()
           })
@@ -192,12 +262,20 @@ class McpService {
     await this.stop()
   }
 
+  /**
+   * Constant-time for any input, including the wrong length.
+   *
+   * `timingSafeEqual` throws on unequal lengths, so the obvious code returns
+   * early on a length mismatch — and that early return leaks the token's
+   * length. Hashing both sides first makes every comparison 32 bytes against
+   * 32 bytes, so a wrong token costs the same as a right one and the same as
+   * no token at all.
+   */
   private checkAuth(header: string | undefined, token: string): boolean {
     const prefix = 'Bearer '
-    if (!header || !header.startsWith(prefix)) return false
-    const provided = Buffer.from(header.slice(prefix.length))
-    const expected = Buffer.from(token)
-    if (provided.length !== expected.length) return false
+    const offered = header?.startsWith(prefix) === true ? header.slice(prefix.length) : ''
+    const provided = createHash('sha256').update(offered).digest()
+    const expected = createHash('sha256').update(token).digest()
     return timingSafeEqual(provided, expected)
   }
 
@@ -251,14 +329,15 @@ class McpService {
         annotations: { readOnlyHint: true, openWorldHint: false }
       },
       async ({ session_id, reason }) => {
-        const bridge = this.requireBridge()
+        const bridge = this.bridge
+        if (!bridge) return toolError(modelErrorFor({ key: 'error.mcpBridgeMissing' }))
         if (!ssh.isReady(session_id)) return toolError('The session does not exist or is not ready.')
 
         let preview: string
         try {
           preview = ssh.readText(session_id, 400)
         } catch (err) {
-          return toolError((err as Error).message)
+          return toolError(modelErrorFor(err))
         }
 
         let answer: { shared: boolean; text: string }
@@ -302,7 +381,8 @@ class McpService {
         annotations: { destructiveHint: true, openWorldHint: false }
       },
       async ({ session_id, command, reason }) => {
-        const bridge = this.requireBridge()
+        const bridge = this.bridge
+        if (!bridge) return toolError(modelErrorFor({ key: 'error.mcpBridgeMissing' }))
         if (!ssh.isReady(session_id)) return toolError('The session does not exist or is not ready.')
         if (!command.trim()) return toolError('Empty command.')
 
@@ -327,7 +407,7 @@ class McpService {
         try {
           result = await ssh.runOnce(session_id, command)
         } catch (err) {
-          return toolError(runErrorFor(err))
+          return toolError(modelErrorFor(err))
         }
 
         // The tick was given while reading the COMMAND, before a single byte of
@@ -372,10 +452,6 @@ class McpService {
     return server
   }
 
-  private requireBridge(): McpBridge {
-    if (!this.bridge) throw appError('error.mcpBridgeMissing')
-    return this.bridge
-  }
 }
 
 /**
@@ -436,27 +512,46 @@ function describeRun(run: RunResult, shared: string): string {
 }
 
 /**
- * Run errors for the model, in English and keyed rather than translated.
+ * Errors for the model, in English and keyed rather than translated.
  *
- * `runOnce` throws an AppError whose message is already translated for the
- * human. Passing that on means a Czech user ships Czech diagnostics to an
- * English-speaking tool, and the text changes whenever they change language.
- * The key does not. A Map rather than an object literal so a key like
- * `constructor` cannot reach Object.prototype.
+ * Everything below throws an AppError whose message has already been through
+ * `t()` for the human. Passing that on means a Czech user ships Czech
+ * diagnostics to an English-speaking tool, and the text changes whenever they
+ * change language. The key does not. A Map rather than an object literal so a
+ * key like `constructor` cannot reach Object.prototype.
+ *
+ * The list is the complete set that can arrive: `error.mcpBridgeMissing` from
+ * the bridge check, `error.sessionNotFound` from `ssh.readText`,
+ * `error.sessionNotReady`, `error.commandRunning` and `error.execFailed` from
+ * `ssh.runOnce`, and `error.requestTooLarge` from `readJsonBody`. Nothing else
+ * in the app sits on a path the model can reach — the tools never touch the
+ * vault, `ssh.connect` or `ssh.write`.
  */
-const RUN_ERRORS = new Map<string, string>([
+export const MODEL_ERRORS = new Map<string, string>([
+  ['error.mcpBridgeMissing', 'ConsoleWard cannot show approval dialogs right now.'],
+  ['error.sessionNotFound', 'The session does not exist or is not ready.'],
   ['error.sessionNotReady', 'The session does not exist or is not ready.'],
   ['error.commandRunning', 'A command from an earlier call is still running in this session.'],
   [
     'error.execFailed',
     'The server refused to open a channel for the command, so it did not run. ConsoleWard does ' +
       'not fall back to typing into the interactive session.'
-  ]
+  ],
+  ['error.requestTooLarge', 'The request body is too large.']
 ])
 
-function runErrorFor(err: unknown): string {
-  const key = (err as { key?: string }).key
-  return (key && RUN_ERRORS.get(key)) || 'The command could not be run.'
+/**
+ * The fallback names nothing on purpose.
+ *
+ * An unmapped error is a path nobody traced, so its message may carry a path
+ * from this machine, a sentence in the human's language, or a server's own
+ * words. `err` is typed unknown and read defensively because it also receives
+ * plain JS errors — a `SyntaxError` from `JSON.parse` has no `key` at all.
+ */
+export function modelErrorFor(err: unknown): string {
+  const key = (err as { key?: unknown } | null | undefined)?.key
+  const mapped = typeof key === 'string' ? MODEL_ERRORS.get(key) : undefined
+  return mapped ?? 'ConsoleWard could not carry out the request.'
 }
 
 /**
@@ -505,6 +600,89 @@ function toolError(message: string): {
   return { isError: true, content: [{ type: 'text' as const, text: message }] }
 }
 
+/**
+ * The transport's Host/Origin rule, run before anything else touches the request.
+ *
+ * Mirrors `validateRequestHeaders` in the SDK exactly — the same two arrays, an
+ * exact string match, and an Origin rejected only when it is present and wrong,
+ * because an ordinary MCP client sends none. Exactly, and not approximately: a
+ * looser check lets a request through to the transport and get a *different*
+ * answer, which is the oracle this exists to remove, and a stricter one refuses
+ * a client the transport would have taken.
+ *
+ * The exact match is what handles the interesting names without a single line
+ * about any of them. `[::1]:7345`, `127.0.0.2:7345`, `LOCALHOST:7345`,
+ * `127.0.0.1` without a port and `localhost.evil.com:7345` are simply not in
+ * the list. A rebound name is refused because a browser puts the NAME in Host,
+ * never the address it resolved to — which is the only reason this defence
+ * works at all.
+ */
+export function hostAllowed(
+  headers: IncomingHttpHeaders,
+  hosts: string[],
+  origins: string[]
+): boolean {
+  const host = headers.host
+  if (typeof host !== 'string' || !hosts.includes(host)) return false
+  const origin = headers.origin
+  if (typeof origin === 'string' && !origins.includes(origin)) return false
+  return true
+}
+
+/**
+ * One answer for a wrong token and for a wrong name alike.
+ *
+ * It names both causes and says which applied to neither. That is enough for
+ * the operator of a real client — those are the only two things they can have
+ * got wrong — and nothing at all for a page that is guessing whether anything
+ * is listening on this port.
+ */
+const REJECTED =
+  'Rejected. ConsoleWard needs the bearer token from its settings, and it must be reached at ' +
+  '127.0.0.1 or localhost on its own port. A request arriving under any other name is refused ' +
+  'whatever token it carries.'
+
+/**
+ * A JSON-RPC error response, in fixed English.
+ *
+ * Fixed length as well as fixed text: the SDK echoes the offending Host back,
+ * so its content-length alone told `[::1]` apart from `127.0.0.2`. `reason` is
+ * for the causes a client may legitimately distinguish, and the rejection above
+ * deliberately carries none.
+ */
+function sendJson(res: ServerResponse, status: number, message: string, reason?: string): void {
+  const error = reason ? { code: -32000, message, data: { reason } } : { code: -32000, message }
+  const body = JSON.stringify({ jsonrpc: '2.0', error, id: null })
+  res.writeHead(status, {
+    'content-type': 'application/json',
+    'content-length': Buffer.byteLength(body)
+  })
+  res.end(body)
+}
+
+/**
+ * Runs `cleanup` when the response is finished with — including when it is
+ * finished with already.
+ *
+ * A client that gives up mid-request (a cancelled tool call, a timeout, a
+ * process that exits) closes the socket while the handler is still waiting on a
+ * human. By the time the handler returns, `res` has already emitted `close`,
+ * and `res.on('close', ...)` on a closed stream is never called: the transport
+ * and the server would be left open for good.
+ *
+ * Deliberately not eager — this does not close anything AT the abort. The
+ * transport's own close() does not resolve the promise `handleRequest` is
+ * waiting on, so tearing down early would strand the handler for ever instead
+ * of for at most one approval timeout.
+ */
+export function onceClosed(
+  res: { closed: boolean; once: (event: 'close', listener: () => void) => unknown },
+  cleanup: () => void
+): void {
+  if (res.closed) cleanup()
+  else res.once('close', cleanup)
+}
+
 function clampPort(port: number): number {
   const n = Number(port)
   if (!Number.isInteger(n) || n < 1024 || n > 65535) return DEFAULT_PORT
@@ -519,7 +697,7 @@ function describeListenError(err: unknown, port: number): string {
 }
 
 /** Načte tělo požadavku; transport ho chce jako už rozparsovaný JSON. */
-async function readJsonBody(req: import('node:http').IncomingMessage): Promise<unknown> {
+async function readJsonBody(req: IncomingMessage): Promise<unknown> {
   if (req.method !== 'POST') return undefined
   const chunks: Buffer[] = []
   let size = 0
