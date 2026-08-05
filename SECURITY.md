@@ -101,13 +101,29 @@ you will get this answer:
   is the revocation** — one click, and it restarts the server so the old token
   stops working immediately.
 
-- **Rolling `vault.enc` back to an older copy is not detected.** The file format
-  carries a write counter that cannot be forged — it is bound into the body's GCM
-  tag — but nothing yet compares it against a value held outside the file. Someone
-  who can replace the whole vault with an earlier copy of the same vault therefore
-  reverts your saved host fingerprints silently, turning a "the host key changed"
-  warning back into a fresh trust-on-first-use prompt. Detecting it needs an anchor
-  outside `vault.enc`; that work is planned and not in this release.
+- **Rolling `vault.enc` back to an older copy is detected, but not prevented.**
+  The file carries a write counter bound into the body's GCM tag, so it cannot be
+  forged, and the last value seen is kept outside the vault in `vault.guard`.
+  Opening a vault older than that anchor shows a warning naming both numbers —
+  it does not refuse to open the file, because a legitimate restore from backup
+  looks identical and locking you out of your own connections is the worse
+  failure. Take the warning seriously: after a rollback your saved host
+  fingerprints are stale, so a server whose key really did change looks like a
+  first connection.
+
+  **What the anchor is worth.** `vault.guard` is sealed with the platform's
+  password store (DPAPI, Keychain, libsecret), which stops anyone who can only
+  *write files* from forging it — a sync client, a restored backup, a share with
+  loose permissions, an offline disk image. It stops nothing that runs as you:
+  the same keystores will happily seal a forged anchor for any process in your
+  session, and it can simply delete `vault.guard`, which turns detection off with
+  no warning at all. So this catches accidents and careless attackers, not a
+  deliberate attack from your own account.
+
+  On Linux with no keyring — or with the `basic_text` backend, which only encodes
+  — the anchor is written in plaintext and records that it is unprotected. It
+  still catches every accidental rollback. It is not a defence against anyone who
+  can write to your profile directory, and it does not claim to be.
 
 ## Supported versions
 

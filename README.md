@@ -117,8 +117,13 @@ npm run check:i18n-ui  # drives the built app and proves every locale renders
   key wrap — is bound to the encrypted body as AES-GCM additional authenticated data.
   Editing the header of a vault file therefore makes it refuse to open: a wrap cannot be
   removed, added, reordered or spliced in from an older copy without the body's tag
-  failing. (The counter is protected here but not yet compared against anything, so
-  replacing the whole file with an older copy is still undetected.)
+  failing.
+- Replacing the whole vault with an earlier copy of itself is **detected but not
+  prevented**. The last write counter seen is kept outside the file in `vault.guard`,
+  sealed with the platform's password store; opening an older vault warns and names
+  both numbers. It does not refuse — restoring a backup looks identical, and locking
+  you out of your own connections is worse. The anchor stops whoever can only write
+  files, not anything running as you, which can simply delete it. See SECURITY.md.
 - Vaults in older formats are migrated automatically on unlock: version 1 (key derived
   straight from the password) and version 2 (unauthenticated header) both become
   version 3. Migration keeps your existing recovery key working.

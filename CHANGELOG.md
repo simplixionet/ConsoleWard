@@ -38,9 +38,15 @@ a change from a previous version.
 - The readable header — format version, write counter and every field of every
   key wrap — is bound to the encrypted body as GCM additional authenticated
   data. A wrap therefore cannot be removed, added, reordered or spliced in from
-  an older copy: the body simply stops decrypting. (The counter is protected but
-  not yet compared against anything, so replacing the *whole* file with an older
-  copy is still undetected — see SECURITY.md.)
+  an older copy: the body simply stops decrypting.
+- Replacing the *whole* vault with an earlier copy of itself is noticed. The
+  last write counter seen is kept outside the file, in `vault.guard`, sealed
+  with the platform's password store. Opening a vault older than that anchor
+  warns and names both numbers; it does not refuse, because a legitimate
+  restore from backup looks the same and locking someone out of their own
+  connections is the worse failure. The anchor stops whoever can only write
+  files — it does not stop anything running as you, which can delete it. Said
+  plainly in SECURITY.md rather than implied to be more.
 - KDF parameters read out of the file are validated before any key is derived
   from them, so a tampered file cannot make derivation trivially cheap or turn
   an unlock attempt into hours of CPU.
