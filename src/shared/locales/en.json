@@ -145,6 +145,10 @@
   "term.barClosed": "disconnected",
   "term.barError": "error",
   "term.vaultUnlocked": "Vault unlocked",
+  "term.runHeader": "AI command — runs in its own channel, not in this shell:",
+  "term.runExit": "AI command finished, exit status {{code}}.",
+  "term.runSignal": "AI command was killed by {{signal}}.",
+  "term.runTimedOut": "AI command hit the time limit and may still be running.",
   "term.connCount_one": "{{count}} connection",
   "term.connCount_other": "{{count}} connections",
   "term.snipCount_one": "{{count}} command",
@@ -221,6 +225,7 @@
   "mcp.commandToRun": "Command to run",
   "mcp.multilineWarn": "The command contains several lines — all of them will run one after another.",
   "mcp.injectionWarn": "The proposal was built from text that may have come out of the server's own output. Read it even when it looks harmless.",
+  "mcp.separateShellWarn": "This will NOT run in your open terminal. It gets its own channel on the same connection: a fresh shell in the home directory, without your aliases, shell functions or PATH additions, and with no way to answer a password prompt.",
   "mcp.autoShare": "Send the output automatically once it finishes, without a second dialog",
   "mcp.runCommand": "Run the command",
   "mcp.deny": "Deny",
@@ -291,5 +296,6 @@
   "error.portNotAllowed": "Port {{port}} is not permitted.",
   "error.serverStartFailed": "The server could not be started: {{message}}",
   "error.requestTooLarge": "The request is too large.",
+  "error.execFailed": "The command could not be started in its own channel: {{message}}",
   "error.invalidMcpPort": "The port must be a whole number between 1024 and 65535."
 }

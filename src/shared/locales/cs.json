@@ -145,6 +145,10 @@
   "term.barClosed": "odpojeno",
   "term.barError": "chyba",
   "term.vaultUnlocked": "Trezor odemčen",
+  "term.runHeader": "Příkaz od AI — běží ve vlastním kanálu, ne v tomhle shellu:",
+  "term.runExit": "Příkaz od AI doběhl, návratový kód {{code}}.",
+  "term.runSignal": "Příkaz od AI ukončil signál {{signal}}.",
+  "term.runTimedOut": "Příkaz od AI narazil na časový limit a možná ještě běží.",
   "term.connCount_one": "{{count}} připojení",
   "term.connCount_few": "{{count}} připojení",
   "term.connCount_other": "{{count}} připojení",
@@ -223,6 +227,7 @@
   "mcp.commandToRun": "Příkaz ke spuštění",
   "mcp.multilineWarn": "Příkaz obsahuje víc řádků — spustí se postupně všechny.",
   "mcp.injectionWarn": "Návrh vznikl z textu, který mohl přijít z výstupu serveru. Přečti si ho, i když vypadá nevinně.",
+  "mcp.separateShellWarn": "Tohle se NESPUSTÍ v tvém otevřeném terminálu. Dostane vlastní kanál na stejném spojení: čerstvý shell v domovském adresáři, bez tvých aliasů, funkcí a doplňků PATH, a bez možnosti odpovědět na výzvu k heslu.",
   "mcp.autoShare": "Po doběhnutí poslat výstup automaticky, bez druhého dialogu",
   "mcp.runCommand": "Spustit příkaz",
   "mcp.deny": "Odmítnout",
@@ -293,5 +298,6 @@
   "error.portNotAllowed": "Port {{port}} není povolený.",
   "error.serverStartFailed": "Server se nepodařilo spustit: {{message}}",
   "error.requestTooLarge": "Požadavek je příliš velký.",
+  "error.execFailed": "Příkaz se nepodařilo spustit ve vlastním kanálu: {{message}}",
   "error.invalidMcpPort": "Port musí být celé číslo 1024–65535."
 }

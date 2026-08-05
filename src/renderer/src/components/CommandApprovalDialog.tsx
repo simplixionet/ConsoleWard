@@ -20,10 +20,10 @@ interface Props {
 export default function CommandApprovalDialog({ request, onAnswer }: Props) {
   const t = useT()
   const [autoShare, setAutoShare] = useState(false)
-  // A bare \r counts. The command is written into a PTY, where ICRNL turns
-  // carriage return into Enter, so `ls -la\rrm -rf ~` is two commands even
-  // though it contains no newline. Checking only \n left that warning silent
-  // on exactly the payload it exists to catch.
+  // \n still separates commands: the text is handed to the remote shell as a
+  // script. A bare \r no longer becomes Enter — the exec channel has no PTY and
+  // so no ICRNL — but it is still an invisible byte that changes what runs, so
+  // it stays in the warning.
   const multiline = /[\n\r]/.test(request.command)
 
   return (
@@ -50,6 +50,8 @@ export default function CommandApprovalDialog({ request, onAnswer }: Props) {
             <div className="meta-label">{t('mcp.commandToRun')}</div>
             <pre className="command-box">{request.commandVisualized}</pre>
           </div>
+
+          <div className="note-box">{t('mcp.separateShellWarn')}</div>
 
           {multiline && <div className="warn-box">{t('mcp.multilineWarn')}</div>}
 

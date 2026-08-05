@@ -15,11 +15,36 @@ import { Client } from 'ssh2'
 import type { ClientChannel } from 'ssh2'
 import type { Connection, HostKeyPrompt, SessionInfo, SessionStatus } from '../shared/types'
 import { vault } from './vault'
-import { cleanTerminalText, tailLines } from './ansi'
+import { cleanTerminalText, tailLines, visualizeControlChars } from './ansi'
 import { appError, t } from './i18n'
 
 /** Kolik bajtů výstupu držet v paměti na relaci (podklad pro AI ve 2. fázi). */
 const SCROLL_MEMORY_BYTES = 256 * 1024
+
+/** Strop výstupu jednoho MCP příkazu. */
+const RUN_OUTPUT_BYTES = 128 * 1024
+
+/** Tvrdý strop na dobu běhu jednoho MCP příkazu. */
+const RUN_TIMEOUT_MS = 30_000
+
+export interface RunOptions {
+  timeoutMs?: number
+  maxBytes?: number
+}
+
+/** Výsledek jednoho příkazu z MCP. */
+export interface RunResult {
+  /** stdout; stderr follows under a label when the command wrote any. */
+  output: string
+  /** Exit status from the server. null when it died on a signal or reported none. */
+  exitCode: number | null
+  /** Signal name (`SIGKILL`) when the command was killed rather than exiting. */
+  signal: string | null
+  /** The time limit fired; the channel was closed and the command may still run. */
+  timedOut: boolean
+  /** Output passed the byte cap; only its beginning is present. */
+  truncated: boolean
+}
 
 interface Session {
   id: string
@@ -31,8 +56,8 @@ interface Session {
   message?: string
   buffer: Buffer[]
   bufferBytes: number
-  /** Aktivní odchyt výstupu (běží jen po dobu jednoho příkazu z MCP). */
-  capture: ((chunk: Buffer) => void) | null
+  /** Běží právě příkaz z MCP? Brána drží jeden příkaz na relaci. */
+  running: boolean
 }
 
 type Emitter = {
@@ -71,55 +96,47 @@ class SshManager {
   }
 
   /**
-   * Odešle příkaz a zachytí výstup, který po něm přijde.
+   * Runs an MCP command in its own `exec` channel on the existing connection.
    *
-   * Konec poznáme podle ticha na lince – interaktivní shell nedává žádný jiný
-   * signál. Není to spolehlivé pro dlouho běžící příkazy, proto tvrdý strop.
+   * Deliberately NOT the interactive shell. Writing into the shell put the AI
+   * and the human on one byte stream: the PTY echoes every keystroke back, so
+   * the capture collected what the human typed — a sudo password included — and
+   * offered it to the model. The shell also gives no end-of-command signal, so
+   * the old code guessed from 900 ms of silence and reported the fragment of a
+   * paused command as its complete output.
+   *
+   * A separate channel has its own stream, its own end, and a real exit status.
+   * The command text is sent verbatim: there is no PTY here, so no ICRNL, and
+   * rewriting the bytes the human approved would now be what changes them.
    */
-  async runAndCapture(
-    sessionId: string,
-    command: string,
-    { idleMs = 900, timeoutMs = 30_000 }: { idleMs?: number; timeoutMs?: number } = {}
-  ): Promise<{ output: string; timedOut: boolean }> {
+  async runOnce(sessionId: string, command: string, opts: RunOptions = {}): Promise<RunResult> {
     const s = this.sessions.get(sessionId)
-    if (!s?.stream || s.status !== 'ready') throw appError('error.sessionNotReady')
-    if (s.capture) throw appError('error.commandRunning')
+    if (!s || s.status !== 'ready') throw appError('error.sessionNotReady')
+    if (s.running) throw appError('error.commandRunning')
 
-    const chunks: Buffer[] = []
-    let lastAt = Date.now()
-    s.capture = (chunk) => {
-      chunks.push(chunk)
-      lastAt = Date.now()
-    }
-
+    s.running = true
+    this.echo(s, `${t('term.runHeader')}\r\n$ ${visualizeControlChars(command)}`)
     try {
-      // Normalise line endings before writing. A PTY applies ICRNL, so a bare
-      // \r arrives at the shell as Enter — meaning the bytes executed could
-      // contain more commands than the text the human approved appeared to.
-      // Collapsing CRLF and lone CR to LF makes the executed form match the
-      // reviewed form; the dialog warns whenever either is present.
-      const normalized = command.replace(/\r\n?/g, '\n').replace(/\n?$/, '\n')
-      s.stream.write(Buffer.from(normalized, 'utf8'))
-      const startedAt = Date.now()
-      let timedOut = false
-      await new Promise<void>((resolve) => {
-        const tick = setInterval(() => {
-          const idle = Date.now() - lastAt >= idleMs
-          const expired = Date.now() - startedAt >= timeoutMs
-          if (idle || expired) {
-            timedOut = expired && !idle
-            clearInterval(tick)
-            resolve()
-          }
-        }, 100)
-      })
-      return {
-        output: cleanTerminalText(Buffer.concat(chunks).toString('utf8')),
-        timedOut
-      }
+      const result = await runExec(s.client, command, opts)
+      this.echo(s, `${result.output}\r\n${describeExit(result)}`)
+      return result
     } finally {
-      s.capture = null
+      s.running = false
     }
+  }
+
+  /**
+   * Mirrors an AI command run into the visible terminal.
+   *
+   * The command no longer runs in the human's shell, so without this it leaves
+   * no trace anywhere they look — and this app exists to be looked at. The text
+   * goes to the display only, never through appendBuffer: putting it in the
+   * scrollback would let the model read its own output back through
+   * `read_terminal` as if the shell had produced it.
+   */
+  private echo(session: Session, text: string): void {
+    const block = `\r\n${text.replace(/\n/g, '\r\n')}\r\n`
+    this.emit?.data(session.id, Buffer.from(block, 'utf8').toString('base64'))
   }
 
   async connect(connectionId: string): Promise<string> {
@@ -138,7 +155,7 @@ class SshManager {
       status: 'connecting',
       buffer: [],
       bufferBytes: 0,
-      capture: null
+      running: false
     }
     this.sessions.set(id, session)
     this.pushStatus(session)
@@ -338,7 +355,6 @@ class SshManager {
   }
 
   private appendBuffer(session: Session, chunk: Buffer): void {
-    session.capture?.(chunk)
     session.buffer.push(chunk)
     session.bufferBytes += chunk.length
     while (session.bufferBytes > SCROLL_MEMORY_BYTES && session.buffer.length > 1) {
@@ -366,6 +382,144 @@ function toInfo(s: Session): SessionInfo {
     status: s.status,
     message: s.message
   }
+}
+
+/**
+ * Runs a command in its own `exec` channel and returns what arrived in it.
+ *
+ * Takes the client rather than a session on purpose: this reads exactly one
+ * channel, the one `exec` hands back, and has no way to reach the interactive
+ * stream even by accident.
+ *
+ * No PTY is requested. With one, the kernel line discipline folds stderr into
+ * stdout, escape sequences come back, and `sudo` would sit at a password prompt
+ * that neither the model nor the human has any channel to answer — it would
+ * hang for the full time limit with a half-read prompt in the output. Without
+ * one, `sudo` fails immediately with `a terminal is required` on stderr and a
+ * real exit status, which is information rather than a stall. `allowHalfOpen`
+ * is left at ssh2's default of true: setting it false makes `end()` send
+ * CHANNEL_CLOSE and kill the command we just started.
+ */
+export function runExec(
+  client: Pick<Client, 'exec'>,
+  command: string,
+  { timeoutMs = RUN_TIMEOUT_MS, maxBytes = RUN_OUTPUT_BYTES }: RunOptions = {}
+): Promise<RunResult> {
+  return new Promise((resolve, reject) => {
+    const out: Buffer[] = []
+    const err: Buffer[] = []
+    let bytes = 0
+    let truncated = false
+    let exitCode: number | null = null
+    let signal: string | null = null
+    let timedOut = false
+    let settled = false
+    let channel: ClientChannel | null = null
+
+    // Keep the head, not the tail. The start of the output is what the human
+    // reads first, and a server that floods must not be able to push it off the
+    // top. Chunks past the cap are dropped rather than refused — refusing would
+    // stall the channel, and the exit status with it.
+    const collect =
+      (into: Buffer[]) =>
+      (chunk: Buffer): void => {
+        const room = maxBytes - bytes
+        if (room <= 0) {
+          truncated = true
+          return
+        }
+        if (chunk.length > room) {
+          truncated = true
+          into.push(chunk.subarray(0, room))
+          bytes = maxBytes
+          return
+        }
+        into.push(chunk)
+        bytes += chunk.length
+      }
+
+    const finish = (): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve({ output: joinStreams(out, err), exitCode, signal, timedOut, truncated })
+    }
+
+    const fail = (error: Error): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      reject(appError('error.execFailed', { message: error.message }))
+    }
+
+    const timer = setTimeout(() => {
+      timedOut = true
+      // close() sends CHANNEL_CLOSE. sshd normally hangs up the process, but
+      // nothing guarantees it, so the result says the command may still run
+      // rather than claiming it finished.
+      channel?.close()
+      finish()
+    }, timeoutMs)
+
+    try {
+      client.exec(command, { pty: false }, (error, chan) => {
+        if (error) {
+          fail(error)
+          return
+        }
+        if (settled) {
+          // The time limit won the race; do not leave the channel open.
+          chan.close()
+          return
+        }
+        channel = chan
+        chan.on('data', collect(out))
+        chan.stderr.on('data', collect(err))
+        chan.on('exit', (code: number | null, sig?: string) => {
+          exitCode = typeof code === 'number' ? code : null
+          signal = typeof sig === 'string' ? sig : null
+        })
+        // `close` is the end, not `exit`: exit-status is optional in the SSH
+        // spec and can arrive before the last data packet.
+        chan.on('close', finish)
+        // A Duplex with no error listener takes the main process down. Whatever
+        // we already collected is still worth returning.
+        chan.on('error', finish)
+        chan.stderr.on('error', finish)
+        // No stdin. Anything reading it gets EOF at once instead of waiting for
+        // input this channel has no way to deliver.
+        chan.end()
+      })
+    } catch (error) {
+      // ssh2 throws synchronously when the socket is already gone.
+      fail(error as Error)
+    }
+  })
+}
+
+/**
+ * Joins stdout and stderr into one text for both the human and the model.
+ *
+ * They stay separate. stdout and stderr are two independent SSH data types with
+ * no ordering guarantee between them, so interleaving would produce a
+ * transcript that looks authoritative and is not. The label matters too:
+ * `permission denied` on stderr is a different fact from the same words on
+ * stdout, and both the human deciding what to share and the model reading it
+ * have to be able to tell.
+ */
+function joinStreams(out: Buffer[], err: Buffer[]): string {
+  const stdout = cleanTerminalText(Buffer.concat(out).toString('utf8'))
+  const stderr = cleanTerminalText(Buffer.concat(err).toString('utf8'))
+  if (!stderr.trim()) return stdout
+  const head = stdout.trim() ? stdout.replace(/\n?$/, '\n') : ''
+  return `${head}--- stderr ---\n${stderr}`
+}
+
+/** Jednořádkový závěr běhu pro viditelný terminál. */
+function describeExit(result: RunResult): string {
+  if (result.timedOut) return t('term.runTimedOut')
+  if (result.signal) return t('term.runSignal', { signal: result.signal })
+  return t('term.runExit', { code: result.exitCode ?? -1 })
 }
 
 /** Otisk ve formátu OpenSSH: `SHA256:<base64 bez zarovnání>`. */

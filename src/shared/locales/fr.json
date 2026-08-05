@@ -145,6 +145,10 @@
   "term.barClosed": "déconnecté",
   "term.barError": "erreur",
   "term.vaultUnlocked": "Coffre déverrouillé",
+  "term.runHeader": "Commande de l'IA — s'exécute dans son propre canal, pas dans ce shell :",
+  "term.runExit": "Commande de l'IA terminée, code de sortie {{code}}.",
+  "term.runSignal": "La commande de l'IA a été tuée par {{signal}}.",
+  "term.runTimedOut": "La commande de l'IA a atteint la limite de temps et tourne peut-être encore.",
   "term.connCount_one": "{{count}} connexion",
   "term.connCount_other": "{{count}} connexions",
   "term.snipCount_one": "{{count}} commande",
@@ -221,6 +225,7 @@
   "mcp.commandToRun": "Commande à exécuter",
   "mcp.multilineWarn": "La commande contient plusieurs lignes : elles s'exécuteront toutes à la suite.",
   "mcp.injectionWarn": "La proposition a été construite à partir de texte pouvant provenir de la sortie du serveur. Lis-la même si elle paraît inoffensive.",
+  "mcp.separateShellWarn": "Cela ne s'exécutera PAS dans ton terminal ouvert. La commande obtient son propre canal sur la même connexion : un shell neuf dans le répertoire personnel, sans tes alias, fonctions de shell ni ajouts au PATH, et sans moyen de répondre à une demande de mot de passe.",
   "mcp.autoShare": "Envoyer la sortie automatiquement à la fin, sans deuxième dialogue",
   "mcp.runCommand": "Exécuter la commande",
   "mcp.deny": "Refuser",
@@ -291,5 +296,6 @@
   "error.portNotAllowed": "Le port {{port}} n'est pas autorisé.",
   "error.serverStartFailed": "Le serveur n'a pas pu démarrer : {{message}}",
   "error.requestTooLarge": "La requête est trop volumineuse.",
+  "error.execFailed": "La commande n'a pas pu être lancée dans son propre canal : {{message}}",
   "error.invalidMcpPort": "Le port doit être un nombre entier entre 1024 et 65535."
 }

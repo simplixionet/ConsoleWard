@@ -145,6 +145,10 @@
   "term.barClosed": "getrennt",
   "term.barError": "Fehler",
   "term.vaultUnlocked": "Tresor entsperrt",
+  "term.runHeader": "KI-Befehl — läuft in einem eigenen Kanal, nicht in dieser Shell:",
+  "term.runExit": "KI-Befehl beendet, Exit-Status {{code}}.",
+  "term.runSignal": "KI-Befehl wurde durch {{signal}} beendet.",
+  "term.runTimedOut": "KI-Befehl hat das Zeitlimit erreicht und läuft möglicherweise noch.",
   "term.connCount_one": "{{count}} Verbindung",
   "term.connCount_other": "{{count}} Verbindungen",
   "term.snipCount_one": "{{count}} Befehl",
@@ -221,6 +225,7 @@
   "mcp.commandToRun": "Auszuführender Befehl",
   "mcp.multilineWarn": "Der Befehl enthält mehrere Zeilen — sie laufen alle nacheinander.",
   "mcp.injectionWarn": "Der Vorschlag entstand aus Text, der aus der Ausgabe des Servers stammen kann. Lies ihn auch dann, wenn er harmlos wirkt.",
+  "mcp.separateShellWarn": "Das läuft NICHT in deinem offenen Terminal. Es bekommt einen eigenen Kanal auf derselben Verbindung: eine frische Shell im Home-Verzeichnis, ohne deine Aliase, Shell-Funktionen und PATH-Ergänzungen, und ohne Möglichkeit, auf eine Passwortabfrage zu antworten.",
   "mcp.autoShare": "Ausgabe nach dem Durchlauf automatisch senden, ohne zweiten Dialog",
   "mcp.runCommand": "Befehl ausführen",
   "mcp.deny": "Ablehnen",
@@ -291,5 +296,6 @@
   "error.portNotAllowed": "Port {{port}} ist nicht erlaubt.",
   "error.serverStartFailed": "Der Server konnte nicht gestartet werden: {{message}}",
   "error.requestTooLarge": "Die Anfrage ist zu groß.",
+  "error.execFailed": "Der Befehl konnte nicht im eigenen Kanal gestartet werden: {{message}}",
   "error.invalidMcpPort": "Der Port muss eine ganze Zahl zwischen 1024 und 65535 sein."
 }

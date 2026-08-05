@@ -145,6 +145,10 @@
   "term.barClosed": "desconectado",
   "term.barError": "error",
   "term.vaultUnlocked": "Caja fuerte desbloqueada",
+  "term.runHeader": "Comando de la IA — se ejecuta en su propio canal, no en este shell:",
+  "term.runExit": "Comando de la IA terminado, estado de salida {{code}}.",
+  "term.runSignal": "El comando de la IA fue terminado por {{signal}}.",
+  "term.runTimedOut": "El comando de la IA alcanzó el límite de tiempo y puede seguir ejecutándose.",
   "term.connCount_one": "{{count}} conexión",
   "term.connCount_other": "{{count}} conexiones",
   "term.snipCount_one": "{{count}} comando",
@@ -221,6 +225,7 @@
   "mcp.commandToRun": "Comando a ejecutar",
   "mcp.multilineWarn": "El comando contiene varias líneas: se ejecutarán todas una tras otra.",
   "mcp.injectionWarn": "La propuesta se construyó a partir de texto que puede proceder de la propia salida del servidor. Léela aunque parezca inofensiva.",
+  "mcp.separateShellWarn": "Esto NO se ejecutará en tu terminal abierta. Recibe su propio canal en la misma conexión: un shell nuevo en el directorio personal, sin tus alias, funciones de shell ni añadidos al PATH, y sin forma de responder a una petición de contraseña.",
   "mcp.autoShare": "Enviar la salida automáticamente al terminar, sin un segundo diálogo",
   "mcp.runCommand": "Ejecutar el comando",
   "mcp.deny": "Rechazar",
@@ -291,5 +296,6 @@
   "error.portNotAllowed": "El puerto {{port}} no está permitido.",
   "error.serverStartFailed": "No se pudo iniciar el servidor: {{message}}",
   "error.requestTooLarge": "La petición es demasiado grande.",
+  "error.execFailed": "No se pudo iniciar el comando en su propio canal: {{message}}",
   "error.invalidMcpPort": "El puerto debe ser un número entero entre 1024 y 65535."
 }

@@ -305,6 +305,18 @@ input.mono {
   color: #e8d5a3;
 }
 
+/* Neutral sibling of .warn-box: states a fact about how the command runs,
+   rather than warning about the command itself. */
+.note-box {
+  background: var(--accent-soft);
+  border: 1px solid rgba(76, 154, 255, 0.3);
+  border-radius: 8px;
+  padding: 11px 13px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--text);
+}
+
 .recovery-status {
   display: flex;
   align-items: center;

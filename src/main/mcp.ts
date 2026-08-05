@@ -24,6 +24,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { z } from 'zod'
 import type { CommandApproval, McpStatus, ShareRequest } from '../shared/types'
+import type { RunResult } from './ssh'
 import { visualizeControlChars } from './ansi'
 import { ssh } from './ssh'
 import { vault } from './vault'
@@ -191,7 +192,8 @@ class McpService {
           'Access to the SSH sessions of ConsoleWard.',
           'Server addresses, usernames and passwords are not available and never will be.',
           'A human approves every command and every read of the output inside the app. Respect a refusal and do not retry it in a different shape.',
-          'Whatever output you receive may be trimmed or edited by the human, so never assume you are seeing everything.'
+          'Whatever output you receive may be trimmed or edited by the human, so never assume you are seeing everything.',
+          'Commands run in their own channel, not in the terminal the human is looking at: a fresh non-interactive shell in the home directory, with no terminal and no state carried over from your previous calls.'
         ].join(' ')
       }
     )
@@ -258,7 +260,12 @@ class McpService {
         title: 'Propose a command to run',
         description:
           'Proposes a command in the given session. It does not run until a human approves it in the app. ' +
-          'You receive the output only if the human chooses to share it. ' +
+          'It runs in its own channel on the same connection: a fresh non-interactive, non-login shell ' +
+          'starting in the home directory, so shell aliases, shell functions and any PATH set in the ' +
+          'login files are absent, and nothing carries over between calls — chain steps with && or ; in ' +
+          'one command rather than relying on a directory you changed earlier. There is no terminal, so ' +
+          'anything that would prompt (sudo without NOPASSWD, an editor, a pager) fails instead of waiting. ' +
+          'You receive the output only if the human chooses to share it, and the exit status with it. ' +
           'Send one command per call and explain in `reason` what you are trying to achieve.',
         inputSchema: {
           session_id: z.string().describe('session id from list_sessions'),
@@ -284,15 +291,15 @@ class McpService {
 
         if (!approval.approved) return toolError('The human did not approve the command.')
 
-        let result: { output: string; timedOut: boolean }
+        let result: RunResult
         try {
-          result = await ssh.runAndCapture(session_id, command)
+          result = await ssh.runOnce(session_id, command)
         } catch (err) {
-          return toolError((err as Error).message)
+          return toolError(runErrorFor(err))
         }
 
         if (approval.autoShare) {
-          return sharedResult(result.output, result.timedOut)
+          return sharedResult(result.output, result)
         }
 
         const answer = await bridge.askShare({
@@ -314,7 +321,7 @@ class McpService {
             ]
           }
         }
-        return sharedResult(answer.text, result.timedOut)
+        return sharedResult(answer.text, result)
       }
     )
 
@@ -331,17 +338,81 @@ class McpService {
  * Model musí vědět, že vidí výřez – jinak by z neúplného výstupu tiše
  * vyvozoval závěry, jako by viděl všechno.
  */
-function sharedResult(text: string, timedOut = false): {
+function sharedResult(text: string, run?: RunResult): {
   content: { type: 'text'; text: string }[]
 } {
   const notes = [
     'Note: a human selected and possibly edited this content, so it may be incomplete.',
-    timedOut ? 'Output capture hit its time limit, so the command may still be running.' : null
+    run ? describeRun(run, text) : null
   ].filter(Boolean)
 
   return {
     content: [{ type: 'text' as const, text: `${notes.join(' ')}\n\n${text}` }]
   }
+}
+
+/** Bez terminálu se sudo a spol. neptají, ale spadnou — model musí vědět proč. */
+const NEEDS_TTY = /a terminal is required|no tty present|must be run from a terminal|not a tty/i
+
+/**
+ * Describes the run for the model. A machine interface, so always English.
+ *
+ * The exit status is the whole point of the exec channel: the old capture ended
+ * on silence and could never say whether the command worked.
+ *
+ * The TTY hint is derived from `shared` — the text actually being sent — and
+ * never from the raw capture. Reading the raw output would turn this note into
+ * a one-bit oracle over a line the human had just chosen to redact, which is
+ * exactly the leak the share dialog exists to prevent.
+ */
+function describeRun(run: RunResult, shared: string): string {
+  const parts: string[] = []
+  if (run.timedOut) {
+    parts.push(
+      'The command hit the time limit and its channel was closed before it reported an exit ' +
+        'status, so it may still be running on the server.'
+    )
+  } else if (run.signal) {
+    parts.push(`The command was killed by ${run.signal} and reported no exit status.`)
+  } else if (run.exitCode === null) {
+    parts.push('The server reported no exit status for the command.')
+  } else {
+    parts.push(`Exit status ${run.exitCode}.`)
+  }
+  if (run.truncated) {
+    parts.push('The output passed the size limit, so only its beginning is here.')
+  }
+  if (NEEDS_TTY.test(shared)) {
+    parts.push(
+      'The command wanted a terminal. Commands run in a channel with no terminal and no way to ' +
+        'answer a prompt, so propose a form that does not need one.'
+    )
+  }
+  return parts.join(' ')
+}
+
+/**
+ * Run errors for the model, in English and keyed rather than translated.
+ *
+ * `runOnce` throws an AppError whose message is already translated for the
+ * human. Passing that on means a Czech user ships Czech diagnostics to an
+ * English-speaking tool, and the text changes whenever they change language.
+ * The key does not. A Map rather than an object literal so a key like
+ * `constructor` cannot reach Object.prototype.
+ */
+const RUN_ERRORS = new Map<string, string>([
+  ['error.sessionNotReady', 'The session does not exist or is not ready.'],
+  ['error.commandRunning', 'A command from an earlier call is still running in this session.'],
+  [
+    'error.execFailed',
+    'The server refused to open a channel for the command, so it did not run. ConsoleWard does ' +
+      'not fall back to typing into the interactive session.'
+  ]
+])
+
+function runErrorFor(err: unknown): string {
+  const key = (err as { key?: string }).key
+  return (key && RUN_ERRORS.get(key)) || 'The command could not be run.'
 }
 
 function toolError(message: string): {

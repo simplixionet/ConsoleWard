@@ -145,6 +145,10 @@
   "term.barClosed": "verbroken",
   "term.barError": "fout",
   "term.vaultUnlocked": "Kluis ontgrendeld",
+  "term.runHeader": "AI-commando — draait in een eigen kanaal, niet in deze shell:",
+  "term.runExit": "AI-commando klaar, exitcode {{code}}.",
+  "term.runSignal": "AI-commando is beëindigd door {{signal}}.",
+  "term.runTimedOut": "AI-commando heeft de tijdslimiet bereikt en draait mogelijk nog.",
   "term.connCount_one": "{{count}} verbinding",
   "term.connCount_other": "{{count}} verbindingen",
   "term.snipCount_one": "{{count}} commando",
@@ -221,6 +225,7 @@
   "mcp.commandToRun": "Uit te voeren commando",
   "mcp.multilineWarn": "Het commando bevat meerdere regels — ze worden allemaal na elkaar uitgevoerd.",
   "mcp.injectionWarn": "Het voorstel is opgebouwd uit tekst die uit de uitvoer van de server kan komen. Lees het ook als het onschuldig lijkt.",
+  "mcp.separateShellWarn": "Dit wordt NIET uitgevoerd in je geopende terminal. Het krijgt een eigen kanaal op dezelfde verbinding: een verse shell in de thuismap, zonder je aliassen, shell-functies of PATH-aanvullingen, en zonder manier om op een wachtwoordvraag te antwoorden.",
   "mcp.autoShare": "Uitvoer na afloop automatisch versturen, zonder tweede venster",
   "mcp.runCommand": "Commando uitvoeren",
   "mcp.deny": "Weigeren",
@@ -291,5 +296,6 @@
   "error.portNotAllowed": "Poort {{port}} is niet toegestaan.",
   "error.serverStartFailed": "De server kon niet worden gestart: {{message}}",
   "error.requestTooLarge": "Het verzoek is te groot.",
+  "error.execFailed": "Het commando kon niet in een eigen kanaal worden gestart: {{message}}",
   "error.invalidMcpPort": "De poort moet een geheel getal tussen 1024 en 65535 zijn."
 }
