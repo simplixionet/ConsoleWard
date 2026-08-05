@@ -321,5 +321,9 @@
   "error.serverStartFailed": "No se pudo iniciar el servidor: {{message}}",
   "error.requestTooLarge": "La petición es demasiado grande.",
   "error.execFailed": "No se pudo iniciar el comando en su propio canal: {{message}}",
-  "error.invalidMcpPort": "El puerto debe ser un número entero entre 1024 y 65535."
+  "error.invalidMcpPort": "El puerto debe ser un número entero entre 1024 y 65535.",
+  "vault.rollbackTitle": "Esta caja fuerte es más antigua que la que usaste por última vez.",
+  "vault.rollbackBody": "El archivo en disco está en la escritura {{found}}; la última vista fue {{expected}}, el {{date}}. Puede que alguien haya vuelto a poner una copia antigua, o que se haya restaurado una copia de seguridad.",
+  "vault.rollbackHostKeys": "Las huellas de host guardadas pueden estar desactualizadas, así que un servidor cuya clave sí cambió puede parecer una primera conexión. Lee con atención cualquier aviso de clave de host hasta que lo aclares.",
+  "vault.rollbackDismiss": "Ocultar"
 }

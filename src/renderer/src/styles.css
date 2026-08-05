@@ -437,6 +437,30 @@ input.mono {
   color: #ffb3b3;
 }
 
+/*
+ * Pruh o vráceném trezoru.
+ *
+ * Sedí pod hlavičkou nad celým obsahem, protože se netýká jedné relace, ale
+ * všeho, co je v trezoru uložené. Nemá `position: fixed` — má obsah odsunout,
+ * ne ho překrýt; překrytá věc se odklikne, odsunutá se přečte.
+ */
+.rollback-bar {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 16px;
+  background: color-mix(in srgb, var(--danger) 16%, var(--panel));
+  border-bottom: 1px solid var(--danger);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.rollback-text {
+  flex: 1;
+}
+.rollback-bar .btn {
+  flex: 0 0 auto;
+}
+
 /* --------------------------------------- dialog pro sdílení výstupu */
 
 .share-modal {

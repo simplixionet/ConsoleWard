@@ -321,5 +321,9 @@
   "error.serverStartFailed": "Le serveur n'a pas pu démarrer : {{message}}",
   "error.requestTooLarge": "La requête est trop volumineuse.",
   "error.execFailed": "La commande n'a pas pu être lancée dans son propre canal : {{message}}",
-  "error.invalidMcpPort": "Le port doit être un nombre entier entre 1024 et 65535."
+  "error.invalidMcpPort": "Le port doit être un nombre entier entre 1024 et 65535.",
+  "vault.rollbackTitle": "Ce coffre est plus ancien que celui utilisé la dernière fois.",
+  "vault.rollbackBody": "Le fichier sur le disque en est à l'écriture {{found}} ; la dernière vue était {{expected}}, le {{date}}. Quelqu'un a peut-être remis une copie plus ancienne, ou une sauvegarde a été restaurée.",
+  "vault.rollbackHostKeys": "Les empreintes d'hôtes enregistrées peuvent être périmées : un serveur dont la clé a réellement changé ressemblera à une première connexion. Lis attentivement toute demande de clé d'hôte tant que ce n'est pas éclairci.",
+  "vault.rollbackDismiss": "Masquer"
 }

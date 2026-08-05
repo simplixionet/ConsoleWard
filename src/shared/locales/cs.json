@@ -325,5 +325,9 @@
   "error.serverStartFailed": "Server se nepodařilo spustit: {{message}}",
   "error.requestTooLarge": "Požadavek je příliš velký.",
   "error.execFailed": "Příkaz se nepodařilo spustit ve vlastním kanálu: {{message}}",
-  "error.invalidMcpPort": "Port musí být celé číslo 1024–65535."
+  "error.invalidMcpPort": "Port musí být celé číslo 1024–65535.",
+  "vault.rollbackTitle": "Tenhle trezor je starší než ten, který jsi naposledy používal.",
+  "vault.rollbackBody": "Soubor na disku je u zápisu {{found}}, naposledy jsme viděli {{expected}} dne {{date}}. Někdo mohl vrátit starší kopii, nebo se obnovila záloha.",
+  "vault.rollbackHostKeys": "Uložené otisky hostitelů můžou být zastaralé, takže server, kterému se klíč opravdu změnil, se bude tvářit jako první připojení. Než si to vyjasníš, čti výzvy ke klíči serveru pozorně.",
+  "vault.rollbackDismiss": "Skrýt"
 }

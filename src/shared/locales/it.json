@@ -321,5 +321,9 @@
   "error.serverStartFailed": "Non è stato possibile avviare il server: {{message}}",
   "error.requestTooLarge": "La richiesta è troppo grande.",
   "error.execFailed": "Impossibile avviare il comando nel suo canale: {{message}}",
-  "error.invalidMcpPort": "La porta deve essere un numero intero tra 1024 e 65535."
+  "error.invalidMcpPort": "La porta deve essere un numero intero tra 1024 e 65535.",
+  "vault.rollbackTitle": "Questa cassaforte è più vecchia di quella usata l’ultima volta.",
+  "vault.rollbackBody": "Il file su disco è alla scrittura {{found}}; l’ultima vista era {{expected}}, il {{date}}. Qualcuno potrebbe aver rimesso una copia più vecchia, oppure è stato ripristinato un backup.",
+  "vault.rollbackHostKeys": "Le impronte degli host salvate possono essere superate, quindi un server la cui chiave è davvero cambiata sembrerà una prima connessione. Leggi con attenzione ogni richiesta sulla chiave host finché non hai chiarito la cosa.",
+  "vault.rollbackDismiss": "Nascondi"
 }

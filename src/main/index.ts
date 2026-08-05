@@ -7,6 +7,7 @@ import {
   clipboard,
   dialog,
   ipcMain,
+  safeStorage,
   session as electronSession,
   shell
 } from 'electron'
@@ -304,16 +305,60 @@ function validateInput(input: ConnectionInput): void {
   }
 }
 
+/* ------------------------------------------------------- kotva proti vrácení */
+
+/**
+ * Předá trezoru pečetidlo postavené na platformním trezoru hesel.
+ *
+ * Sem to patří, a ne do `vault.ts`: `safeStorage` je pojmenovaný export
+ * z `electron` a testovací soubory stubují jen `app`, takže import v trezoru
+ * je shodí už při načtení, ne v jednom testu.
+ *
+ * `basic_text` je na Linuxu záložní backend, který data jen zakóduje. Electron
+ * u něj `isEncryptionAvailable()` hlásí `true`, což by kotvu označilo za
+ * chráněnou, aniž by byla — a to je horší než přiznaná nechráněná kotva.
+ * Nedostupnost se neřeší dialogem: je to fakt, se kterým uživatel nic neudělá.
+ */
+function installGuardSealer(): void {
+  let usable = false
+  try {
+    usable = safeStorage.isEncryptionAvailable()
+    if (usable && process.platform === 'linux') {
+      const backend = safeStorage.getSelectedStorageBackend?.()
+      if (backend === 'basic_text') usable = false
+    }
+  } catch {
+    usable = false
+  }
+
+  if (!usable) {
+    console.warn('vault: no usable keyring — the rollback anchor will be stored unprotected')
+  }
+
+  vault.installGuardSealer({
+    available: () => usable,
+    seal: (plain) => safeStorage.encryptString(plain),
+    open: (blob) => safeStorage.decryptString(blob)
+  })
+}
+
 /* --------------------------------------------------------------------- IPC */
 
 function registerIpc(): void {
   /* trezor */
-  handle(CH.vaultStatus, async (): Promise<VaultStatus> => ({
-    exists: vault.exists(),
-    unlocked: vault.isUnlocked(),
-    hasRecovery: vault.isUnlocked() ? vault.hasRecoveryKey() : await vault.hasRecoveryOnDisk(),
-    path: vault.filePath
-  }))
+  handle(CH.vaultStatus, async (): Promise<VaultStatus> => {
+    const guard = vault.rollback
+    return {
+      exists: vault.exists(),
+      unlocked: vault.isUnlocked(),
+      hasRecovery: vault.isUnlocked() ? vault.hasRecoveryKey() : await vault.hasRecoveryOnDisk(),
+      path: vault.filePath,
+      rollback:
+        guard.kind === 'rollback'
+          ? { expected: guard.expected, found: guard.found, at: guard.at }
+          : null
+    }
+  })
 
   handle(CH.vaultCreate, async (pw: string) => {
     const recoveryKey = await vault.create(pw)
@@ -694,6 +739,8 @@ if (!gotLock) {
     if (migratedFrom) console.log('Trezor přenesen ze složky:', migratedFrom)
 
     await initI18n()
+
+    installGuardSealer()
 
     applyCsp()
     registerIpc()

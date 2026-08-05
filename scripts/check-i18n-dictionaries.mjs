@@ -41,7 +41,7 @@ const SHIPPING = ['en', 'cs', 'de', 'es', 'fr', 'it', 'pt-BR', 'nl']
 const PLURAL_KEYS = ['term.connCount', 'term.snipCount', 'mcp.pickLines', 'mcp.pickChars']
 
 /** Namespaces where a weakened string is a security failure, not a typo. */
-const SECURITY_NAMESPACES = ['hostkey.', 'mcp.', 'secret.', 'recovery.']
+const SECURITY_NAMESPACES = ['hostkey.', 'mcp.', 'secret.', 'recovery.', 'vault.']
 
 /** Words whose loss flips a warning's meaning. Checked on the English source. */
 const LIMITERS =

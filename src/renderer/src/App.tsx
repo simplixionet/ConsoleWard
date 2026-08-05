@@ -50,6 +50,8 @@ type DeleteTarget =
 export default function App() {
   const t = useT()
   const [vaultStatus, setVaultStatus] = useState<VaultStatus | null>(null)
+  /** Časové razítko kotvy, jejíž varování už uživatel odklikl. */
+  const [rollbackDismissed, setRollbackDismissed] = useState<number | null>(null)
   const [connections, setConnections] = useState<ConnectionMeta[]>([])
   const [snippets, setSnippets] = useState<Snippet[]>([])
   const [settings, setSettings] = useState<Settings>(FALLBACK_SETTINGS)
@@ -318,6 +320,12 @@ export default function App() {
 
   const active = sessions.find((s) => s.id === activeSession) ?? null
   const canInsert = active?.status === 'ready'
+  /*
+   * Odloží se konkrétní událost, ne „varování obecně". Kdyby se ukládalo jen
+   * `true`, druhé vrácení souboru v témže běhu by zůstalo neviditelné, protože
+   * ho umlčelo odkliknutí toho prvního.
+   */
+  const showRollback = vaultStatus.rollback !== null && rollbackDismissed !== vaultStatus.rollback.at
 
   return (
     <div className="app">
@@ -338,6 +346,34 @@ export default function App() {
           </button>
         </div>
       </header>
+
+      {/*
+        Pruh, ne modál, a ne předčasný `return`.
+
+        Modál se zavírá reflexem a tenhle stav se jedním kliknutím nespraví —
+        trezor je už otevřený a jde o to, s čím v něm od teď počítat. Předčasný
+        return by navíc přeskočil `recoveryModal` níž, takže kdo se sem dostal
+        obnovovacím klíčem, by nikdy neuviděl ten nový, který mu právě vznikl.
+      */}
+      {showRollback && vaultStatus.rollback && (
+        <div className="rollback-bar">
+          <div className="rollback-text">
+            <b>{t('vault.rollbackTitle')}</b>{' '}
+            {t('vault.rollbackBody', {
+              found: vaultStatus.rollback.found,
+              expected: vaultStatus.rollback.expected,
+              date: new Date(vaultStatus.rollback.at).toLocaleString()
+            })}{' '}
+            {t('vault.rollbackHostKeys')}
+          </div>
+          <button
+            className="btn small"
+            onClick={() => setRollbackDismissed(vaultStatus.rollback!.at)}
+          >
+            {t('vault.rollbackDismiss')}
+          </button>
+        </div>
+      )}
 
       <div className="body">
         <Sidebar

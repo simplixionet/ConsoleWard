@@ -126,12 +126,31 @@ export interface Settings {
   hasAiApiKey?: boolean
 }
 
+/**
+ * Soubor na disku je starší než ten, který jsme u tohohle trezoru naposledy
+ * viděli — někdo podstrčil starší kopii, nebo se obnovila záloha.
+ *
+ * Není to důvod trezor neotevřít. Je to důvod říct, že uložené otisky hostitelů
+ * a připojení můžou být zastaralé: z varování „klíč serveru se změnil" se po
+ * takovém vrácení stane obyčejná otázka „důvěřovat novému klíči?".
+ */
+export interface RollbackWarning {
+  /** Číslo zápisu, které jsme naposledy viděli. */
+  expected: number
+  /** Číslo zápisu v souboru, který tam je teď. */
+  found: number
+  /** Kdy byla kotva zapsaná (ms od epochy). */
+  at: number
+}
+
 export interface VaultStatus {
   exists: boolean
   unlocked: boolean
   /** Je pro trezor nastavený obnovovací klíč? Čte se z nešifrované hlavičky. */
   hasRecovery: boolean
   path: string
+  /** Null, dokud se neodemklo, i když je všechno v pořádku. */
+  rollback: RollbackWarning | null
 }
 
 export type SessionStatus =

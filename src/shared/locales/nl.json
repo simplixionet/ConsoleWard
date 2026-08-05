@@ -321,5 +321,9 @@
   "error.serverStartFailed": "De server kon niet worden gestart: {{message}}",
   "error.requestTooLarge": "Het verzoek is te groot.",
   "error.execFailed": "Het commando kon niet in een eigen kanaal worden gestart: {{message}}",
-  "error.invalidMcpPort": "De poort moet een geheel getal tussen 1024 en 65535 zijn."
+  "error.invalidMcpPort": "De poort moet een geheel getal tussen 1024 en 65535 zijn.",
+  "vault.rollbackTitle": "Deze kluis is ouder dan die je het laatst gebruikte.",
+  "vault.rollbackBody": "Het bestand op schijf staat op schrijfactie {{found}}; de laatst geziene was {{expected}}, op {{date}}. Mogelijk heeft iemand een oudere kopie teruggezet, of is er een back-up hersteld.",
+  "vault.rollbackHostKeys": "Opgeslagen host-vingerafdrukken kunnen verouderd zijn, waardoor een server waarvan de sleutel echt is veranderd op een eerste verbinding lijkt. Lees elke vraag over een hostsleutel zorgvuldig tot je dit hebt uitgezocht.",
+  "vault.rollbackDismiss": "Verbergen"
 }

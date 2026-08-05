@@ -321,5 +321,9 @@
   "error.serverStartFailed": "Der Server konnte nicht gestartet werden: {{message}}",
   "error.requestTooLarge": "Die Anfrage ist zu groß.",
   "error.execFailed": "Der Befehl konnte nicht im eigenen Kanal gestartet werden: {{message}}",
-  "error.invalidMcpPort": "Der Port muss eine ganze Zahl zwischen 1024 und 65535 sein."
+  "error.invalidMcpPort": "Der Port muss eine ganze Zahl zwischen 1024 und 65535 sein.",
+  "vault.rollbackTitle": "Dieser Tresor ist älter als der zuletzt benutzte.",
+  "vault.rollbackBody": "Die Datei auf der Festplatte steht bei Schreibvorgang {{found}}; zuletzt gesehen wurde {{expected}}, am {{date}}. Möglicherweise hat jemand eine ältere Kopie zurückgespielt, oder es wurde ein Backup wiederhergestellt.",
+  "vault.rollbackHostKeys": "Gespeicherte Host-Fingerabdrücke können veraltet sein, sodass ein Server mit tatsächlich geändertem Schlüssel wie eine Erstverbindung aussieht. Lies Host-Schlüssel-Abfragen sorgfältig, bis das geklärt ist.",
+  "vault.rollbackDismiss": "Ausblenden"
 }

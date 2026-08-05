@@ -321,5 +321,9 @@
   "error.serverStartFailed": "The server could not be started: {{message}}",
   "error.requestTooLarge": "The request is too large.",
   "error.execFailed": "The command could not be started in its own channel: {{message}}",
-  "error.invalidMcpPort": "The port must be a whole number between 1024 and 65535."
+  "error.invalidMcpPort": "The port must be a whole number between 1024 and 65535.",
+  "vault.rollbackTitle": "This vault is older than the one you last used.",
+  "vault.rollbackBody": "The file on disk is at write {{found}}; the last one seen was {{expected}}, on {{date}}. Someone may have put an older copy back, or a backup was restored.",
+  "vault.rollbackHostKeys": "Saved host fingerprints may be out of date, so a server whose key really did change can look like a first connection. Read any host-key prompt carefully until you have sorted this out.",
+  "vault.rollbackDismiss": "Dismiss"
 }
