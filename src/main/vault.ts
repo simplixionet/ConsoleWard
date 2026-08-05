@@ -412,6 +412,8 @@ class Vault {
   private writes: Promise<unknown> = Promise.resolve()
   /** Kolik pokusů o odemčení po sobě selhalo; viz `awaitUnlockSlot`. */
   private failedUnlocks = 0
+  /** Konec fronty pokusů o odemčení; viz `awaitUnlockSlot`. */
+  private unlocks: Promise<unknown> = Promise.resolve()
 
   get filePath(): string {
     return path.join(app.getPath('userData'), 'vault.enc')
@@ -464,11 +466,28 @@ class Vault {
       await makeWrap('password', masterPassword, dek),
       await makeWrap('recovery', normalizeRecoveryKey(recoveryKey), dek)
     ]
-    await this.persist(this.data!)
+    // Same guard as the v2 migration in `unlock`, and for the same reason: the
+    // three assignments above already made `isUnlocked()` true, so a failed
+    // write would report an error to the renderer while leaving the main
+    // process holding an open vault that `requireUnlockedPublic()` waves
+    // through. Worse here than there — the file does not exist at all, so the
+    // caller never receives the recovery key, and any later `mutate()` that
+    // succeeded would materialise a vault whose recovery wrap opens with a key
+    // nobody was ever shown.
+    try {
+      await this.persist(this.data!)
+    } catch (err) {
+      this.lock()
+      throw err
+    }
     return recoveryKey
   }
 
   async unlock(masterPassword: string): Promise<void> {
+    return this.enqueueUnlock(() => this.attemptUnlock(masterPassword))
+  }
+
+  private async attemptUnlock(masterPassword: string): Promise<void> {
     await this.awaitUnlockSlot()
     const file = await this.readFile()
 
@@ -721,6 +740,30 @@ class Vault {
    * The counter resets on success, and `lock()` deliberately does NOT reset it —
    * otherwise the way past the throttle would be to lock and try again.
    */
+  /**
+   * One unlock attempt at a time, whatever the caller does.
+   *
+   * The delay alone is not a throttle. Fifty concurrent calls read the same
+   * `failedUnlocks`, sleep the same interval simultaneously, and reach scrypt
+   * together — fifty guesses for the price of one delay, and the counter only
+   * rises once because each of them read it before any of them failed. Nothing
+   * upstream imposes order: `ipcMain.handle` runs handlers concurrently and the
+   * lock screen can issue as many calls as it likes.
+   *
+   * Serialising the WHOLE attempt — the wait, the derivation and the counter
+   * update — is what makes the penalty compound. Errors are swallowed into the
+   * tail so one rejection cannot stall the queue; the caller still receives its
+   * own rejection.
+   */
+  private enqueueUnlock<T>(attempt: () => Promise<T>): Promise<T> {
+    const done = this.unlocks.then(attempt, attempt)
+    this.unlocks = done.then(
+      () => undefined,
+      () => undefined
+    )
+    return done
+  }
+
   private async awaitUnlockSlot(): Promise<void> {
     if (this.failedUnlocks === 0) return
     const delay = Math.min(UNLOCK_MAX_DELAY_MS, UNLOCK_BASE_DELAY_MS * 2 ** (this.failedUnlocks - 1))
@@ -821,7 +864,15 @@ class Vault {
     this.data = normalizeData(JSON.parse(plaintext) as Partial<VaultData>)
     this.counter = 0
     this.wraps = [await makeWrap('password', masterPassword, this.dek)]
-    await this.persist(this.data!)
+    // The v1 half of the guard the v2 branch of `unlock` already has. Without
+    // it a v1 user on a read-only or full profile directory gets an error, the
+    // lock screen, and an unlocked vault behind it.
+    try {
+      await this.persist(this.data!)
+    } catch (err) {
+      this.lock()
+      throw err
+    }
     await this.dropBackupAfterMigration()
   }
 

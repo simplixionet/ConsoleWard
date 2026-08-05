@@ -108,5 +108,8 @@
       ],
       "category": "public.app-category.developer-tools"
     }
+  },
+  "engines": {
+    "node": ">=24.0.0"
   }
 }

@@ -964,6 +964,59 @@ test('a mutation that cannot be written back does not survive in memory', async 
   assert.equal(vault.read().settings.scrollback, 1234, 'the following write did not stick')
 })
 
+test('a failed write during create or v1 migration does not leave the vault open', async () => {
+  // The lock invariant, on the two paths that were missing the guard the v2
+  // migration already had. isUnlocked() is what requireUnlockedPublic() gates
+  // SSH and MCP on, so reporting an error to the renderer while holding an
+  // open vault in the main process means a lock that means nothing.
+  fresh()
+  fs.mkdirSync(vaultPath() + '.tmp')
+  await assert.rejects(() => vault.create(PASSWORD), 'a blocked create reported success')
+  assert.equal(vault.isUnlocked(), false, 'a failed create left the vault unlocked')
+  assert.equal(vault.exists(), false, 'a failed create left a vault file behind')
+  fs.rmSync(vaultPath() + '.tmp', { recursive: true, force: true })
+
+  fresh()
+  await writeLegacyVault(PASSWORD, { connections: [sampleConnection()] })
+  fs.mkdirSync(vaultPath() + '.tmp')
+  await assert.rejects(() => vault.unlock(PASSWORD), 'a blocked v1 migration reported success')
+  assert.equal(vault.isUnlocked(), false, 'a failed v1 migration left the vault unlocked')
+  assert.equal(readVaultFile().version, 1, 'the v1 file was half-migrated')
+  fs.rmSync(vaultPath() + '.tmp', { recursive: true, force: true })
+
+  // And the one chance at migration survives, because nothing was written.
+  await vault.unlock(PASSWORD)
+  assert.equal(readVaultFile().version, 3, 'the migration no longer runs after a failed write')
+  assert.equal(vault.read().connections.length, 1, 'the legacy data was lost')
+})
+
+test('concurrent wrong passwords are serialised, not run side by side', async () => {
+  // A sleep is not a throttle. Fired together, every call reads the same
+  // failedUnlocks, sleeps the same interval simultaneously and reaches scrypt
+  // at once -- N guesses for the price of one delay, with the counter rising
+  // once because all of them read it before any of them failed.
+  fresh()
+  await vault.create(PASSWORD)
+  vault.lock()
+  await vault.unlock(PASSWORD)
+  vault.lock()
+
+  const started = Date.now()
+  const results = await Promise.allSettled(
+    Array.from({ length: 4 }, (_, i) => vault.unlock(`wrong-${i}`))
+  )
+  const spent = Date.now() - started
+
+  assert.ok(
+    results.every((r) => r.status === 'rejected'),
+    'a wrong password was accepted'
+  )
+  // Four attempts serialised: four scrypt derivations plus the compounding
+  // penalty after the first. Run side by side they would overlap into roughly
+  // one derivation's worth of wall clock.
+  assert.ok(spent > 900, `four concurrent guesses took only ${spent} ms`)
+})
+
 test('a migration does not leave the old-format vault lying next to the new one', async () => {
   // The .bak persist() takes before every write holds the vault in the OLD
   // format with the SAME secrets. For v2 that is a copy with no AAD and no

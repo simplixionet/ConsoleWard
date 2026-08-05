@@ -19,21 +19,34 @@ concurrency:
 
 jobs:
   check:
-    name: Typecheck, build, locale gates
+    name: Tests, typecheck, build, gates
     runs-on: windows-latest
 
     steps:
       - uses: actions/checkout@v4
 
+      # 24, not 22. The test harness imports `src/**/*.ts` directly and relies
+      # on node stripping the types with no build step and no flag, which is
+      # only the default from 22.18 — so `node-version: 22` silently depended on
+      # which 22.x the runner happened to resolve. 24 is what the suite is
+      # actually validated against; see `engines` in package.json.
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
 
       # ci, not install — the lockfile is the contract, and a security tool
       # should not silently float a transitive dependency in CI.
       - name: Install
         run: npm ci
+
+      # First, because it is the gate that catches the most. Every security
+      # property in this repo — the vault's authenticated header, the KDF
+      # validation, the approval cap, the exec channel's isolation from the
+      # human's shell — is asserted here and nowhere else. CI ran typecheck,
+      # build and the locale gates and never once ran these.
+      - name: Tests
+        run: npm test
 
       - name: Typecheck
         run: npm run typecheck

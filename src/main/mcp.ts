@@ -36,7 +36,7 @@ import { isQueueFull, MAX_PENDING_APPROVALS } from './approvals'
 import { visualizeControlChars } from './ansi'
 import { ssh } from './ssh'
 import { vault } from './vault'
-import { appError, t } from './i18n'
+import { appError, t, type AppError } from './i18n'
 
 export interface McpBridge {
   /**
@@ -244,8 +244,9 @@ class McpService {
 
     await new Promise<void>((resolve, reject) => {
       server.once('error', (err) => {
-        this.lastError = describeListenError(err, this.port)
-        reject(new Error(this.lastError))
+        const failure = listenError(err, this.port)
+        this.lastError = failure.message
+        reject(failure)
       })
       // Výhradně smyčka zpět – server nesmí být vidět ze sítě.
       server.listen(this.port, '127.0.0.1', resolve)
@@ -698,11 +699,24 @@ function clampPort(port: number): number {
   return n
 }
 
-function describeListenError(err: unknown, port: number): string {
+/**
+ * Why the server would not listen, as an AppError.
+ *
+ * An `AppError` and not a bare `Error`, because `fail()` in index.ts now only
+ * forwards a message to the renderer when the error carries a translation key —
+ * anything else becomes a generic sentence so that node's own text, with its
+ * absolute paths, never reaches the UI. That guard turned the one message the
+ * user can actually act on ("port 7345 is already in use, pick another") into
+ * "something went wrong", which is the opposite of the intent.
+ */
+function listenError(err: unknown, port: number): AppError {
   const code = (err as NodeJS.ErrnoException)?.code
-  if (code === 'EADDRINUSE') return t('error.portInUse', { port })
-  if (code === 'EACCES') return t('error.portNotAllowed', { port })
-  return t('error.serverStartFailed', { message: String(err) })
+  if (code === 'EADDRINUSE') return appError('error.portInUse', { port })
+  if (code === 'EACCES') return appError('error.portNotAllowed', { port })
+  // The raw text is deliberate here and only here: an unrecognised listen
+  // failure is not actionable without it, and it is a socket error rather than
+  // anything carrying a filesystem path.
+  return appError('error.serverStartFailed', { message: String(err) })
 }
 
 /** Načte tělo požadavku; transport ho chce jako už rozparsovaný JSON. */
