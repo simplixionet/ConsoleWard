@@ -467,15 +467,20 @@ input.mono {
  * Plovoucí panel při označování v konzoli.
  *
  * Nemá backdrop – kdyby ho měl, nešlo by v terminálu táhnout myší, což je celá
- * pointa tohohle kroku. Sedí v rohu, aby zůstalo vidět, pro koho se vybírá,
- * a nad případným backdropem jiného dialogu (z-index 100), protože jinak by
- * zmizel pod ním a člověk by nevěděl, proč terminál nereaguje.
+ * pointa tohohle kroku. Sedí v rohu, aby zůstalo vidět, pro koho se vybírá.
+ *
+ * Záměrně POD backdropem jiného dialogu (z-index 100), ne nad ním. Panel je
+ * vpravo dole a schvalovací dialog uprostřed, takže na užším okně se překrývají
+ * – a překrýt kus okna, ve kterém člověk čte navržený příkaz, je to poslední,
+ * co tenhle program smí udělat. Nad backdropem by navíc zůstal klikatelný, což
+ * ruší modálnost: šlo by posunout sdílecí tok s nezodpovězeným schválením na
+ * obrazovce. Že terminál mezitím nereaguje, vysvětluje ten dialog sám.
  */
 .pick-panel {
   position: fixed;
   right: 22px;
   bottom: 46px;
-  z-index: 150;
+  z-index: 90;
   width: 330px;
   max-width: calc(100vw - 44px);
   display: flex;
