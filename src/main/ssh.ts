@@ -46,10 +46,20 @@ export interface RunResult {
   truncated: boolean
 }
 
+/** The projection of a session that `list_sessions` hands to the model. */
+export interface ModelSession {
+  id: string
+  name: string
+  status: SessionStatus
+}
+
 interface Session {
   id: string
   connectionId: string
+  /** What the human reads: the tab, the status bar and `sessionName` in both dialogs. */
   title: string
+  /** What the model is told this session is called; never a host, never a username. */
+  modelName: string
   client: Client
   stream: ClientChannel | null
   status: SessionStatus
@@ -68,6 +78,8 @@ type Emitter = {
 
 class SshManager {
   private sessions = new Map<string, Session>()
+  /** connectionId -> placeholder name for a connection with none; see modelNameFor. */
+  private aliases = new Map<string, string>()
   private pendingHostKeys = new Map<string, (accept: boolean) => void>()
   private emit: Emitter | null = null
 
@@ -79,11 +91,30 @@ class SshManager {
     return [...this.sessions.values()].map(toInfo)
   }
 
+  /**
+   * The sessions as the model is allowed to see them.
+   *
+   * A separate shape from `list()`, not a projection of it. `SessionInfo` is the
+   * human's view and it will grow — the day someone adds a host to it so two
+   * tabs with the same name can be told apart, a `list_sessions` that mapped
+   * over `list()` would ship the address the tool promises to withhold, with no
+   * change anywhere near mcp.ts. Here every published field is written out, so
+   * widening what the model sees is a decision rather than a side effect.
+   */
+  listForModel(): ModelSession[] {
+    return [...this.sessions.values()].map((s) => ({
+      id: s.id,
+      name: s.modelName,
+      status: s.status
+    }))
+  }
+
   /** Existuje relace a je připravená přijímat vstup? */
   isReady(sessionId: string): boolean {
     return this.sessions.get(sessionId)?.status === 'ready'
   }
 
+  /** The human's label. Feeds `sessionName` in the dialogs — never given to the model. */
   title(sessionId: string): string {
     return this.sessions.get(sessionId)?.title ?? sessionId
   }
@@ -150,6 +181,7 @@ class SshManager {
       id,
       connectionId,
       title: conn.name || `${conn.username}@${conn.host}`,
+      modelName: modelNameFor(conn, this.aliases),
       client,
       stream: null,
       status: 'connecting',
@@ -382,6 +414,44 @@ function toInfo(s: Session): SessionInfo {
     status: s.status,
     message: s.message
   }
+}
+
+/**
+ * The name the model is given for a session.
+ *
+ * `title` cannot be it. That falls back to `username@host` for a connection with
+ * no name, while `list_sessions` promises in its own description that the
+ * address, the port and the username are withheld — so such a connection made
+ * the tool lie. Weakening the title instead would be worse: it is what the human
+ * reads on the tab and in the approval dialog, and someone deciding whether to
+ * let an AI run a command has to be able to tell which server it lands on.
+ * "Session 1" and "Session 2" in that dialog is a security regression, not a fix.
+ *
+ * So the two split here. The human keeps `username@host`; the model gets the
+ * name the owner typed, or a placeholder that says nothing about the machine.
+ *
+ * The placeholder is keyed by connection, not by session, so reconnecting the
+ * same server hands the model the same name back and whatever it noted about
+ * which box is which does not silently point somewhere else. It is not
+ * persisted: after a restart the numbering starts again, which is safe because
+ * the session ids are fresh too and any client has to re-read `list_sessions`.
+ *
+ * English, never translated, for the reason RUN_ERRORS gives in mcp.ts: this is
+ * a machine interface, and a Czech user must not ship Czech identifiers to an
+ * English-speaking tool that would then change under it at the next language
+ * switch.
+ */
+export function modelNameFor(
+  conn: Pick<Connection, 'id' | 'name'>,
+  aliases: Map<string, string>
+): string {
+  const named = conn.name?.trim()
+  if (named) return named
+  const existing = aliases.get(conn.id)
+  if (existing) return existing
+  const alias = `Session ${aliases.size + 1}`
+  aliases.set(conn.id, alias)
+  return alias
 }
 
 /**

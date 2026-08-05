@@ -43,12 +43,29 @@ let run: RunResult = {
   truncated: false
 }
 
+/** The model's view, as `listForModel` builds it. */
+const MODEL_SESSIONS = [
+  { id: 's1', name: 'web01', status: 'ready' },
+  { id: 's2', name: 'Session 1', status: 'ready' }
+]
+
+/**
+ * The human's view, deliberately carrying what the tool promises to withhold.
+ * `list_sessions` reading this instead of `listForModel` has to fail a test
+ * rather than quietly ship an address.
+ */
+const HUMAN_SESSIONS = [
+  { id: 's1', connectionId: 'c1', title: 'web01', status: 'ready' },
+  { id: 's2', connectionId: 'c2', title: 'root@10.0.0.5', status: 'ready' }
+]
+
 mock.module('../src/main/ssh.ts', {
   exports: {
     ssh: {
       isReady: (): boolean => true,
       title: (): string => 'web01',
-      list: () => [],
+      list: () => HUMAN_SESSIONS,
+      listForModel: () => MODEL_SESSIONS,
       readText: (): string => 'last twenty lines',
       runOnce: async () => run
     }
@@ -187,6 +204,33 @@ describe('run_command: the auto-share tick cannot outrun the detector', () => {
           'withheld, which turns a refusal into an oracle'
       )
     }
+  })
+})
+
+/* ------------------------------------------------------------ list_sessions */
+
+describe('list_sessions withholds what its description promises to withhold', () => {
+  test('it publishes exactly id, name and status', async () => {
+    const result = await toolHandler('list_sessions')({}, {})
+    const { sessions } = JSON.parse(result.content[0].text) as {
+      sessions: Record<string, unknown>[]
+    }
+    assert.equal(sessions.length, 2, 'the fixture did not reach the tool')
+    for (const s of sessions) {
+      assert.deepEqual(
+        Object.keys(s).sort(),
+        ['id', 'name', 'status'],
+        `list_sessions published ${Object.keys(s).join(', ')}`
+      )
+    }
+  })
+
+  test('an unnamed connection does not leak its username or address', async () => {
+    const result = await toolHandler('list_sessions')({}, {})
+    const text = result.content[0].text
+    assert.ok(!text.includes('@'), 'the model was handed a username@host session name')
+    assert.ok(!text.includes('10.0.0.5'), 'the model was handed the server address')
+    assert.match(text, /Session 1/, 'the neutral placeholder never reached the model')
   })
 })
 

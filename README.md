@@ -179,7 +179,7 @@ claude mcp add --transport http consoleward http://127.0.0.1:7345/ --header "Aut
 
 | Tool | What it does |
 |---|---|
-| `list_sessions` | `id`, name and status only — **address, port and username are never sent** |
+| `list_sessions` | `id`, the name you gave the connection (a placeholder if you gave none) and status — **address, port and username are never sent** |
 | `run_command` | proposes a command; **it does not run until you approve it** in a dialog |
 | `read_terminal` | asks for output; you choose or rewrite exactly what goes back |
 

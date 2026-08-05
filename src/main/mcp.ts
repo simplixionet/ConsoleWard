@@ -220,12 +220,17 @@ class McpService {
       {
         title: 'List the open SSH sessions',
         description:
-          'Returns the open sessions with only their id, name and status. The address, port and username are deliberately withheld.',
+          'Returns the open sessions with only their id, name and status. The name is the label ' +
+          'the human gave the connection, or a neutral placeholder when they gave none. The ' +
+          'address, port and username are deliberately withheld.',
         inputSchema: {},
         annotations: { readOnlyHint: true }
       },
       async () => {
-        const sessions = ssh.list().map((s) => ({ id: s.id, name: s.title, status: s.status }))
+        // `listForModel`, never `ssh.list()`: that returns the human's SessionInfo,
+        // whose `title` falls back to `username@host` — the address this tool's own
+        // description promises to withhold.
+        const sessions = ssh.listForModel()
         return {
           content: [{ type: 'text' as const, text: JSON.stringify({ sessions }, null, 2) }]
         }
