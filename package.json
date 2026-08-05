@@ -13,7 +13,8 @@
     "dist": "electron-vite build && electron-builder --win",
     "check:i18n-ui": "node scripts/check-i18n-ui.mjs",
     "check:i18n": "node scripts/check-i18n-dictionaries.mjs",
-    "build:icon": "electron scripts/icon/main.js"
+    "build:icon": "electron scripts/icon/main.js",
+    "test": "node --experimental-test-module-mocks --import ./test/setup.mts --test test/**/*.test.mts"
   },
   "keywords": [
     "ssh",

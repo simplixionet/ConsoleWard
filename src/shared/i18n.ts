@@ -90,7 +90,23 @@ export function createTranslator(
     plural = null
   }
 
-  const lookup = (key: string): string | undefined => dictionary[key] ?? fallback[key]
+  /**
+   * Vlastní vlastnost, a jen řetězec.
+   *
+   * `dictionary[key]` sahá i do prototypu, takže klíč jako `toString`,
+   * `constructor` nebo `valueOf` vrátil funkci — ta prošla dál jako „nalezený
+   * překlad" a `interpolate` na ní zavolal `.replace`, což skončilo
+   * `template.replace is not a function`. Klíče sice pocházejí z kódu, ne od
+   * uživatele, ale překladač je poslední vrstva pod bezpečnostními hláškami:
+   * když spadne, člověk neuvidí varování, které měl vidět.
+   */
+  const own = (dict: Dictionary, key: string): string | undefined => {
+    if (!Object.prototype.hasOwnProperty.call(dict, key)) return undefined
+    const value = dict[key]
+    return typeof value === 'string' ? value : undefined
+  }
+
+  const lookup = (key: string): string | undefined => own(dictionary, key) ?? own(fallback, key)
 
   return (key, params) => {
     if (params && typeof params.count === 'number' && plural) {

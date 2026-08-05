@@ -462,6 +462,14 @@ class Vault {
     if (file.cipher !== 'aes-256-gcm' || (file.version !== 1 && file.version !== 2)) {
       throw appError('error.vaultUnsupported')
     }
+    // Verze 2 stojí na seznamu wrapů. Bez téhle kontroly se poškozený soubor
+    // dostal až k `file.wraps.find(...)` a uživateli se na odemykací obrazovce
+    // ukázal syrový `TypeError` místo přeložené hlášky. `hasRecoveryOnDisk()`
+    // tuhle situaci hlídalo, `readFile()` ne — vypadá to na opomenutí, ne na
+    // rozhodnutí. Prázdné pole je legitimní a řeší se dál jako chybějící heslo.
+    if (file.version === 2 && !Array.isArray((file as VaultFileV2).wraps)) {
+      throw appError('error.vaultCorrupt')
+    }
     return file
   }
 
