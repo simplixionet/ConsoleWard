@@ -46,6 +46,13 @@ jobs:
       - name: Locale dictionaries
         run: npm run check:i18n
 
+      # GPL requires the licence texts of everything shipped alongside the
+      # binary to travel with it. NOTICE is generated, so a dependency added
+      # without regenerating it makes the file a specific, checkable and wrong
+      # claim about what is inside — which is worse than not having one.
+      - name: Third-party notices are current
+        run: npm run check:notice
+
       # check:i18n-ui is deliberately NOT run here. It drives the built app
       # over the Chrome DevTools Protocol and needs a real desktop session;
       # on a headless runner it would either hang or pass vacuously, and a

@@ -14,7 +14,9 @@
     "check:i18n-ui": "node scripts/check-i18n-ui.mjs",
     "check:i18n": "node scripts/check-i18n-dictionaries.mjs",
     "build:icon": "electron scripts/icon/main.js",
-    "test": "node --experimental-test-module-mocks --import ./test/setup.mts --test test/**/*.test.mts"
+    "test": "node --experimental-test-module-mocks --import ./test/setup.mts --test test/**/*.test.mts",
+    "notice": "node scripts/generate-notice.mjs",
+    "check:notice": "node scripts/generate-notice.mjs --check"
   },
   "keywords": [
     "ssh",
@@ -79,7 +81,8 @@
     "files": [
       "out/**/*",
       "package.json",
-      "LICENSE"
+      "LICENSE",
+      "NOTICE"
     ],
     "win": {
       "target": [
