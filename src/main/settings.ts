@@ -29,15 +29,27 @@ import { appError } from './i18n'
 /** Also `DEFAULT_PORT` in mcp.ts. The two must not drift apart. */
 const DEFAULT_MCP_PORT = 7345
 
+/**
+ * `aiModel` and `aiEffort` are deliberately absent.
+ *
+ * They are declared on `Settings` and reserved for the AI assistant, but
+ * nothing reads or writes them and `sanitizeSettings` does not persist them —
+ * so a default here was returned by `settings:get`, dropped by the first save,
+ * and nowhere near the vault afterwards. Advertising a stored value that is not
+ * stored is the kind of thing a reader trusts and then debugs.
+ *
+ * A hardcoded model name is worse than merely unused: it ships into the shape
+ * of every install and names a model that will not be current a year from now.
+ * Both fields are optional on the type, so whatever adds the feature supplies
+ * its own defaults in one line.
+ */
 export const DEFAULT_SETTINGS: Settings = {
   autoLockMinutes: 15,
   disconnectOnLock: true,
   fontSize: 14,
   scrollback: 5000,
   mcpEnabled: false,
-  mcpPort: DEFAULT_MCP_PORT,
-  aiModel: 'claude-opus-5',
-  aiEffort: 'high'
+  mcpPort: DEFAULT_MCP_PORT
 }
 
 /** Inclusive bounds, in the units the settings dialog shows. */
