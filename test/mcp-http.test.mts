@@ -26,7 +26,22 @@ mock.module('../src/main/ssh.ts', {
   exports: { ssh: { isReady: () => true, title: () => 'web01', listForModel: () => [] } }
 })
 
-const { hostAllowed, modelErrorFor, onceClosed } = await import('../src/main/mcp.ts')
+const { hostAllowed, MAX_BODY_BYTES, mcp, modelErrorFor, onceClosed, readJsonBody } = await import(
+  '../src/main/mcp.ts'
+)
+
+/**
+ * `checkAuth` is private, and the cast is deliberate.
+ *
+ * The alternative is standing up the listening server and speaking HTTP to it,
+ * which would test node and the SDK rather than the one comparison this is
+ * about. `test/mcp.test.mts` already reaches `buildServer` the same way.
+ */
+const checkAuth = (header: string | undefined, token: string): boolean =>
+  (mcp as unknown as { checkAuth(h: string | undefined, t: string): boolean }).checkAuth(
+    header,
+    token
+  )
 
 const PORT = 7345
 const HOSTS = [`127.0.0.1:${PORT}`, `localhost:${PORT}`]
@@ -157,5 +172,147 @@ describe('onceClosed', () => {
     res.emit('close')
     res.emit('close')
     assert.equal(ran, 1, 'the cleanup ran twice')
+  })
+})
+
+/* ---------------------------------------------------------------- the token */
+
+describe('checkAuth', () => {
+  const TOKEN = 'IHVWxsz5nZ0eJHhTLKk3lMhrRcuA-QqTfLBoOZ7nP4c'
+
+  test('accepts exactly the right token', () => {
+    assert.equal(checkAuth(`Bearer ${TOKEN}`, TOKEN), true)
+  })
+
+  test('refuses a missing, empty or malformed header', () => {
+    for (const header of [
+      undefined,
+      '',
+      TOKEN,
+      `bearer ${TOKEN}`,
+      `Bearer  ${TOKEN}`,
+      `Basic ${TOKEN}`,
+      'Bearer ',
+      `Bearer ${TOKEN} `
+    ]) {
+      assert.equal(checkAuth(header, TOKEN), false, `accepted ${JSON.stringify(header)}`)
+    }
+  })
+
+  test('refuses a token that is wrong, short, long or a prefix of the real one', () => {
+    // The prefix case is the one that matters: an early return on a length
+    // mismatch is what leaked the token's length, so a short guess has to be
+    // rejected by the comparison rather than before it.
+    for (const guess of [
+      'wrong',
+      TOKEN.slice(0, -1),
+      TOKEN.slice(1),
+      TOKEN + 'x',
+      TOKEN.toUpperCase(),
+      TOKEN.replace('A', 'B')
+    ]) {
+      assert.equal(checkAuth(`Bearer ${guess}`, TOKEN), false, `accepted ${guess}`)
+    }
+  })
+
+  test('a token of any length is refused rather than crashing the request', () => {
+    // NOT a test of the constant-time property, and it must not be read as one:
+    // an implementation that returns early on a length mismatch passes this
+    // exactly as the current one does, because both answer false. The reason
+    // checkAuth hashes both sides -- so a wrong length costs the same as a
+    // wrong byte -- is a timing property, and a timing assertion in a test
+    // suite that shares a machine with everything else is a coin flip.
+    // Verified by reading the code, stated here so nobody mistakes green for
+    // proof.
+    //
+    // What this does pin: timingSafeEqual throws on unequal lengths, so an
+    // implementation that dropped the hashing without also restoring a length
+    // guard would turn a wrong token into a 500 instead of a 403.
+    assert.equal(checkAuth('Bearer x', TOKEN), false)
+    assert.equal(checkAuth(`Bearer ${'x'.repeat(4096)}`, TOKEN), false)
+    assert.equal(checkAuth('Bearer ' + 'ÿ'.repeat(40), TOKEN), false)
+  })
+})
+
+/* ------------------------------------------------------------------ the body */
+
+describe('readJsonBody', () => {
+  /** A minimal stand-in for IncomingMessage: a method plus an async iterator. */
+  function request(method: string, chunks: (string | Buffer)[]): never {
+    return {
+      method,
+      async *[Symbol.asyncIterator]() {
+        for (const c of chunks) yield Buffer.isBuffer(c) ? c : Buffer.from(c)
+      }
+    } as never
+  }
+
+  test('reads a JSON-RPC POST', async () => {
+    const body = await readJsonBody(request('POST', ['{"jsonrpc":"2.0",', '"id":1}']))
+    assert.deepEqual(body, { jsonrpc: '2.0', id: 1 })
+  })
+
+  test('ignores the body of anything that is not a POST', async () => {
+    // GET, HEAD and OPTIONS reach the same handler. None of them carries a
+    // JSON-RPC call, and reading their body would buffer bytes for no reason.
+    for (const method of ['GET', 'HEAD', 'PUT', 'DELETE', 'OPTIONS', 'PATCH']) {
+      assert.equal(
+        await readJsonBody(request(method, ['{"jsonrpc":"2.0"}'])),
+        undefined,
+        `${method} was read as a JSON-RPC call`
+      )
+    }
+  })
+
+  test('treats an empty or blank body as no call at all', async () => {
+    assert.equal(await readJsonBody(request('POST', [])), undefined)
+    assert.equal(await readJsonBody(request('POST', [''])), undefined)
+    assert.equal(await readJsonBody(request('POST', ['   \n\t '])), undefined)
+  })
+
+  test('refuses a body over the size limit', async () => {
+    const oversized = request('POST', [Buffer.alloc(MAX_BODY_BYTES + 1)])
+    let caught: (Error & { key?: string }) | null = null
+    try {
+      await readJsonBody(oversized)
+    } catch (err) {
+      caught = err as Error & { key?: string }
+    }
+    assert.ok(caught, 'an oversized body was accepted')
+    assert.equal(caught.key, 'error.requestTooLarge')
+  })
+
+  test('stops buffering as it goes rather than after the fact', async () => {
+    // The guard counts while reading. If it only checked the total afterwards,
+    // a client could stream gigabytes before being told no -- so the test
+    // asserts the stream is abandoned partway rather than drained.
+    // Bounded at 64 MB rather than infinite: a build with no guard has to fail
+    // this in a second, not eat memory until the runner dies. A hang reads as a
+    // stuck CI job rather than as a regression.
+    let yielded = 0
+    const flood = {
+      method: 'POST',
+      async *[Symbol.asyncIterator]() {
+        for (let i = 0; i < 64; i++) {
+          yielded++
+          yield Buffer.alloc(1024 * 1024)
+        }
+      }
+    } as never
+
+    await assert.rejects(() => readJsonBody(flood), 'a 64 MB body was accepted')
+    assert.ok(yielded < 16, `read ${yielded} MB before refusing`)
+  })
+
+  test('a body exactly at the limit is still accepted', async () => {
+    // Off-by-one on a limit that refuses is a denial of service against a
+    // legitimate client, so the boundary is pinned in both directions.
+    const padding = 'x'.repeat(MAX_BODY_BYTES - 12)
+    const body = await readJsonBody(request('POST', [`{"a":"${padding}"}`]))
+    assert.equal((body as { a: string }).a.length, padding.length)
+  })
+
+  test('a malformed body raises rather than returning something half-parsed', async () => {
+    await assert.rejects(() => readJsonBody(request('POST', ['{"jsonrpc":'])), SyntaxError)
   })
 })

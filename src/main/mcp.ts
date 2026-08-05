@@ -77,6 +77,15 @@ const QUEUE_FULL_MESSAGE =
  */
 const MAX_INFLIGHT_REQUESTS = 8
 
+/**
+ * How much of a request body is buffered before it is refused.
+ *
+ * A JSON-RPC call from an MCP client is kilobytes. Four megabytes is far more
+ * than any of them needs and small enough that `MAX_INFLIGHT_REQUESTS` of them
+ * cannot exhaust memory.
+ */
+export const MAX_BODY_BYTES = 4 * 1024 * 1024
+
 const BUSY_MESSAGE =
   `ConsoleWard is already handling ${MAX_INFLIGHT_REQUESTS} requests and will not start ` +
   'another. This one was not queued. Let the earlier ones finish and send it again.'
@@ -697,13 +706,24 @@ function describeListenError(err: unknown, port: number): string {
 }
 
 /** Načte tělo požadavku; transport ho chce jako už rozparsovaný JSON. */
-async function readJsonBody(req: IncomingMessage): Promise<unknown> {
+/**
+ * Reads the JSON-RPC body, refusing anything that is not a bounded POST.
+ *
+ * Exported for the same reason `hostAllowed` and `onceClosed` are: the request
+ * handler cannot be reached from a test — it closes over the listening server —
+ * so the parts of it that decide anything are lifted out and checked directly.
+ *
+ * The size guard counts as it goes rather than after, because the point is to
+ * stop buffering a body that is already too large, not to notice afterwards
+ * that it was.
+ */
+export async function readJsonBody(req: IncomingMessage): Promise<unknown> {
   if (req.method !== 'POST') return undefined
   const chunks: Buffer[] = []
   let size = 0
   for await (const chunk of req) {
     size += (chunk as Buffer).length
-    if (size > 4 * 1024 * 1024) throw appError('error.requestTooLarge')
+    if (size > MAX_BODY_BYTES) throw appError('error.requestTooLarge')
     chunks.push(chunk as Buffer)
   }
   if (chunks.length === 0) return undefined
