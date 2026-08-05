@@ -23,7 +23,19 @@ let lastReportedAt = Number.NEGATIVE_INFINITY
 
 export function reportActivity(send: () => void): void {
   const now = Date.now()
-  if (now - lastReportedAt < ACTIVITY_INTERVAL_MS) return
+  const since = now - lastReportedAt
+  // `Date.now()` is wall clock, not monotonic. A step backwards — NTP
+  // correcting a drifted machine, a VM resuming from a snapshot, the user
+  // changing the timezone — makes `since` negative, and a negative number is
+  // forever below the interval. The throttle would then swallow every report
+  // until the clock caught back up, and with nothing reaching the main process
+  // the auto-lock timer is never re-armed: the vault locks while the user is
+  // typing into it.
+  //
+  // Treating negative as "long enough ago" is the safe direction. The worst it
+  // costs is one extra IPC message after a clock jump; the alternative costs
+  // the user their session.
+  if (since >= 0 && since < ACTIVITY_INTERVAL_MS) return
   lastReportedAt = now
   send()
 }
