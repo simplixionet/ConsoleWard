@@ -39,6 +39,7 @@ import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
 import type { Connection, KnownHost, Settings, Snippet } from '../shared/types'
+import { MIN_PASSWORD_LENGTH } from '../shared/passwordStrength'
 import { appError } from './i18n'
 import { DEFAULT_SETTINGS } from './settings'
 
@@ -1020,9 +1021,21 @@ class Vault {
   }
 }
 
+/**
+ * The floor a new master password has to clear.
+ *
+ * Only length, and only here — the strength estimate next to it is for the
+ * meter the user sees, not for a gate. A gate built on a guess refuses
+ * passwords that are fine and lets through ones that are not, and the person
+ * being refused has no way to argue with it.
+ *
+ * Reached from `create`, `changePassword` and the new password set during
+ * recovery. Never from `unlock`, so raising the floor cannot lock anyone out of
+ * a vault they already have.
+ */
 function validatePassword(pw: string): void {
-  if (typeof pw !== 'string' || pw.length < 8) {
-    throw appError('error.passwordTooShort')
+  if (typeof pw !== 'string' || pw.length < MIN_PASSWORD_LENGTH) {
+    throw appError('error.passwordTooShort', { length: MIN_PASSWORD_LENGTH })
   }
 }
 

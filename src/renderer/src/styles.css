@@ -171,6 +171,46 @@ label.checkbox-label input {
   font-size: 12px;
 }
 
+/* Master-password strength. Shown only where a password is being chosen. */
+.pw-meter {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: -4px;
+}
+
+.pw-bar {
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.09);
+  overflow: hidden;
+}
+
+.pw-bar span {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  transition: width 120ms ease-out;
+  background: currentColor;
+}
+
+.pw-note {
+  font-size: 12px;
+  line-height: 1.5;
+  color: inherit;
+}
+
+.pw-tooShort,
+.pw-weak {
+  color: #e0736b;
+}
+.pw-fair {
+  color: #e3b341;
+}
+.pw-strong {
+  color: #63b37b;
+}
+
 .form-error {
   background: rgba(255, 107, 107, 0.1);
   border: 1px solid rgba(255, 107, 107, 0.35);

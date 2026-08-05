@@ -26,6 +26,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { randomBytes, scrypt, createCipheriv } from 'node:crypto'
 import { promisify } from 'node:util'
+import { MIN_PASSWORD_LENGTH } from '../src/shared/passwordStrength.ts'
 
 let dir = ''
 const madeDirs: string[] = []
@@ -373,16 +374,28 @@ test('create() refuses to overwrite an existing vault and leaves it readable', a
   assertSeeded('after a refused create()')
 })
 
-test('create() rejects a password below the eight character floor and writes nothing', async () => {
+test('create() rejects a password below the length floor and writes nothing', async () => {
   fresh()
-  await rejectsWithKey(() => vault.create('7chars!'), 'error.passwordTooShort', 'seven characters')
+  const short = 'x'.repeat(MIN_PASSWORD_LENGTH - 1)
+  await rejectsWithKey(() => vault.create(short), 'error.passwordTooShort', 'one under the floor')
   assert.equal(vault.exists(), false, 'a rejected create() still left a vault file behind')
   await rejectsWithKey(() => vault.create(''), 'error.passwordTooShort', 'empty password')
   assert.equal(vault.exists(), false, 'an empty password still created a vault')
 
-  // Eight is the documented floor, so eight must be accepted.
-  await vault.create('8charact')
-  assert.equal(vault.exists(), true, 'an eight character password was refused')
+  // The floor itself must be accepted, or the message tells the user a length
+  // that does not in fact work.
+  await vault.create('y'.repeat(MIN_PASSWORD_LENGTH))
+  assert.equal(vault.exists(), true, 'a password exactly at the floor was refused')
+})
+
+test('the floor is only checked where a password is chosen, never on unlock', async () => {
+  // Raising it must not lock anyone out of a vault they already have. Every
+  // caller of validatePassword is a create or a change; unlock() is not one.
+  fresh()
+  await vault.create('z'.repeat(MIN_PASSWORD_LENGTH))
+  vault.lock()
+  await vault.unlock('z'.repeat(MIN_PASSWORD_LENGTH))
+  assert.equal(vault.isUnlocked(), true, 'unlock() started enforcing the floor')
 })
 
 test('unlock() rejects a wrong password without touching the vault file', async () => {

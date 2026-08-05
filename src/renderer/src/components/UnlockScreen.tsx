@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Simplixio — Stanislav Opletal <info@simplixio.net>
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
+import {
+  estimatePasswordStrength,
+  MIN_PASSWORD_LENGTH
+} from '@shared/passwordStrength'
 import { api, errorMessage, unwrap } from '../api'
 import { useT } from '../i18n'
 
@@ -28,6 +32,7 @@ export default function UnlockScreen({
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
   const [recoveryKey, setRecoveryKey] = useState('')
+  const strength = useMemo(() => estimatePasswordStrength(password), [password])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -127,9 +132,33 @@ export default function UnlockScreen({
             autoFocus={mode === 'normal'}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            placeholder={exists && mode === 'normal' ? '' : t('unlock.minChars')}
+            placeholder={
+              exists && mode === 'normal'
+                ? ''
+                : t('unlock.minChars', { length: MIN_PASSWORD_LENGTH })
+            }
           />
         </label>
+
+        {/*
+          Only where a password is being CHOSEN. On the ordinary unlock screen
+          the password already exists, and rating it there would be telling the
+          user their vault is weak at the one moment they can do nothing about
+          it — while painting a live gauge of a secret that is merely being
+          re-typed.
+        */}
+        {(mode === 'recovery' || !exists) && password.length > 0 && (
+          <div className={`pw-meter pw-${strength.verdict}`}>
+            <div className="pw-bar">
+              <span style={{ width: `${Math.min(100, (strength.bits / 80) * 100)}%` }} />
+            </div>
+            <div className="pw-note">
+              {strength.verdict === 'tooShort'
+                ? t('error.passwordTooShort', { length: MIN_PASSWORD_LENGTH })
+                : t(`password.${strength.verdict}`)}
+            </div>
+          </div>
+        )}
 
         {(mode === 'recovery' || !exists) && (
           <label>
@@ -137,6 +166,8 @@ export default function UnlockScreen({
             <input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} />
           </label>
         )}
+
+        {(mode === 'recovery' || !exists) && <div className="hint">{t('password.hint')}</div>}
 
         {error && <div className="form-error">{error}</div>}
 
