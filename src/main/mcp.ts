@@ -203,7 +203,7 @@ class McpService {
           // without the Host gate and a valid bearer token, and the thing the
           // cap really protects — the human's attention — is bounded by
           // MAX_PENDING_APPROVALS in approvals.ts.
-          if (req.method === 'POST') {
+          if (takesSlot(req.method)) {
             if (this.inFlight >= MAX_INFLIGHT_REQUESTS) {
               sendJson(res, 503, BUSY_MESSAGE, 'busy')
               return
@@ -699,6 +699,17 @@ function sendJson(res: ServerResponse, status: number, message: string, reason?:
  * waiting on, so tearing down early would strand the handler for ever instead
  * of for at most one approval timeout.
  */
+/**
+ * Does this request count against `MAX_INFLIGHT_REQUESTS`?
+ *
+ * Only a POST, and exported rather than inlined so a test can ask the real
+ * predicate. A test that restates the rule beside the code passes against a
+ * build where the rule was deleted, which is worse than no test.
+ */
+export function takesSlot(method: string | undefined): boolean {
+  return method === 'POST'
+}
+
 export function onceClosed(
   res: { closed: boolean; once: (event: 'close', listener: () => void) => unknown },
   cleanup: () => void
