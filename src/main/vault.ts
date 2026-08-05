@@ -855,11 +855,18 @@ class Vault {
         decipher.final()
       ]).toString('utf8')
     } catch {
+      // Counted here too, or a v1 vault — the format an early-build user still
+      // has, and the one that only migrates on a SUCCESSFUL unlock, so it stays
+      // v1 for exactly as long as somebody is guessing at it — gets no throttle
+      // at all. `unlock` increments on the v2/v3 path; this branch returns
+      // before reaching it.
+      this.failedUnlocks += 1
       throw appError('error.wrongPassword')
     } finally {
       key.fill(0)
     }
 
+    this.failedUnlocks = 0
     this.dek = randomBytes(32)
     this.data = normalizeData(JSON.parse(plaintext) as Partial<VaultData>)
     this.counter = 0
