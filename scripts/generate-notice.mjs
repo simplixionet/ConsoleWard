@@ -63,13 +63,25 @@ function productionPackages() {
     // Nested installs appear as `node_modules/a/node_modules/b`; the package is
     // whatever follows the last `node_modules/`.
     const name = key.slice(key.lastIndexOf('node_modules/') + 'node_modules/'.length)
-    if (!found.has(name)) found.set(name, info.version ?? null)
+    const version = info.version ?? null
+
+    // Keyed by name AND version, and carrying the path the package actually
+    // lives at. Keying by name alone recorded the nested version and then read
+    // the licence from the top-level directory, which is a different package:
+    // `cross-spawn/node_modules/isexe` is 2.0.0 under ISC while the top-level
+    // `isexe` is 3.1.5 under BlueOak-1.0.0, so NOTICE named one and reproduced
+    // the terms of the other. Attributing the wrong licence to a shipped
+    // package is the exact failure this file exists to prevent.
+    const id = `${name}@${version ?? '?'}`
+    if (!found.has(id)) found.set(id, { name, version, dir: key })
   }
-  return [...found.entries()].sort(([a], [b]) => (a < b ? -1 : 1))
+  return [...found.values()].sort((a, b) =>
+    a.name === b.name ? (a.version < b.version ? -1 : 1) : a.name < b.name ? -1 : 1
+  )
 }
 
-function readPackage(name) {
-  const dir = path.join(root, 'node_modules', ...name.split('/'))
+function readPackage(installPath) {
+  const dir = path.join(root, ...installPath.split('/'))
   try {
     const meta = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'))
     for (const file of LICENCE_FILES) {
@@ -100,8 +112,8 @@ function build() {
 
   const absent = []
 
-  for (const [name, version] of packages) {
-    const found = readPackage(name)
+  for (const { name, version, dir } of packages) {
+    const found = readPackage(dir)
     if (!found) {
       // Declared somewhere in the tree but not on disk, so not distributed and
       // not ours to reproduce. Optional native dependencies land here: ssh2

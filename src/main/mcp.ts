@@ -75,7 +75,7 @@ const QUEUE_FULL_MESSAGE =
  * queue caps the human's side at three, so eight leaves room for an initialize
  * and a tools/list alongside three blocked dialogs.
  */
-const MAX_INFLIGHT_REQUESTS = 8
+export const MAX_INFLIGHT_REQUESTS = 8
 
 /**
  * How much of a request body is buffered before it is refused.
@@ -191,12 +191,26 @@ class McpService {
             return
           }
 
-          if (this.inFlight >= MAX_INFLIGHT_REQUESTS) {
-            sendJson(res, 503, BUSY_MESSAGE, 'busy')
-            return
+          // POST only. The cap exists for the memory a call can pin: a buffered
+          // body, plus an McpServer and a transport parked for however long a
+          // human takes to answer a dialog. A GET is the notification stream —
+          // the SDK client opens one right after the handshake and holds it for
+          // the whole session, deliberately. Counting those meant an ordinary
+          // client spent a slot just by connecting, and eight of them wedged the
+          // gateway into a permanent 503 with nothing wrong.
+          //
+          // Streams are still bounded, just not here: nothing reaches this line
+          // without the Host gate and a valid bearer token, and the thing the
+          // cap really protects — the human's attention — is bounded by
+          // MAX_PENDING_APPROVALS in approvals.ts.
+          if (req.method === 'POST') {
+            if (this.inFlight >= MAX_INFLIGHT_REQUESTS) {
+              sendJson(res, 503, BUSY_MESSAGE, 'busy')
+              return
+            }
+            this.inFlight++
+            slot = true
           }
-          this.inFlight++
-          slot = true
 
           const body = await readJsonBody(req)
           mcpServer = this.buildServer()

@@ -26,9 +26,16 @@ mock.module('../src/main/ssh.ts', {
   exports: { ssh: { isReady: () => true, title: () => 'web01', listForModel: () => [] } }
 })
 
-const { hostAllowed, MAX_BODY_BYTES, mcp, modelErrorFor, onceClosed, readJsonBody } = await import(
-  '../src/main/mcp.ts'
-)
+const {
+  hostAllowed,
+  MAX_BODY_BYTES,
+  MAX_INFLIGHT_REQUESTS,
+  mcp,
+  modelErrorFor,
+  onceClosed,
+  readJsonBody
+} = await import('../src/main/mcp.ts')
+const { MAX_PENDING_APPROVALS } = await import('../src/main/approvals.ts')
 
 /**
  * `checkAuth` is private, and the cast is deliberate.
@@ -231,6 +238,37 @@ describe('checkAuth', () => {
     assert.equal(checkAuth('Bearer x', TOKEN), false)
     assert.equal(checkAuth(`Bearer ${'x'.repeat(4096)}`, TOKEN), false)
     assert.equal(checkAuth('Bearer ' + 'ÿ'.repeat(40), TOKEN), false)
+  })
+})
+
+/* ------------------------------------------------------------ the in-flight cap */
+
+describe('the in-flight cap counts calls, not streams', () => {
+  /** The predicate the handler applies before taking a slot. */
+  const takesSlot = (method: string): boolean => method === 'POST'
+
+  test('a JSON-RPC call takes a slot', () => {
+    assert.equal(takesSlot('POST'), true)
+  })
+
+  test('the notification stream does not', () => {
+    // The SDK client opens a standalone GET right after the handshake and holds
+    // it for the whole session, by design. Counting those meant an ordinary
+    // client spent a slot just by connecting, and eight of them wedged the
+    // gateway into a permanent 503 with nothing actually wrong.
+    for (const method of ['GET', 'HEAD', 'DELETE', 'OPTIONS']) {
+      assert.equal(takesSlot(method), false, `${method} consumed an in-flight slot`)
+    }
+  })
+
+  test('the cap leaves room for the approval queue behind it', () => {
+    // The cap protects memory; the human's attention is bounded separately. If
+    // it ever dropped to the approval limit, three parked dialogs would leave
+    // no slot for the initialize and tools/list a client needs to get going.
+    assert.ok(
+      MAX_INFLIGHT_REQUESTS > MAX_PENDING_APPROVALS,
+      `${MAX_INFLIGHT_REQUESTS} in-flight against ${MAX_PENDING_APPROVALS} approvals`
+    )
   })
 })
 
