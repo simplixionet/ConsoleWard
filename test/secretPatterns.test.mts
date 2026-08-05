@@ -189,6 +189,23 @@ describe('findSecrets: detects the patterns it advertises', () => {
     expectHit(text, 'secret.urlCreds', 'high', 'postgres://admin:s3cr3t@db.internal/app')
   })
 
+  test('the bounded scheme still covers every scheme that carries credentials', () => {
+    // The `{0,19}` bound that made urlCreds linear is a real behaviour change:
+    // a scheme longer than 20 characters stops matching. These are the ones
+    // that plausibly appear in terminal output carrying userinfo, and this test
+    // is what stops the constant being tidied downward later.
+    const urls = [
+      'postgres://admin:s3cr3t@db.internal/app',
+      'postgresql://admin:s3cr3t@db/app',
+      'mongodb+srv://u:p@cluster0.abcd.mongodb.net/test',
+      'redis://default:hunter2@redis-01:6379/0',
+      'amqp://guest:guest@rabbit.internal:5672/%2f',
+      'git+ssh://git:tok3n@github.com/x/y.git',
+      'HTTPS://User:Pass@Example.COM/x'
+    ]
+    for (const url of urls) expectHit('psql ' + url, 'secret.urlCreds', 'high', url)
+  })
+
   test('an /etc/shadow password hash is flagged high as secret.passwordHash', () => {
     const text = 'root:$6$Ky3Rn.Xv$OoJ8lQ2Hh1cD:19981:0:99999:7:::\ndaemon:*:19981:0:99999:7:::'
     expectHit(text, 'secret.passwordHash', 'high', 'root:$6$Ky3Rn.Xv$OoJ8lQ2Hh1cD')
@@ -540,25 +557,37 @@ describe('findSecrets: known gaps', () => {
     assert.ok(elapsed < 2000, `findSecrets took ${elapsed.toFixed(0)} ms on assignment bait`)
   })
 
-  test(
-    'KNOWN GAP: secret.urlCreds is quadratic — 256 KB of punctuation takes many seconds',
-    { todo: 'the [a-z0-9+.-]* scan before :// rescans to end of input from every word start' },
-    () => {
-      // `\b[a-z][a-z0-9+.-]*:\/\/` — the star swallows the rest of the buffer
-      // from every word boundary, then backtracks all of it looking for `://`.
-      // '.' and '-' are both inside the class and both create word boundaries,
-      // so this input is ~85k starting points, each scanning ~256 KB.
-      // Measured: 64 KB ~0.5 s, 128 KB ~1.8 s, 256 KB ~8-16 s. Textbook O(n²).
-      // findSecrets runs on every keystroke in the share dialog's textarea.
-      const soup = 'a.-'.repeat(85 * 1024)
-      assert.ok(soup.length > 200 * 1024, 'exercise the real 256 KB scrollback ceiling')
+  test('secret.urlCreds no longer rescans the buffer from every word start', () => {
+    // Was `\b[a-z][a-z0-9+.-]*:\/\/`: the star swallowed the rest of the buffer
+    // from every word boundary, then backtracked all of it looking for `://`.
+    // '.' and '-' are both inside the class and both open a word boundary, so
+    // this input is ~85k starting points, each scanning ~256 KB. Measured 7518
+    // ms before the `{0,19}` bound, 12 ms after.
+    //
+    // This is not only a renderer problem: since outputNeedsReview started
+    // calling findSecrets, it runs on the main process event loop, where a
+    // stall freezes every session, the IPC layer and the auto-lock timer.
+    const soup = 'a.-'.repeat(85 * 1024)
+    assert.ok(soup.length > 200 * 1024, 'exercise the real 256 KB scrollback ceiling')
 
+    const started = performance.now()
+    findSecrets(soup)
+    const elapsed = performance.now() - started
+    assert.ok(elapsed < 500, `findSecrets took ${elapsed.toFixed(0)} ms on 256 KB of "a.-"`)
+  })
+
+  test('and not from a run of scheme characters either', () => {
+    // Worse than 'a.-' because every other character opens a boundary: 34.7 s
+    // before the bound, 12 ms after. A fix aimed only at '.' and '-' would
+    // miss '+', which is in the class because of mongodb+srv and git+ssh.
+    for (const bait of ['a+'.repeat(128 * 1024), 'a-'.repeat(128 * 1024), 'a.'.repeat(128 * 1024)]) {
+      assert.equal(bait.length, 256 * 1024, 'the fixture must sit at the ceiling, not over it')
       const started = performance.now()
-      findSecrets(soup)
+      findSecrets(bait)
       const elapsed = performance.now() - started
-      assert.ok(elapsed < 2000, `findSecrets took ${elapsed.toFixed(0)} ms on 256 KB of "a.-"`)
+      assert.ok(elapsed < 500, `findSecrets took ${elapsed.toFixed(0)} ms on "${bait.slice(0, 2)}"`)
     }
-  )
+  })
 
   test(
     'KNOWN GAP: a git commit hash is indistinguishable from a token',

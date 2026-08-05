@@ -75,8 +75,18 @@ const PATTERNS: PatternSpec[] = [
     severity: 'high'
   },
   {
-    // protokol://uzivatel:heslo@host
-    re: /\b[a-z][a-z0-9+.-]*:\/\/[^\s:/@]+:[^\s@/]+@\S+/gi,
+    /*
+     * protokol://uzivatel:heslo@host
+     *
+     * `{0,19}` rather than `*`: '.', '-' and '+' are all inside the class and
+     * all three open a word boundary, so `*` gave one starting point per
+     * punctuation mark, each scanning to end of input for `://`. Quadratic —
+     * 256 KB of `a-a-a-…` took 34 seconds, on the main process event loop
+     * since outputNeedsReview started calling this. Twenty characters is
+     * longer than any scheme that carries credentials (postgresql, mongodb+srv,
+     * git+ssh all fit) and turns every start position into fixed work.
+     */
+    re: /\b[a-z][a-z0-9+.-]{0,19}:\/\/[^\s:/@]+:[^\s@/]+@\S+/gi,
     label: 'secret.urlCreds',
     severity: 'high'
   },
