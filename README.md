@@ -198,7 +198,8 @@ output as though it had seen everything.
 ### Server hardening
 
 - listens **only on `127.0.0.1`**, never on `0.0.0.0`
-- bearer token required, stored in the vault
+- bearer token required, stored in the vault — it does not expire, and regenerating it
+  is the revocation
 - DNS-rebinding protection — the `Host` and `Origin` headers are checked **before** the
   token and before any body is read. A wrong name and a wrong token get the same 403,
   byte for byte, so a web page cannot learn from the difference that anything is

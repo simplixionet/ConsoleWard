@@ -172,6 +172,22 @@ export default function SettingsDialog({
     }
   }
 
+  /**
+   * Copying a secret has to say so.
+   *
+   * The clipboard is a machine-wide surface any process in this session can read,
+   * and on Windows the token also lands in Clipboard History (Win+V) and, for a
+   * synced account, in Cloud Clipboard on the user's other machines. Electron
+   * exposes no way to mark content transient — `clipboard.write*` has no
+   * sensitivity flag — and clearing the clipboard later would not touch either
+   * history, so the app does not pretend to. The notice exists so the user knows
+   * to regenerate afterwards, which is the only revocation there is.
+   */
+  async function copyToken(): Promise<void> {
+    await api.clipboard.write(mcpToken ?? '')
+    flash(t('settings.mcpTokenCopied'), 6000)
+  }
+
   async function copyAddCommand(): Promise<void> {
     const port = mcpStatus?.port ?? Number(mcpPort)
     const cmd =
@@ -459,7 +475,7 @@ export default function SettingsDialog({
                     type="button"
                     className="btn small"
                     disabled={!mcpToken}
-                    onClick={() => void api.clipboard.write(mcpToken ?? '')}
+                    onClick={() => void copyToken()}
                   >
                     {t('common.copy')}
                   </button>

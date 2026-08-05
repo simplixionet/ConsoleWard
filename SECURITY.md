@@ -84,6 +84,31 @@ you will get this answer:
   dropped negations, but they have not had a native review. A weakened warning
   in a non-English locale is a real bug and worth reporting.
 
+- **The MCP token is convenience, not a defence against a compromised machine.**
+  It is 256 random bits, it lives inside the encrypted vault, and it is what stops
+  any other local process from opening `127.0.0.1:7345`, reading your session
+  names with no human in the loop, and putting an approval dialog it worded itself
+  in front of you. That is worth having. What it cannot stop is a process running
+  as you with rights over this one: such a process reads the clipboard, reads the
+  renderer's memory or simply drives the UI, and the vault is already unlocked in
+  front of it. Copying the token puts it on a machine-wide clipboard every program
+  can read, and on Windows into Clipboard History and — if you sync it — Cloud
+  Clipboard on your other machines. No application can clear those, Electron
+  offers no way to mark clipboard content transient, and ConsoleWard does not
+  pretend otherwise by wiping the clipboard on a timer. The token also does not
+  expire: the server runs only while the app is open and the vault is unlocked, so
+  a stale token buys nothing at a moment you are not sitting there. **Regenerating
+  is the revocation** — one click, and it restarts the server so the old token
+  stops working immediately.
+
+- **Rolling `vault.enc` back to an older copy is not detected.** The file format
+  carries a write counter that cannot be forged — it is bound into the body's GCM
+  tag — but nothing yet compares it against a value held outside the file. Someone
+  who can replace the whole vault with an earlier copy of the same vault therefore
+  reverts your saved host fingerprints silently, turning a "the host key changed"
+  warning back into a fresh trust-on-first-use prompt. Detecting it needs an anchor
+  outside `vault.enc`; that work is planned and not in this release.
+
 ## Supported versions
 
 Pre-1.0. Only the latest release gets fixes.
