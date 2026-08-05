@@ -1,0 +1,58 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Simplixio — Stanislav Opletal <info@simplixio.net>
+
+# Dependency updates, deliberately quiet.
+#
+# This application holds private keys, so every update is third-party code that
+# has to be looked at. A daily flood of patch bumps gets skimmed and merged; a
+# weekly digest gets read. The point is that somebody actually reads them.
+#
+# Grouping is what makes that work: one pull request per ecosystem per week for
+# the routine bumps, and security updates on their own so they are never buried
+# in a group of twelve.
+
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels: [dependencies]
+    commit-message:
+      # Matches the repository's own convention; no AI attribution trailers.
+      prefix: chore
+      include: scope
+    groups:
+      # Routine bumps travel together. Security advisories are not grouped:
+      # dependabot raises those separately whatever this says, which is exactly
+      # what should happen.
+      production:
+        applies-to: version-updates
+        dependency-type: production
+        update-types: [minor, patch]
+      development:
+        applies-to: version-updates
+        dependency-type: development
+        update-types: [minor, patch]
+    ignore:
+      # Electron majors carry a Chromium major with them. Those are read and
+      # taken deliberately, against the release schedule, not merged from a bot
+      # pull request on a Monday morning.
+      - dependency-name: electron
+        update-types: [version-update:semver-major]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    labels: [dependencies]
+    commit-message:
+      prefix: chore
+      include: scope
+    groups:
+      actions:
+        applies-to: version-updates
+        patterns: ['*']

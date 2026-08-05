@@ -1,0 +1,56 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Simplixio — Stanislav Opletal <info@simplixio.net>
+
+name: Feature request
+description: Suggest something the application should do.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Two things worth knowing before you write this up.
+
+        **The gate is not negotiable.** Requests to approve commands in bulk,
+        remember an approval, or let the model read output without a human
+        looking at it are the one category that will be declined regardless of
+        how it is framed. That gate is the product.
+
+        **New dependencies need a conversation first.** Every package is code
+        someone has to keep watching, in an application that holds private keys.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you actually trying to do
+      description: >
+        The situation, not the solution. A described problem often has a better
+        answer than the feature that was asked for.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like it to do
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you tried or considered instead
+      description: Including "nothing" — that is useful to know too.
+
+  - type: checkboxes
+    id: security
+    attributes:
+      label: Does this touch a security boundary
+      description: >
+        Tick anything that applies. This is not a filter; it decides how closely
+        the change gets read.
+      options:
+        - label: It changes what the AI can see or do
+        - label: It touches the vault, the master password or the recovery key
+        - label: It touches host-key verification
+        - label: It would need a new dependency
+        - label: None of these

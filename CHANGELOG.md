@@ -9,6 +9,14 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 Nothing yet.
 
+<!--
+Security work done before the first release is folded into 0.1.0 below rather
+than listed here. Nothing has shipped, so there is no version for a reader to
+have been running and no change for them to notice — an "Unreleased / Fixed"
+section against a release that never happened describes the development process
+rather than the software, and this file is for the latter.
+-->
+
 ## [0.1.0] — unreleased
 
 First public release. Everything below is the initial implementation rather than
@@ -27,8 +35,24 @@ a change from a previous version.
 - Recovery key of 30 Crockford Base32 characters (150 bits), shown once,
   regenerable and removable. Input tolerates case, separators, and `O`/`0` and
   `I`/`L`/`1` confusion.
-- Atomic writes with a `.bak` of the previous version.
-- Automatic migration of v1 vaults to v2 on unlock.
+- The readable header — format version, write counter and every field of every
+  key wrap — is bound to the encrypted body as GCM additional authenticated
+  data. A wrap therefore cannot be removed, added, reordered or spliced in from
+  an older copy: the body simply stops decrypting. (The counter is protected but
+  not yet compared against anything, so replacing the *whole* file with an older
+  copy is still undetected — see SECURITY.md.)
+- KDF parameters read out of the file are validated before any key is derived
+  from them, so a tampered file cannot make derivation trivially cheap or turn
+  an unlock attempt into hours of CPU.
+- Master password of at least 12 characters, with a strength estimate shown
+  while choosing one. The estimate is advice; only the length is enforced.
+- Repeated wrong passwords get progressively slower, and locking does not clear
+  the penalty.
+- Atomic writes with a `.bak` of the previous version. A change is written
+  before it is adopted in memory, so a failed write leaves the two agreeing.
+- Automatic migration of v1 and v2 vaults to v3 on unlock, keeping the existing
+  recovery key working. The pre-migration copy is removed once the new file has
+  been read back and decrypted.
 - Automatic lock after a configurable idle period, optionally ending SSH
   sessions with it.
 
@@ -48,27 +72,52 @@ a change from a previous version.
 
 - Saved commands and free-text notes, with folders, descriptions and search.
 - Insert into the terminal without sending, or run directly.
-- Line endings normalised to LF in the main process, so CRLF never reaches a
-  shell as `^M`.
+- Line endings normalised to LF in the main process when a saved command is
+  inserted, so CRLF never reaches a shell as `^M`. Commands the AI proposes are
+  deliberately **not** rewritten — see the MCP section.
 - Multi-line commands require confirmation before insertion.
 
 **AI access over MCP**
 
 - Local MCP server on `127.0.0.1` only, off by default, bearer-token
   authenticated, with DNS-rebinding protection on both `Host` and `Origin`.
+  The name is checked before the token and before any body is read, and a wrong
+  name and a wrong token get the same answer byte for byte — so a web page
+  cannot learn from the difference that anything is listening on the port.
 - Stops immediately when the vault locks; pending requests are denied.
 - `list_sessions` returns id, name and status only — never address, port or
-  username.
+  username. The name is the label you gave the connection, or a neutral
+  placeholder if you gave none; what *you* see on the tab keeps the
+  `user@host` form, because deciding whether to let a command run means knowing
+  which machine it lands on.
 - `run_command` requires per-command human approval showing the literal text
   with control characters made visible. No "approve all" and no memory of past
-  approvals.
+  approvals. The approved text is sent byte for byte — nothing rewrites it.
+- Approved commands run in their **own channel** on the same connection, not in
+  the terminal the human is looking at. That is what keeps whatever they type
+  meanwhile out of the model's reach, and it yields a real exit status instead
+  of guessing from a pause in the output. The cost is real and disclosed in the
+  dialog: a fresh non-interactive shell in the home directory, so aliases, shell
+  functions and any PATH from the login files are absent, nothing carries over
+  between calls, and anything that would prompt fails rather than waiting.
 - `read_terminal` opens a dialog where the human selects, edits or redacts the
   output; only that is returned. Every payload tells the model it may be an
   excerpt.
 - Suspicious spans highlighted in the sharing dialog — passwords in assignments,
   JWT/AWS/GitHub/Slack tokens, credentials in URLs, password hashes, IP
-  addresses. Documented as a hint, not a guarantee.
+  addresses. Documented as a hint, not a guarantee, and the dialog says so when
+  it stopped highlighting early or could not read the whole text.
+- Output can be released automatically once a command finishes, but that choice
+  is revoked whenever the output turns out to look like a credential. The tick
+  is given while reading the *command*, before any output exists, so it cannot
+  be a promise about text nobody has seen.
+- At most three approvals may be waiting at once; past that the model is told
+  so rather than the request being queued. The window is raised once per batch,
+  not once per request, and a freshly drawn dialog ignores clicks for a moment
+  so one aimed at something else cannot land on it.
 - Unanswered requests auto-deny after 5 minutes.
+- Everything the model reads is fixed English, including error messages. It is a
+  machine interface, so a Czech user does not ship Czech diagnostics to it.
 
 **Interface**
 

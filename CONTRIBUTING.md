@@ -17,14 +17,66 @@ npm run dev
 Checks, all of which should pass before you open a pull request:
 
 ```bash
-npm run typecheck      # tsc --noEmit — the only automated gate
+npm test               # the test suite
+npm run typecheck      # tsc --noEmit
 npm run build          # must succeed
 npm run check:i18n     # locale parity, plural categories, placeholders
+npm run check:notice   # NOTICE matches the dependency tree
 npm run check:i18n-ui  # drives the built app; run `npm run build` first
 ```
 
+`check:i18n-ui` is the only one CI does not run: it drives the built app over
+the Chrome DevTools Protocol and needs a real desktop session, so on a headless
+runner it would either hang or pass vacuously. Run it locally before a release.
+
 There is no linter and no formatter config. Style is held by hand — match the
 file you are editing.
+
+## Tests
+
+```bash
+npm test
+node --experimental-test-module-mocks --import ./test/setup.mts --test test/vault.test.mts
+```
+
+Node's built-in runner, no framework. Tests are `test/*.test.mts` and import
+`src/` directly — node 24 strips the types, so there is no build step. Five
+things make that work and none of them should be changed casually:
+
+- `src/package.json` carries `{"type":"module"}`. Without it node reads `.ts` as
+  CommonJS and `export` is a syntax error.
+- `test/ts-resolver.mts` is a resolve hook that appends `.ts` to the
+  extensionless relative imports the source uses, and adds `type: 'json'` to
+  dictionary imports.
+- Modules that reach Electron are replaced with `mock.module('electron', …)`.
+- Main-process files import shared code **relatively** (`'../shared/x'`), never
+  through the `@shared` alias. The resolver knows nothing about the alias, so
+  `@shared` in `src/main/` builds and type-checks cleanly and then fails only at
+  test time.
+
+### The bar for a security test
+
+**A test that also passes against broken code is worse than no test** — it
+manufactures confidence. So for anything asserting a security property, prove it
+can fail:
+
+1. Commit your work first. This is not optional advice; restoring a file after a
+   mutation is how uncommitted fixes get deleted.
+2. Break the source deliberately — remove the guard, revert the check.
+3. Confirm the test goes **red**, and that it fails rather than hangs. A test
+   that hangs on a regression reads as a stuck CI job, not as a bug.
+4. `git checkout -- <file>`, confirm green, confirm `git diff` is empty.
+
+Say in the pull request which mutation you used. If a property genuinely cannot
+be tested — timing behaviour, anything needing a DOM — write that down in the
+test file rather than leaving a green suite implying coverage that is not there.
+There are worked examples of both in `test/mcp-http.test.mts`.
+
+`src/main/index.ts` is not reachable from a test: it exports nothing and calls
+`app.requestSingleInstanceLock()` at module scope. Logic that needs testing gets
+lifted out into its own module — `approvals.ts`, `settings.ts`, `textFile.ts`
+were all extracted for exactly that reason. Please do the same rather than
+working around it.
 
 ## Adding a UI language
 

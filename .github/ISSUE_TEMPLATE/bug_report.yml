@@ -1,0 +1,86 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Simplixio — Stanislav Opletal <info@simplixio.net>
+
+name: Bug report
+description: Something behaves differently from how it is documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Before you paste anything:** this application handles SSH keys,
+        passwords and terminal output. Check what you are about to attach for
+        hostnames, usernames, key material and tokens. `SHA256:…` fingerprints
+        and `user@host` strings identify a real machine of yours.
+
+        If the bug *is* that a secret leaked somewhere it should not, that is a
+        vulnerability, not a bug report — see SECURITY.md.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you got instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: >
+        From a fresh start if you can. A bug nobody can reproduce gets closed
+        eventually, however real it is.
+      placeholder: |
+        1. Unlock the vault
+        2. Connect to a session
+        3. …
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: ConsoleWard version
+      description: Help → About, or the installer filename.
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: Windows 11 26200
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part
+      options:
+        - Vault, unlocking or the recovery key
+        - SSH connection or the terminal
+        - The MCP gate (AI approvals)
+        - Translations
+        - Something else / not sure
+    validations:
+      required: true
+
+  - type: input
+    id: language
+    attributes:
+      label: UI language
+      description: >
+        Relevant more often than it sounds — a warning that reads correctly in
+        English can be weakened in translation.
+      placeholder: en
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: >
+        Screenshots and log excerpts welcome, redacted. Do not attach
+        `vault.enc` or any part of it, ever — not even to prove a point about
+        the file format.
