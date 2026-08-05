@@ -1093,6 +1093,34 @@ test('wrong passwords get slower, and a lock does not clear the penalty', async 
   assert.ok(Date.now() - cleanAt < first + 500, 'a success did not clear the penalty')
 })
 
+test('locking before a queued write runs refuses the write outright', async () => {
+  // The deterministic half of the lock-during-write story: `mutate` queues, so
+  // a synchronous `lock()` on the next line always beats the job body, which
+  // re-checks and refuses. Nothing is written and nothing is reattached.
+  //
+  // NOT covered, and stated rather than implied: the window where `lock()`
+  // lands INSIDE writeSealed's four filesystem awaits, after its own guard has
+  // passed. That is the case the `dek === null` re-check before `this.data =
+  // draft` exists for — without it the decrypted VaultData is reattached to an
+  // instance that had just been told to forget it. Hitting that window on
+  // purpose needs a seam in the write path that does not exist, and a test that
+  // races the filesystem would pass for whichever ordering it happened to get.
+  fresh()
+  await vault.create(PASSWORD)
+  await seed()
+
+  const writing = vault.mutate((data) => {
+    data.settings.scrollback = 3333
+  })
+  vault.lock()
+  await assert.rejects(() => writing, 'a mutation queued before a lock reported success')
+  assert.equal(vault.isUnlocked(), false, 'the refused write reopened a locked vault')
+
+  await vault.unlock(PASSWORD)
+  assert.notEqual(vault.read().settings.scrollback, 3333, 'a refused write reached the disk')
+  assertSeeded('after a write refused by a lock')
+})
+
 test('a mutation whose callback throws leaves the data untouched', async () => {
   fresh()
   await vault.create(PASSWORD)

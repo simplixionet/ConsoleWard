@@ -715,6 +715,20 @@ class Vault {
       const draft = structuredClone(this.data!)
       const result = fn(draft)
       await this.writeSealed(draft)
+      // And once more, because `writeSealed` awaits four filesystem calls and
+      // `lock()` is synchronous: an auto-lock, or the user locking by hand, can
+      // land in the middle of the write.
+      //
+      // This does NOT reopen the vault — `isUnlocked()` also tests `dek`, which
+      // `lock()` nulls and nothing here restores. What it did was reattach the
+      // decrypted `VaultData` to the instance, and dropping that object is half
+      // of what `lock()` is for: every stored password, private key and
+      // passphrase stayed resident afterwards, in a process that had been told
+      // to forget them.
+      //
+      // The bytes on disk are right either way — the write finished — so there
+      // is nothing to roll back here, only a state not to restore.
+      if (this.dek === null) throw appError('error.vaultLocked')
       this.data = draft
       return result
     })

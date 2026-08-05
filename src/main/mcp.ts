@@ -269,11 +269,30 @@ class McpService {
     this.http = server
   }
 
+  /**
+   * Stops listening and drops every connection.
+   *
+   * `server.close()` alone does not do that. It stops accepting new sockets and
+   * then waits for the open ones to end — and the MCP notification stream is an
+   * open socket the client holds for its whole session, deliberately. So a
+   * client that was merely connected made this never resolve, and with it
+   * `restart()`, which meant turning the gateway off, changing its port and
+   * regenerating the token all hung with the old server still serving.
+   *
+   * `closeAllConnections()` is what actually ends them. It is the right call
+   * rather than a blunt one: this runs when the vault locks or the user turns
+   * the gateway off, and both mean the server has no business answering
+   * anything, mid-request or not. A client sees its stream drop and reconnects,
+   * which is the behaviour it already has to handle for an app that quit.
+   */
   async stop(): Promise<void> {
     const server = this.http
     this.http = null
     if (!server) return
-    await new Promise<void>((resolve) => server.close(() => resolve()))
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve())
+      server.closeAllConnections()
+    })
   }
 
   async restart(): Promise<void> {
