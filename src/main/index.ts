@@ -27,10 +27,12 @@ import type {
 import type { CommandApproval, McpStatus, ShareRequest } from '../shared/types'
 import { appError, currentLocale, initI18n, setLocale, t } from './i18n'
 import { readPrefs, writePrefs } from './prefs'
-import { DEFAULT_SETTINGS, migrateLegacyProfile, newId, vault } from './vault'
+import { migrateLegacyProfile, newId, vault } from './vault'
+import { DEFAULT_SETTINGS, sanitizeSettings } from './settings'
 import { ssh } from './ssh'
 import { mcp } from './mcp'
 import { approvals } from './approvals'
+import { readSmallTextFile } from './textFile'
 
 const isDev = !app.isPackaged
 let mainWindow: BrowserWindow | null = null
@@ -479,14 +481,9 @@ function registerIpc(): void {
 
   handle(CH.settingsSave, async (patch: Partial<Settings>): Promise<Settings> => {
     const saved = await vault.mutate((data) => {
-      const next = { ...data.settings, ...patch }
-      next.autoLockMinutes = clamp(Number(next.autoLockMinutes) || 0, 0, 24 * 60)
-      next.fontSize = clamp(Number(next.fontSize) || 14, 8, 32)
-      next.scrollback = clamp(Number(next.scrollback) || 5000, 500, 200_000)
-      next.disconnectOnLock = Boolean(next.disconnectOnLock)
-      delete (next as Partial<Settings>).hasAiApiKey
-      data.settings = next
-      return next
+      // Throws before anything is assigned, so a refused patch writes nothing.
+      data.settings = sanitizeSettings(data.settings, patch)
+      return data.settings
     })
     resetAutoLock()
     return { ...saved, hasAiApiKey: Boolean(vault.read().aiApiKey) }
@@ -546,11 +543,8 @@ function registerIpc(): void {
       ]
     })
     if (res.canceled || res.filePaths.length === 0) return null
-    const file = res.filePaths[0]
-    const stat = await fsp.stat(file)
-    if (stat.size > 1024 * 1024) throw appError('error.fileTooLarge')
-    const content = await fsp.readFile(file, 'utf8')
-    return { name: path.basename(file), content }
+    // The picker can hand back a FIFO or a named pipe, and both lie to `stat`.
+    return readSmallTextFile(res.filePaths[0])
   })
 
   handle(CH.dialogSaveTextFile, async (suggestedName: string, content: string) => {
@@ -623,10 +617,6 @@ function registerIpc(): void {
     await setLocale(saved.locale)
     return saved.locale
   })
-}
-
-function clamp(n: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, n))
 }
 
 function normalizeNewlines(text: string): string {

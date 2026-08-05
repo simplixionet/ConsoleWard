@@ -40,6 +40,7 @@ import fsp from 'node:fs/promises'
 import path from 'node:path'
 import type { Connection, KnownHost, Settings, Snippet } from '../shared/types'
 import { appError } from './i18n'
+import { DEFAULT_SETTINGS } from './settings'
 
 const scryptAsync = promisify(scrypt) as (
   password: string | Buffer,
@@ -127,17 +128,6 @@ export interface VaultData {
   mcpToken?: string
   /** Šifrovaný spolu se zbytkem trezoru; rezervováno pro 2. fázi. */
   aiApiKey?: string
-}
-
-export const DEFAULT_SETTINGS: Settings = {
-  autoLockMinutes: 15,
-  disconnectOnLock: true,
-  fontSize: 14,
-  scrollback: 5000,
-  mcpEnabled: false,
-  mcpPort: 7345,
-  aiModel: 'claude-opus-5',
-  aiEffort: 'high'
 }
 
 function emptyData(): VaultData {
