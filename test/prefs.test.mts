@@ -57,6 +57,38 @@ function fresh(): void {
 const prefsPath = (): string => path.join(dir, 'prefs.json')
 
 describe('prefs', () => {
+  /*
+   * THIS TEST MUST STAY FIRST.
+   *
+   * `readPrefs` memoises into a module-level `cache` that nothing invalidates,
+   * so the file is read exactly once per process. Every later test in this file
+   * gets the cache, not the disk — which means the file-reading path, the one
+   * that has to survive a corrupt prefs.json, is reachable only here.
+   *
+   * That is also why there is one junk fixture rather than a loop over six:
+   * the second iteration would be reading the cache and asserting nothing.
+   *
+   * What this consequently does NOT cover, stated rather than implied: the
+   * `resolveLocale(parsed.locale) ?? systemLocale()` arm, which handles a file
+   * that parses but names a language this build does not ship. One process gets
+   * one file read, and it is spent here on the arm that decides whether the app
+   * starts at all. The same guard on the write side is covered below, and every
+   * prefs.json this application produced went through it — the residual gap is
+   * a hand-edited file.
+   */
+  test('a corrupt prefs.json does not stop the app reaching the unlock screen', () => {
+    // This runs before the vault is opened, so a throw here is an app that will
+    // not start at all — and the fix would be a file the user cannot see.
+    fresh()
+    fs.writeFileSync(prefsPath(), '{"locale": 42, "trailing":')
+    let out: { locale: string } | null = null
+    assert.doesNotThrow(() => {
+      out = readPrefs()
+    }, 'readPrefs threw on a corrupt file')
+    assert.equal(typeof out.locale, 'string', 'a corrupt file yielded a non-string locale')
+    assert.ok(out.locale.length > 0, 'a corrupt file yielded an empty locale')
+  })
+
   test('a locale written is a locale read back', async () => {
     fresh()
     const saved = await writePrefs({ locale: 'cs' })
@@ -98,22 +130,6 @@ describe('prefs', () => {
     await writePrefs({ locale: 'en' })
     fs.rmSync(prefsPath(), { force: true })
     assert.doesNotThrow(() => readPrefs(), 'a missing prefs.json threw')
-  })
-
-  test('a corrupt prefs.json does not stop the app reaching the unlock screen', async () => {
-    // This runs before the vault is opened, so a throw here is an app that will
-    // not start at all -- and the fix would be a file the user cannot see.
-    for (const junk of ['not json', '', '[]', 'null', '{"locale":42}', '{"locale":null}']) {
-      fresh()
-      fs.writeFileSync(prefsPath(), junk)
-      await writePrefs({ locale: 'en' })
-      fs.writeFileSync(prefsPath(), junk)
-      let out: { locale: string } | null = null
-      assert.doesNotThrow(() => {
-        out = readPrefs()
-      }, `readPrefs threw on ${JSON.stringify(junk)}`)
-      assert.equal(typeof out.locale, 'string', `no locale after ${JSON.stringify(junk)}`)
-    }
   })
 
   test('an unsupported system locale still yields the source language', async () => {
