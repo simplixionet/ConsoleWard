@@ -30,6 +30,7 @@ import { readPrefs, writePrefs } from './prefs'
 import { DEFAULT_SETTINGS, migrateLegacyProfile, newId, vault } from './vault'
 import { ssh } from './ssh'
 import { mcp } from './mcp'
+import { approvals } from './approvals'
 
 const isDev = !app.isPackaged
 let mainWindow: BrowserWindow | null = null
@@ -147,7 +148,7 @@ function doLock(): void {
   if (disconnect) ssh.disconnectAll()
   // Zamčený trezor nemá co nabízet – MCP server hned zavíráme.
   void mcp.stopOnLock().then(pushMcpStatus)
-  rejectAllPending()
+  approvals.rejectAll()
   vault.lock()
   if (autoLockTimer) clearTimeout(autoLockTimer)
   autoLockTimer = null
@@ -155,30 +156,6 @@ function doLock(): void {
 }
 
 /* ------------------------------------------------- schvalovací fronta MCP */
-
-interface Pending<T> {
-  resolve: (value: T) => void
-  timer: NodeJS.Timeout
-}
-
-const pendingCommands = new Map<string, Pending<{ approved: boolean; autoShare: boolean }>>()
-const pendingShares = new Map<string, Pending<{ shared: boolean; text: string }>>()
-
-/** Bez odpovědi do 5 minut raději odmítnout, než nechat volání viset. */
-const APPROVAL_TIMEOUT_MS = 5 * 60_000
-
-function rejectAllPending(): void {
-  for (const [, p] of pendingCommands) {
-    clearTimeout(p.timer)
-    p.resolve({ approved: false, autoShare: false })
-  }
-  pendingCommands.clear()
-  for (const [, p] of pendingShares) {
-    clearTimeout(p.timer)
-    p.resolve({ shared: false, text: '' })
-  }
-  pendingShares.clear()
-}
 
 function pushMcpStatus(): void {
   mainWindow?.webContents.send(CH.mcpStatusEvent, mcp.status())
@@ -199,26 +176,16 @@ async function syncMcp(): Promise<void> {
 }
 
 function registerMcpBridge(): void {
-  mcp.bind({
-    askCommand: (req: CommandApproval) =>
-      new Promise((resolve) => {
-        const timer = setTimeout(() => {
-          if (pendingCommands.delete(req.id)) resolve({ approved: false, autoShare: false })
-        }, APPROVAL_TIMEOUT_MS)
-        pendingCommands.set(req.id, { resolve, timer })
-        mainWindow?.webContents.send(CH.mcpCommandRequestEvent, req)
-      }),
+  approvals.bind({
+    sendCommand: (req: CommandApproval) =>
+      mainWindow?.webContents.send(CH.mcpCommandRequestEvent, req),
 
-    askShare: (req: ShareRequest) =>
-      new Promise((resolve) => {
-        const timer = setTimeout(() => {
-          if (pendingShares.delete(req.id)) resolve({ shared: false, text: '' })
-        }, APPROVAL_TIMEOUT_MS)
-        pendingShares.set(req.id, { resolve, timer })
-        mainWindow?.webContents.send(CH.mcpShareRequestEvent, req)
-      }),
+    sendShare: (req: ShareRequest) => mainWindow?.webContents.send(CH.mcpShareRequestEvent, req),
 
-    focusWindow: () => {
+    // Raising is the queue's call, not the tool's: a raise per request is
+    // flashFrame in a loop on Windows, and only the queue can tell whether a
+    // dialog is already up.
+    raiseWindow: () => {
       if (!mainWindow) return
       if (mainWindow.isMinimized()) mainWindow.restore()
       mainWindow.show()
@@ -226,6 +193,8 @@ function registerMcpBridge(): void {
       if (process.platform === 'win32') mainWindow.flashFrame(true)
     }
   })
+
+  mcp.bind(approvals)
 }
 
 /* ----------------------------------------------------------------- pomůcky */
@@ -628,20 +597,12 @@ function registerIpc(): void {
   handle(CH.mcpRegenerateToken, () => mcp.regenerateToken())
 
   handle(CH.mcpAnswerCommand, (id: string, approved: boolean, autoShare: boolean) => {
-    const pending = pendingCommands.get(id)
-    if (!pending) return null
-    pendingCommands.delete(id)
-    clearTimeout(pending.timer)
-    pending.resolve({ approved: Boolean(approved), autoShare: Boolean(autoShare) })
+    approvals.answerCommand(id, approved, autoShare)
     return null
   })
 
   handle(CH.mcpAnswerShare, (id: string, shared: boolean, text: string) => {
-    const pending = pendingShares.get(id)
-    if (!pending) return null
-    pendingShares.delete(id)
-    clearTimeout(pending.timer)
-    pending.resolve({ shared: Boolean(shared), text: shared ? String(text ?? '') : '' })
+    approvals.answerShare(id, shared, text)
     return null
   })
 
@@ -716,7 +677,7 @@ if (!gotLock) {
   })
 
   app.on('before-quit', () => {
-    rejectAllPending()
+    approvals.rejectAll()
     void mcp.stop()
     ssh.disconnectAll()
     vault.lock()

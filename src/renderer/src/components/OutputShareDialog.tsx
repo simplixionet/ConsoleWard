@@ -5,6 +5,7 @@ import { useMemo, useRef, useState } from 'react'
 import type { ShareRequest } from '@shared/types'
 import { findSecrets, summarizeSecrets } from '@shared/secretPatterns'
 import { useT } from '../i18n'
+import { useArmedAfterPaint } from '../armDelay'
 
 interface Props {
   request: ShareRequest
@@ -20,6 +21,7 @@ interface Props {
  */
 export default function OutputShareDialog({ request, onAnswer }: Props) {
   const t = useT()
+  const armed = useArmedAfterPaint()
   const [text, setText] = useState(request.text)
   const [selection, setSelection] = useState<{ start: number; end: number }>({ start: 0, end: 0 })
   const areaRef = useRef<HTMLTextAreaElement>(null)
@@ -145,17 +147,17 @@ export default function OutputShareDialog({ request, onAnswer }: Props) {
         </div>
 
         <div className="modal-foot">
-          <button className="btn" onClick={() => onAnswer(false, '')}>
+          <button className="btn" autoFocus onClick={() => onAnswer(false, '')}>
             {t('mcp.sendNothing')}
           </button>
           <button
             className="btn"
-            disabled={!hasSelection}
+            disabled={!armed || !hasSelection}
             onClick={() => onAnswer(true, text.slice(selection.start, selection.end))}
           >
             {t('mcp.sendSelected')}
           </button>
-          <button className="btn primary" onClick={() => onAnswer(true, text)}>
+          <button className="btn primary" disabled={!armed} onClick={() => onAnswer(true, text)}>
             {t('mcp.sendAll')}
           </button>
         </div>

@@ -4,6 +4,7 @@
 import { useState } from 'react'
 import type { CommandApproval } from '@shared/types'
 import { useT } from '../i18n'
+import { useArmedAfterPaint } from '../armDelay'
 
 interface Props {
   request: CommandApproval
@@ -19,6 +20,7 @@ interface Props {
  */
 export default function CommandApprovalDialog({ request, onAnswer }: Props) {
   const t = useT()
+  const armed = useArmedAfterPaint()
   const [autoShare, setAutoShare] = useState(false)
   // \n still separates commands: the text is handed to the remote shell as a
   // script. A bare \r no longer becomes Enter — the exec channel has no PTY and
@@ -71,7 +73,11 @@ export default function CommandApprovalDialog({ request, onAnswer }: Props) {
           <button className="btn" autoFocus onClick={() => onAnswer(false, false)}>
             {t('mcp.deny')}
           </button>
-          <button className="btn danger" onClick={() => onAnswer(true, autoShare)}>
+          <button
+            className="btn danger"
+            disabled={!armed}
+            onClick={() => onAnswer(true, autoShare)}
+          >
             {t('mcp.runCommand')}
           </button>
         </div>

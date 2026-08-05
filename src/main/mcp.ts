@@ -25,21 +25,37 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { z } from 'zod'
 import type { CommandApproval, McpStatus, ShareRequest } from '../shared/types'
 import type { RunResult } from './ssh'
+import { isQueueFull, MAX_PENDING_APPROVALS } from './approvals'
 import { visualizeControlChars } from './ansi'
 import { ssh } from './ssh'
 import { vault } from './vault'
 import { appError, t } from './i18n'
 
 export interface McpBridge {
-  /** Zobrazí dialog se schválením příkazu. */
+  /**
+   * Zobrazí dialog se schválením příkazu.
+   *
+   * Rejects with an ApprovalQueueFullError when the human already has the
+   * maximum number of approvals waiting — see `isQueueFull`. That is the only
+   * rejection; a human decision always resolves.
+   */
   askCommand: (req: CommandApproval) => Promise<{ approved: boolean; autoShare: boolean }>
-  /** Zobrazí dialog pro výběr části výstupu. */
+  /** Zobrazí dialog pro výběr části výstupu. Rejects like `askCommand`. */
   askShare: (req: ShareRequest) => Promise<{ shared: boolean; text: string }>
-  /** Vytáhne okno dopředu, aby dialog nezůstal schovaný. */
-  focusWindow: () => void
 }
 
 const DEFAULT_PORT = 7345
+
+/**
+ * English on purpose — everything the model reads is a machine interface, not
+ * text for a person. It names the limit so a well-behaved client can throttle
+ * itself, and it says nothing was queued so the model does not wait for a
+ * dialog that will never appear.
+ */
+const QUEUE_FULL_MESSAGE =
+  `The human already has ${MAX_PENDING_APPROVALS} approvals waiting, so this request ` +
+  'was not shown to them and nothing was queued. Wait for the pending ones to be ' +
+  'answered before sending another; retrying immediately will get the same answer.'
 
 class McpService {
   private http: HttpServer | null = null
@@ -239,15 +255,20 @@ class McpService {
           return toolError((err as Error).message)
         }
 
-        bridge.focusWindow()
-        const answer = await bridge.askShare({
-          id: randomUUID(),
-          sessionId: session_id,
-          sessionName: ssh.title(session_id),
-          reason,
-          origin: 'read_terminal',
-          text: preview
-        })
+        let answer: { shared: boolean; text: string }
+        try {
+          answer = await bridge.askShare({
+            id: randomUUID(),
+            sessionId: session_id,
+            sessionName: ssh.title(session_id),
+            reason,
+            origin: 'read_terminal',
+            text: preview
+          })
+        } catch (err) {
+          if (!isQueueFull(err)) throw err
+          return toolError(QUEUE_FULL_MESSAGE)
+        }
 
         if (!answer.shared) return toolError('The human declined to share the output.')
         return sharedResult(answer.text)
@@ -279,15 +300,20 @@ class McpService {
         if (!ssh.isReady(session_id)) return toolError('The session does not exist or is not ready.')
         if (!command.trim()) return toolError('Empty command.')
 
-        bridge.focusWindow()
-        const approval = await bridge.askCommand({
-          id: randomUUID(),
-          sessionId: session_id,
-          sessionName: ssh.title(session_id),
-          command,
-          commandVisualized: visualizeControlChars(command),
-          reason
-        })
+        let approval: { approved: boolean; autoShare: boolean }
+        try {
+          approval = await bridge.askCommand({
+            id: randomUUID(),
+            sessionId: session_id,
+            sessionName: ssh.title(session_id),
+            command,
+            commandVisualized: visualizeControlChars(command),
+            reason
+          })
+        } catch (err) {
+          if (!isQueueFull(err)) throw err
+          return toolError(QUEUE_FULL_MESSAGE)
+        }
 
         if (!approval.approved) return toolError('The human did not approve the command.')
 
@@ -302,6 +328,9 @@ class McpService {
           return sharedResult(result.output, result)
         }
 
+        // No queue-full guard: `origin: 'command_output'` is the cap exemption
+        // in approvals.ts, because the human already approved the command that
+        // produced this output. Change the origin and this call can reject.
         const answer = await bridge.askShare({
           id: randomUUID(),
           sessionId: session_id,
