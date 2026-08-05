@@ -909,6 +909,88 @@ test('a rotation that cannot be written back leaves the old secrets working', as
   assert.equal(typeof replacement, 'string', 'a failed rotation burned the recovery key')
 })
 
+test('a mutation that cannot be written back does not survive in memory', async () => {
+  fresh()
+  await vault.create(PASSWORD)
+  await seed()
+  const before = vault.read().knownHosts.length
+
+  // This is the shape that mattered most: ssh.verifyHostKey() records trust
+  // through mutate(). Under the old code the fingerprint went into the live
+  // object first, so a failed write told the user "no" and then trusted the key
+  // for the rest of the run anyway — and the next unrelated successful write
+  // persisted it.
+  fs.mkdirSync(vaultPath() + '.tmp')
+  await assert.rejects(
+    () =>
+      vault.mutate((data) => {
+        data.knownHosts.push({
+          hostKey: 'AAAAB3NzaC1yc2EAAAA-forged',
+          keyType: 'ssh-rsa',
+          fingerprint: 'SHA256:forged',
+          addedAt: 1
+        })
+      }),
+    'a blocked write reported success'
+  )
+  fs.rmSync(vaultPath() + '.tmp', { recursive: true, force: true })
+
+  assert.equal(
+    vault.read().knownHosts.length,
+    before,
+    'the failed mutation stayed in memory, so the app trusts a key the file does not'
+  )
+
+  // And it must not ride along on the next write that does succeed.
+  await vault.mutate((data) => {
+    data.settings.scrollback = 1234
+  })
+  vault.lock()
+  await vault.unlock(PASSWORD)
+  assert.equal(vault.read().knownHosts.length, before, 'the discarded change was written later')
+  assert.equal(vault.read().settings.scrollback, 1234, 'the following write did not stick')
+})
+
+test('a mutation whose callback throws leaves the data untouched', async () => {
+  fresh()
+  await vault.create(PASSWORD)
+  await seed()
+
+  await assert.rejects(
+    () =>
+      vault.mutate((data) => {
+        data.settings.scrollback = 777
+        throw new Error('half way through')
+      }),
+    /half way through/
+  )
+
+  assert.notEqual(vault.read().settings.scrollback, 777, 'a half-finished edit stayed live')
+  assertSeeded('after a callback that threw')
+})
+
+test('concurrent mutations do not lose one another', async () => {
+  fresh()
+  await vault.create(PASSWORD)
+
+  // Without the write queue both callbacks would clone the same starting state
+  // and the second write would discard the first. They also share one `.tmp`
+  // path and one counter.
+  await Promise.all([
+    vault.mutate((data) => {
+      data.settings.fontSize = 20
+    }),
+    vault.mutate((data) => {
+      data.settings.scrollback = 4242
+    })
+  ])
+
+  vault.lock()
+  await vault.unlock(PASSWORD)
+  assert.equal(vault.read().settings.fontSize, 20, 'the first concurrent write was lost')
+  assert.equal(vault.read().settings.scrollback, 4242, 'the second concurrent write was lost')
+})
+
 /* ------------------------------------------------------- migrace v1 → v3 */
 
 test('a v1 vault migrates to v3 on unlock and keeps its data', async () => {

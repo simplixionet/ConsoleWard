@@ -399,6 +399,8 @@ class Vault {
   private data: VaultData | null = null
   /** Poslední číslo zápisu, které jsme viděli nebo zapsali. Nula = zatím žádné. */
   private counter = 0
+  /** Konec fronty zápisů; viz `enqueueWrite`. */
+  private writes: Promise<unknown> = Promise.resolve()
 
   get filePath(): string {
     return path.join(app.getPath('userData'), 'vault.enc')
@@ -451,7 +453,7 @@ class Vault {
       await makeWrap('password', masterPassword, dek),
       await makeWrap('recovery', normalizeRecoveryKey(recoveryKey), dek)
     ]
-    await this.persist()
+    await this.persist(this.data!)
     return recoveryKey
   }
 
@@ -487,7 +489,7 @@ class Vault {
     // což je přesně ten predikát, na kterém visí SSH i MCP.
     if (file.version === 2) {
       try {
-        await this.persist()
+        await this.persist(this.data!)
       } catch (err) {
         this.lock()
         throw err
@@ -646,12 +648,34 @@ class Vault {
     return this.data!
   }
 
-  /** Provede změnu nad daty a uloží je. */
+  /**
+   * Provede změnu nad daty a uloží je.
+   *
+   * Změna se dělá nad **kopií**. Do `this.data` se překlopí až po úspěšném
+   * zápisu, takže selhání zápisu (plný disk, profil jen pro čtení, obsazená
+   * `.tmp`) nenechá v paměti stav, který na disku není. Dřív se měnil živý
+   * objekt a zápis přišel po něm: `conn:save` ohlásil rendereru chybu, ale
+   * připojení v paměti zůstalo a první další úspěšný zápis ho tiše uložil.
+   * Nejhůř to dopadalo u `verifyHostKey`: uživatel dostal chybu, otisk se
+   * neuložil — a přesto ho zbytek běhu aplikace považoval za důvěryhodný.
+   *
+   * `structuredClone` stačí — `VaultData` je čisté JSON (řetězce, čísla,
+   * booleany, pole). Kopie stojí zlomek toho, co zápis hned za ní.
+   *
+   * Vedlejší efekt, který stojí za to mít: když `fn` uprostřed vyhodí výjimku,
+   * rozdělaná změna zmizí s kopií. Předtím zůstala v živých datech.
+   */
   async mutate<T>(fn: (data: VaultData) => T): Promise<T> {
     this.requireUnlocked()
-    const result = fn(this.data!)
-    await this.persist()
-    return result
+    return this.enqueueWrite(async () => {
+      // Znovu: mezi zařazením a během fronty se trezor mohl zamknout.
+      this.requireUnlocked()
+      const draft = structuredClone(this.data!)
+      const result = fn(draft)
+      await this.writeSealed(draft)
+      this.data = draft
+      return result
+    })
   }
 
   /* ------------------------------------------------------------ vnitřní */
@@ -748,7 +772,7 @@ class Vault {
     this.data = normalizeData(JSON.parse(plaintext) as Partial<VaultData>)
     this.counter = 0
     this.wraps = [await makeWrap('password', masterPassword, this.dek)]
-    await this.persist()
+    await this.persist(this.data!)
   }
 
   private requireUnlocked(): void {
@@ -810,7 +834,7 @@ class Vault {
     this.wraps = built
 
     try {
-      await this.persist()
+      await this.persist(this.data!)
     } catch (err) {
       this.dek = prevDek
       this.wraps = prevWraps
@@ -840,8 +864,36 @@ class Vault {
     }
   }
 
-  private async persist(): Promise<void> {
-    if (!this.dek || !this.data) throw appError('error.vaultLocked')
+  /**
+   * Zařadí zápis za všechny předchozí, ať dopadly jakkoli.
+   *
+   * Trezor je jeden soubor, jedna cesta `.tmp` a jeden čítač. Dva zápisy naráz
+   * si `.tmp` přepíšou pod rukama a vyrobí dvě různá těla se stejným číslem.
+   * A `mutate()` by bez fronty vzal obě kopie ze stejného výchozího stavu,
+   * takže druhý zápis by ten první zahodil.
+   */
+  private enqueueWrite<T>(job: () => Promise<T>): Promise<T> {
+    const done = this.writes.then(job, job)
+    // Chyba se polyká jen tady, aby nezastavila frontu; volající ji dostane v `done`.
+    this.writes = done.then(
+      () => undefined,
+      () => undefined
+    )
+    return done
+  }
+
+  /** Zápis mimo `mutate()` — zakládání, migrace, přepečetění. */
+  private async persist(data: VaultData): Promise<void> {
+    return this.enqueueWrite(() => this.writeSealed(data))
+  }
+
+  /**
+   * Zapečetí `data` a atomicky je vymění za současný soubor.
+   *
+   * Volá se **jen zevnitř fronty zápisů** (`persist`, `mutate`). Nikdy přímo.
+   */
+  private async writeSealed(data: VaultData): Promise<void> {
+    if (!this.dek) throw appError('error.vaultLocked')
     if (this.wraps.length === 0) throw appError('error.noUnlockMethod')
 
     // Čítač roste s každým zápisem. Tady ho jen chrání AAD; porovnat ho s dřív
@@ -859,7 +911,7 @@ class Vault {
     const cipher = createCipheriv('aes-256-gcm', this.dek, iv)
     cipher.setAAD(aad)
     const ciphertext = Buffer.concat([
-      cipher.update(Buffer.from(JSON.stringify(this.data), 'utf8')),
+      cipher.update(Buffer.from(JSON.stringify(data), 'utf8')),
       cipher.final()
     ])
 
