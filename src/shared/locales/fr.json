@@ -234,6 +234,8 @@
   "mcp.shareTitleOutput": "Sortie de la commande",
   "mcp.detectedLead": "Mis en évidence dans le texte :",
   "mcp.detectedTail": "La mise en évidence n'est qu'un indice : lis aussi le reste.",
+  "mcp.detectedIncomplete": "Seuls les {{limit}} premiers de chaque type sont mis en évidence : le texte en contient davantage.",
+  "mcp.scanClipped": "Seuls les {{kb}} premiers Ko ont été vérifiés. Rien en dessous n'est mis en évidence, quel qu'en soit le contenu : lis-le toi-même avant d'envoyer.",
   "mcp.selectLast": "Sélectionner les 20 dernières lignes",
   "mcp.redact": "Caviarder la sélection",
   "mcp.redactTitle": "Remplace la sélection par [CAVIARDÉ]",

@@ -22,6 +22,7 @@
 
 import { describe, test, mock } from 'node:test'
 import assert from 'node:assert/strict'
+import { MAX_SCAN_CHARS } from '../src/shared/secretPatterns.ts'
 
 mock.module('electron', { exports: { app: { getPath: () => '' } } })
 
@@ -245,6 +246,38 @@ describe('outputNeedsReview: what revokes the tick', () => {
     )
     assert.equal(outputNeedsReview(ran(LS_LA)), false, 'ls -la')
     assert.equal(outputNeedsReview(ran('')), false, 'empty output')
+  })
+
+  test('output too long to scan is never auto-shared', () => {
+    // Unscanned text is not clean text. `ran()` leaves truncated false, so this
+    // is the clip path in scanSecrets, not runExec's byte cap.
+    const long = 'ls -la\n'.repeat(50_000)
+    assert.ok(long.length > MAX_SCAN_CHARS, 'the fixture really does exceed the scan limit')
+    assert.equal(outputNeedsReview(ran(long)), true, 'text nobody scanned was auto-shared')
+  })
+
+  test('a medium pattern hitting its hit cap does not revoke the tick', () => {
+    // `ip -4 route` on a router caps secret.ipAddress at 2000 in ~18 KB.
+    // Forcing on `incomplete` would fire on routing tables and nothing else,
+    // which is the habituation secretPatterns.ts names in its own header.
+    const routes = Array.from(
+      { length: 3000 },
+      (_, i) => `10.0.${Math.floor(i / 250)}.${i % 250} dev eth0`
+    ).join('\n')
+    assert.ok(routes.length < MAX_SCAN_CHARS, 'precondition: this is the hit cap, not the clip')
+    assert.equal(outputNeedsReview(ran(routes)), false, 'a routing table revoked the tick')
+  })
+
+  test('a key after the hit cap is still found, because the cap is per pattern', () => {
+    const routes = Array.from(
+      { length: 3000 },
+      (_, i) => `10.0.${Math.floor(i / 250)}.${i % 250} dev eth0`
+    ).join('\n')
+    assert.equal(
+      outputNeedsReview(ran(routes + '\n-----BEGIN OPENSSH PRIVATE KEY-----')),
+      true,
+      'secret.ipAddress capping must not stop secret.privateKeyStart from scanning'
+    )
   })
 
   test('output that hit the byte cap is never auto-shared', () => {

@@ -21,7 +21,12 @@
 
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { findSecrets, summarizeSecrets } from '../src/shared/secretPatterns.ts'
+import {
+  findSecrets,
+  MAX_SCAN_CHARS,
+  scanSecrets,
+  summarizeSecrets
+} from '../src/shared/secretPatterns.ts'
 
 // --------------------------------------------------------------------------
 // Helpers
@@ -527,20 +532,53 @@ describe('summarizeSecrets: counts group by label', () => {
 // --------------------------------------------------------------------------
 
 describe('findSecrets: known gaps', () => {
-  test('KNOWN GAP: stops at 2000 hits per pattern and never says it truncated', () => {
+  test('stops at 2000 hits per pattern and says so', () => {
     const ips = Array.from({ length: 2500 }, (_, i) => `10.0.${Math.floor(i / 250)}.${i % 250}`)
     const text = ips.join('\n')
     assert.equal(new Set(ips).size, 2500, 'the fixture really does hold 2500 distinct addresses')
 
-    const matches = findSecrets(text)
-    // Should be 2500. The `guard++ < 2000` cap in findSecrets drops the rest,
-    // and the return type carries no flag to say so — the dialog reports
-    // "2000× IP address" and the user has no way to learn 500 went unpainted.
-    // The unpainted ones are still in the text that gets sent.
-    assert.equal(matches.length, 2000, 'the cap is silently applied')
-    assert.ok(
-      matches.every((m) => Object.keys(m).length === 4),
-      'no truncation flag reaches the caller'
+    const scan = scanSecrets(text)
+    assert.equal(scan.matches.length, 2000, 'the cap still bounds what the renderer paints')
+    assert.equal(scan.incomplete, true, 'the caller is told the count is a floor, not a total')
+    assert.equal(scan.clipped, false, 'the text itself was short enough to scan whole')
+  })
+
+  test('a scan that stayed under the cap does not claim to be incomplete', () => {
+    // Guards the flag against being wired to something that is always true.
+    const ips = Array.from({ length: 1999 }, (_, i) => `10.0.${Math.floor(i / 250)}.${i % 250}`)
+    const scan = scanSecrets(ips.join('\n'))
+    assert.equal(scan.matches.length, 1999, 'the fixture sits one under the cap')
+    assert.equal(scan.incomplete, false, 'an uncapped scan reported itself as truncated')
+  })
+
+  test('text past MAX_SCAN_CHARS is not scanned, and the scan admits it', () => {
+    const tail = '-----BEGIN OPENSSH PRIVATE KEY-----'
+    const text = 'x'.repeat(MAX_SCAN_CHARS) + '\n' + tail
+    const scan = scanSecrets(text)
+
+    assert.equal(scan.clipped, true, 'a scan that stopped early did not say so')
+    assert.equal(
+      scan.matches.some((m) => m.label === 'secret.privateKeyStart'),
+      false,
+      'precondition: the key really is past the cap, so `clipped` is the only warning there is'
+    )
+    assert.equal(
+      findSecrets(tail)[0].label,
+      'secret.privateKeyStart',
+      'fixture is wrong: the tail would not have been found even unclipped'
+    )
+  })
+
+  test('a clipped scan keeps its offsets anchored to the start of the text', () => {
+    // OutputShareDialog paints these offsets over the WHOLE text, tail included.
+    // Offsets measured from anywhere but index 0 would paint the wrong characters.
+    const text = 'AKIAIOSFODNN7EXAMPLE\n' + 'x'.repeat(MAX_SCAN_CHARS)
+    const scan = scanSecrets(text)
+    assert.equal(scan.clipped, true, 'precondition: this fixture must exceed the cap')
+    assert.equal(
+      text.slice(scan.matches[0].start, scan.matches[0].end),
+      'AKIAIOSFODNN7EXAMPLE',
+      'the offsets no longer index the text the dialog paints'
     )
   })
 

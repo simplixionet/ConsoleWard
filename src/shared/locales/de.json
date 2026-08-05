@@ -234,6 +234,8 @@
   "mcp.shareTitleOutput": "Ausgabe des Befehls",
   "mcp.detectedLead": "Im Text hervorgehoben:",
   "mcp.detectedTail": "Die Hervorhebung ist nur ein Hinweis — lies auch den Rest.",
+  "mcp.detectedIncomplete": "Hervorgehoben sind nur die ersten {{limit}} je Art — im Text stehen mehr.",
+  "mcp.scanClipped": "Geprüft wurden nur die ersten {{kb}} KB. Alles darunter ist nicht hervorgehoben, egal was dort steht — lies es selbst, bevor du sendest.",
   "mcp.selectLast": "Letzte 20 Zeilen markieren",
   "mcp.redact": "Markiertes schwärzen",
   "mcp.redactTitle": "Ersetzt die Markierung durch [GESCHWÄRZT]",

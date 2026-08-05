@@ -3,7 +3,12 @@
 
 import { useMemo, useRef, useState } from 'react'
 import type { ShareRequest } from '@shared/types'
-import { findSecrets, summarizeSecrets } from '@shared/secretPatterns'
+import {
+  MAX_HITS_PER_PATTERN,
+  MAX_SCAN_CHARS,
+  scanSecrets,
+  summarizeSecrets
+} from '@shared/secretPatterns'
 import { useT } from '../i18n'
 import { useArmedAfterPaint } from '../armDelay'
 
@@ -27,7 +32,8 @@ export default function OutputShareDialog({ request, onAnswer }: Props) {
   const areaRef = useRef<HTMLTextAreaElement>(null)
   const backdropRef = useRef<HTMLDivElement>(null)
 
-  const matches = useMemo(() => findSecrets(text), [text])
+  const scan = useMemo(() => scanSecrets(text), [text])
+  const matches = scan.matches
   const summary = useMemo(() => summarizeSecrets(matches), [matches])
   const highSeverity = matches.some((m) => m.severity === 'high')
 
@@ -103,6 +109,13 @@ export default function OutputShareDialog({ request, onAnswer }: Props) {
           {matches.length > 0 && (
             <div className={highSeverity ? 'warn-box danger-box' : 'warn-box'}>
               <b>{t('mcp.detectedLead')}</b> {summaryText}. {t('mcp.detectedTail')}
+              {scan.incomplete && ` ${t('mcp.detectedIncomplete', { limit: MAX_HITS_PER_PATTERN })}`}
+            </div>
+          )}
+
+          {scan.clipped && (
+            <div className="warn-box danger-box">
+              {t('mcp.scanClipped', { kb: MAX_SCAN_CHARS / 1024 })}
             </div>
           )}
 

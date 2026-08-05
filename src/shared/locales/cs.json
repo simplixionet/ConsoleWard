@@ -236,6 +236,8 @@
   "mcp.shareTitleOutput": "Výstup příkazu",
   "mcp.detectedLead": "Zvýrazněno v textu:",
   "mcp.detectedTail": "Zvýraznění je jen vodítko — projdi si i zbytek.",
+  "mcp.detectedIncomplete": "Zvýrazněno je jen prvních {{limit}} od každého druhu — v textu jich je víc.",
+  "mcp.scanClipped": "Zkontrolováno bylo jen prvních {{kb}} KB. Nic pod touhle hranicí není zvýrazněné, ať už tam je cokoliv — přečti si to sám, než to pošleš.",
   "mcp.selectLast": "Označit posledních 20 řádků",
   "mcp.redact": "Začernit označené",
   "mcp.redactTitle": "Nahradí označenou část textem [REDIGOVÁNO]",

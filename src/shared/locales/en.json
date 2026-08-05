@@ -234,6 +234,8 @@
   "mcp.shareTitleOutput": "Command output",
   "mcp.detectedLead": "Highlighted in the text:",
   "mcp.detectedTail": "The highlighting is only a hint — read the rest as well.",
+  "mcp.detectedIncomplete": "Only the first {{limit}} of each kind are highlighted — the text holds more.",
+  "mcp.scanClipped": "Only the first {{kb}} KB were checked. Nothing below that point is highlighted, whatever it holds — read it yourself before you send it.",
   "mcp.selectLast": "Select the last 20 lines",
   "mcp.redact": "Redact the selection",
   "mcp.redactTitle": "Replaces the selection with [REDACTED]",

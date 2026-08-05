@@ -234,6 +234,8 @@
   "mcp.shareTitleOutput": "Uitvoer van het commando",
   "mcp.detectedLead": "Gemarkeerd in de tekst:",
   "mcp.detectedTail": "De markering is slechts een aanwijzing — lees ook de rest.",
+  "mcp.detectedIncomplete": "Alleen de eerste {{limit}} van elke soort zijn gemarkeerd — in de tekst staan er meer.",
+  "mcp.scanClipped": "Alleen de eerste {{kb}} KB zijn gecontroleerd. Niets onder dat punt is gemarkeerd, wat er ook staat — lees het zelf voordat je het verstuurt.",
   "mcp.selectLast": "De laatste 20 regels selecteren",
   "mcp.redact": "Selectie zwart maken",
   "mcp.redactTitle": "Vervangt de selectie door [GEZWART]",

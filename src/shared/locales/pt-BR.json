@@ -234,6 +234,8 @@
   "mcp.shareTitleOutput": "Saída do comando",
   "mcp.detectedLead": "Destacado no texto:",
   "mcp.detectedTail": "O destaque é apenas uma pista — leia o resto também.",
+  "mcp.detectedIncomplete": "Só os primeiros {{limit}} de cada tipo estão destacados — o texto tem mais.",
+  "mcp.scanClipped": "Só os primeiros {{kb}} KB foram verificados. Nada abaixo desse ponto está destacado, seja o que for — leia você mesmo antes de enviar.",
   "mcp.selectLast": "Selecionar as últimas 20 linhas",
   "mcp.redact": "Censurar a seleção",
   "mcp.redactTitle": "Substitui a seleção por [CENSURADO]",

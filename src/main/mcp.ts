@@ -25,7 +25,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { z } from 'zod'
 import type { CommandApproval, McpStatus, ShareRequest } from '../shared/types'
 import type { RunResult } from './ssh'
-import { findSecrets } from '../shared/secretPatterns'
+import { scanSecrets } from '../shared/secretPatterns'
 import { isQueueFull, MAX_PENDING_APPROVALS } from './approvals'
 import { visualizeControlChars } from './ansi'
 import { ssh } from './ssh'
@@ -472,10 +472,25 @@ function runErrorFor(err: unknown): string {
  * on those would mean the checkbox never applies, and a control that silently does
  * nothing is worse than no control — it is the habituation `secretPatterns.ts`
  * names in its own header as the failure mode.
+ *
+ * `clipped` for the same reason as `truncated`: scanSecrets stops at
+ * MAX_SCAN_CHARS and everything past it is unread, so a credential down there
+ * would pass this check by never having been looked at. RUN_OUTPUT_BYTES is
+ * half MAX_SCAN_CHARS, so today this cannot fire — the check is here so that
+ * raising one of the two constants cannot silently open the hole.
+ *
+ * `incomplete` deliberately does NOT force the dialog. The hit cap is per
+ * pattern, so a capped pattern never stops another one from scanning the whole
+ * text, and a high-severity pattern that reaches its cap has already produced
+ * two thousand high matches — the branch below is already true. The cap can
+ * therefore only ever hide `medium` findings, and forcing on those would fire
+ * on every routing table, which is the habituation this file's header names.
  */
 export function outputNeedsReview(run: RunResult): boolean {
   if (run.truncated) return true
-  return findSecrets(run.output).some((m) => m.severity === 'high')
+  const scan = scanSecrets(run.output)
+  if (scan.clipped) return true
+  return scan.matches.some((m) => m.severity === 'high')
 }
 
 function toolError(message: string): {

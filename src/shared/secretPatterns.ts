@@ -17,6 +17,43 @@ export interface SecretMatch {
   severity: 'high' | 'medium'
 }
 
+/**
+ * A whole scan, including what it did NOT look at.
+ *
+ * `findSecrets` hands back only the matches, which is all most callers want.
+ * The two flags are what the share dialog needs: a summary that says "3
+ * findings" over text holding three thousand is worse than no summary at all,
+ * because it reads as a clean bill of health.
+ */
+export interface SecretScan {
+  matches: SecretMatch[]
+  /** A pattern reached MAX_HITS_PER_PATTERN; later hits of it were not collected. */
+  incomplete: boolean
+  /** The text was longer than MAX_SCAN_CHARS; only its beginning was scanned. */
+  clipped: boolean
+}
+
+/**
+ * Kolik shod na jeden vzor se ještě sbírá.
+ *
+ * A ceiling on the sort, the merge and the renderer, not on the regex engine —
+ * two thousand `<mark>` nodes are already past what anyone reads. Reaching it
+ * sets `incomplete`, so the count in the dialog is a floor rather than a lie.
+ * Per pattern, so `ip -4 route` on a router caps secret.ipAddress while every
+ * other pattern still scans the text whole.
+ */
+export const MAX_HITS_PER_PATTERN = 2000
+
+/**
+ * Kolik znaků se vůbec prohledává.
+ *
+ * Matches SCROLL_MEMORY_BYTES in ssh.ts, so it never bites on text this
+ * application produced — it is here for what a human pastes into the textarea,
+ * and as a hard bound on how long one scan can hold the main process event
+ * loop, where `outputNeedsReview` runs it and a stall freezes every session.
+ */
+export const MAX_SCAN_CHARS = 256 * 1024
+
 interface PatternSpec {
   re: RegExp
   label: string
@@ -115,22 +152,34 @@ const PATTERNS: PatternSpec[] = [
 ]
 
 /**
- * Najde všechny shody. Překryvy se slučují – přednost má dřívější začátek,
- * při stejném začátku delší úsek a vyšší závažnost.
+ * Prohledá text a přizná, co neprohledal.
+ *
+ * Překryvy se slučují – přednost má dřívější začátek, při stejném začátku
+ * delší úsek a vyšší závažnost.
  */
-export function findSecrets(text: string): SecretMatch[] {
+export function scanSecrets(text: string): SecretScan {
+  const clipped = text.length > MAX_SCAN_CHARS
+  // Head, never tail: the dialog paints these offsets over the whole text.
+  const scanned = clipped ? text.slice(0, MAX_SCAN_CHARS) : text
+  let incomplete = false
   const raw: SecretMatch[] = []
 
   for (const { re, label, severity } of PATTERNS) {
     // Vlastní kopie kvůli sdílenému lastIndex u globálních regexů.
     const rx = new RegExp(re.source, re.flags)
     let m: RegExpExecArray | null
-    let guard = 0
-    while ((m = rx.exec(text)) !== null && guard++ < 2000) {
+    let hits = 0
+    while ((m = rx.exec(scanned)) !== null) {
       if (m[0].length === 0) {
         rx.lastIndex++
         continue
       }
+      if (hits === MAX_HITS_PER_PATTERN) {
+        // One more hit exists. Stop collecting it, but do not stop saying so.
+        incomplete = true
+        break
+      }
+      hits++
       raw.push({ start: m.index, end: m.index + m[0].length, label, severity })
     }
   }
@@ -155,7 +204,12 @@ export function findSecrets(text: string): SecretMatch[] {
     }
     merged.push({ ...match })
   }
-  return merged
+  return { matches: merged, incomplete, clipped }
+}
+
+/** Jen shody, bez informace o tom, co se neprohledalo. */
+export function findSecrets(text: string): SecretMatch[] {
+  return scanSecrets(text).matches
 }
 
 /**
