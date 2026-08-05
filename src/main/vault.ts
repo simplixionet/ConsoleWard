@@ -70,6 +70,24 @@ const KDF_ACCEPTED = { minN: 1 << 17, maxN: 1 << 18, r: 8, p: 1, keylen: 32, min
 /** Aktuální formát souboru. Verze 1 a 2 se umí přečíst a při odemčení převést sem. */
 const VAULT_VERSION = 3 as const
 
+/**
+ * Penalty after the first wrong password, doubling with each further one.
+ *
+ * Small enough that a human who mistyped once notices nothing — scrypt already
+ * costs longer than this — and large enough that it compounds fast.
+ */
+const UNLOCK_BASE_DELAY_MS = 250
+
+/**
+ * Ceiling on that penalty.
+ *
+ * Five seconds is an obstacle to a script and a nuisance to a person, which is
+ * the right way round: someone who genuinely forgot their password has the
+ * recovery key, and someone guessing has to spend five seconds per attempt for
+ * as long as they keep going.
+ */
+const UNLOCK_MAX_DELAY_MS = 5_000
+
 type WrapType = 'password' | 'recovery'
 
 interface KdfSpec {
@@ -391,6 +409,8 @@ class Vault {
   private counter = 0
   /** Konec fronty zápisů; viz `enqueueWrite`. */
   private writes: Promise<unknown> = Promise.resolve()
+  /** Kolik pokusů o odemčení po sobě selhalo; viz `awaitUnlockSlot`. */
+  private failedUnlocks = 0
 
   get filePath(): string {
     return path.join(app.getPath('userData'), 'vault.enc')
@@ -448,6 +468,7 @@ class Vault {
   }
 
   async unlock(masterPassword: string): Promise<void> {
+    await this.awaitUnlockSlot()
     const file = await this.readFile()
 
     if (file.version === 1) {
@@ -462,8 +483,10 @@ class Vault {
     try {
       dek = await openWrap(wrap, masterPassword)
     } catch {
+      this.failedUnlocks += 1
       throw appError('error.wrongPassword')
     }
+    this.failedUnlocks = 0
     this.adopt(file, dek)
 
     // Migrace v2 → v3. Přepsat soubor jde až teď, kdy je DEK v ruce. DEK ani
@@ -484,6 +507,7 @@ class Vault {
         this.lock()
         throw err
       }
+      await this.dropBackupAfterMigration()
     }
   }
 
@@ -676,6 +700,32 @@ class Vault {
     })
   }
 
+  /**
+   * Waits out the penalty earned by previous wrong passwords.
+   *
+   * scrypt at N = 2^17 already costs ~160 ms, which bounds an online guess at
+   * roughly six a second — enough against a person typing, useless against
+   * anything scripted against the IPC channel, and that channel is reachable
+   * from the lock screen without any secret at all.
+   *
+   * The delay is exponential in the number of consecutive failures and capped,
+   * so a human who mistypes twice waits a quarter of a second while a run of a
+   * thousand guesses waits `UNLOCK_MAX_DELAY_MS` for every one of them. It is
+   * deliberately in memory and not in the file: this raises the cost of guessing
+   * at a running app, which is what a lock screen is for. Someone who can copy
+   * `vault.enc` attacks it offline where no counter of ours applies, and
+   * persisting the count would hand them a way to lock the owner out by editing
+   * it.
+   *
+   * The counter resets on success, and `lock()` deliberately does NOT reset it —
+   * otherwise the way past the throttle would be to lock and try again.
+   */
+  private async awaitUnlockSlot(): Promise<void> {
+    if (this.failedUnlocks === 0) return
+    const delay = Math.min(UNLOCK_MAX_DELAY_MS, UNLOCK_BASE_DELAY_MS * 2 ** (this.failedUnlocks - 1))
+    await new Promise((resolve) => setTimeout(resolve, delay))
+  }
+
   /* ------------------------------------------------------------ vnitřní */
 
   private async readFile(): Promise<VaultFileV1 | VaultFileV2 | VaultFileV3> {
@@ -771,6 +821,7 @@ class Vault {
     this.counter = 0
     this.wraps = [await makeWrap('password', masterPassword, this.dek)]
     await this.persist(this.data!)
+    await this.dropBackupAfterMigration()
   }
 
   private requireUnlocked(): void {
@@ -860,6 +911,38 @@ class Vault {
     } catch {
       // Záloha neexistuje, nebo ji drží něco jiného. Rotace tím neselhává.
     }
+  }
+
+  /**
+   * Drops the pre-migration backup, but only once the new file has been read
+   * back and decrypted.
+   *
+   * A migration leaves `.bak` holding the vault in the OLD format with the SAME
+   * secrets, and nothing ever removed it. For v1 that is a copy whose key came
+   * straight from the password; for v2 it is a copy with no AAD and no counter,
+   * which is a ready-made target for exactly the rollback C6 exists to detect.
+   * Leaving either lying next to the vault for good is worse than the risk of
+   * dropping it.
+   *
+   * But dropping it blind would remove the safety net at the one moment a
+   * format change most needs one. So the new file is opened again from disk and
+   * its body decrypted with the data key already in memory — no password, no
+   * scrypt, just the AES-GCM pass. If that succeeds the old copy is provably
+   * redundant. If anything at all goes wrong the backup stays, because a
+   * needless `.bak` costs nothing next to a vault nobody can open.
+   */
+  private async dropBackupAfterMigration(): Promise<void> {
+    try {
+      const written = await this.readFile()
+      if (written.version !== VAULT_VERSION || !this.dek) return
+      const decipher = createDecipheriv('aes-256-gcm', this.dek, Buffer.from(written.iv, 'base64'))
+      decipher.setAAD(headerAad(written))
+      decipher.setAuthTag(Buffer.from(written.tag, 'base64'))
+      Buffer.concat([decipher.update(Buffer.from(written.data, 'base64')), decipher.final()])
+    } catch {
+      return
+    }
+    await this.destroyBackup()
   }
 
   /**

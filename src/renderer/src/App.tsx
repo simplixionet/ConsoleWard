@@ -13,6 +13,7 @@ import type {
   VaultStatus
 } from '@shared/types'
 import { api, errorMessage, unwrap } from './api'
+import { reportActivity, resetActivityThrottle } from './activity'
 import { useT } from './i18n'
 import { dispatch, focusTerminal, forget } from './terminalBus'
 import UnlockScreen from './components/UnlockScreen'
@@ -140,6 +141,10 @@ export default function App() {
     const offShare = api.mcp.onShareRequest((req) => setShareQueue((prev) => [...prev, req]))
 
     const offLocked = api.vault.onLocked(() => {
+      // The next keypress after a lock is the human coming back, and it must
+      // reach the main process rather than being swallowed by a throttle
+      // window that started before they walked away.
+      resetActivityThrottle()
       setSessions([])
       setActiveSession(null)
       setConnections([])
@@ -166,7 +171,7 @@ export default function App() {
 
   // Aktivita uživatele odkládá automatické zamčení.
   useEffect(() => {
-    const notify = () => api.app.notifyActivity()
+    const notify = (): void => reportActivity(() => api.app.notifyActivity())
     const events: (keyof WindowEventMap)[] = ['mousedown', 'keydown', 'wheel']
     for (const e of events) window.addEventListener(e, notify)
     return () => {

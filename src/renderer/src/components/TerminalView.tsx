@@ -10,6 +10,7 @@ import type { SessionInfo, Settings } from '@shared/types'
 import { api } from '../api'
 import { useT } from '../i18n'
 import { registerFocus, registerSink } from '../terminalBus'
+import { reportActivity } from '../activity'
 
 const THEME = {
   background: '#0b0e13',
@@ -77,7 +78,7 @@ export default function TerminalView({ session, settings, visible }: Props) {
     const unregisterFocus = registerFocus(session.id, () => term.focus())
 
     const dataSub = term.onData((data) => {
-      api.app.notifyActivity()
+      reportActivity(() => api.app.notifyActivity())
       void api.ssh.write(session.id, data)
     })
 

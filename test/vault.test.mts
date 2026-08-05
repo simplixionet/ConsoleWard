@@ -951,6 +951,82 @@ test('a mutation that cannot be written back does not survive in memory', async 
   assert.equal(vault.read().settings.scrollback, 1234, 'the following write did not stick')
 })
 
+test('a migration does not leave the old-format vault lying next to the new one', async () => {
+  // The .bak persist() takes before every write holds the vault in the OLD
+  // format with the SAME secrets. For v2 that is a copy with no AAD and no
+  // counter -- a ready-made rollback target. It used to stay there for good.
+  fresh()
+  await writeV2Vault(PASSWORD, generateRecoveryKey(), { connections: [sampleConnection()] })
+  await vault.unlock(PASSWORD)
+
+  assert.equal(readVaultFile().version, 3, 'precondition: the migration ran')
+  assert.equal(
+    fs.existsSync(backupPath()),
+    false,
+    'the pre-migration v2 copy is still on disk beside the v3 file'
+  )
+
+  // And the migrated vault still works, which is the half that matters more.
+  vault.lock()
+  await vault.unlock(PASSWORD)
+  assert.equal(vault.read().connections.length, 1, 'dropping the backup cost us the data')
+})
+
+test('an ordinary write still keeps its backup', async () => {
+  // Only a migration drops it. persist() takes the copy so an interrupted write
+  // cannot destroy the vault, and that protection has to stay in normal use.
+  fresh()
+  await vault.create(PASSWORD)
+  await vault.mutate((data) => {
+    data.settings.scrollback = 1111
+  })
+  assert.equal(fs.existsSync(backupPath()), true, 'an ordinary write lost its safety net')
+})
+
+test('wrong passwords get slower, and a lock does not clear the penalty', async () => {
+  fresh()
+  await vault.create(PASSWORD)
+
+  // The counter is deliberately NOT reset by lock(), so it carries across every
+  // failed unlock earlier in this file. A success is the only thing that clears
+  // it, which is exactly what this needs to start from a known state.
+  vault.lock()
+  await vault.unlock(PASSWORD)
+  vault.lock()
+
+  // The first attempt is not penalised — a lock screen that pauses before the
+  // very first try is punishing the person who simply arrived.
+  const firstAt = Date.now()
+  await rejectsWithKey(() => vault.unlock('wrong-one'), 'error.wrongPassword')
+  const first = Date.now() - firstAt
+
+  // The second is, and the third more so.
+  const secondAt = Date.now()
+  await rejectsWithKey(() => vault.unlock('wrong-two'), 'error.wrongPassword')
+  const second = Date.now() - secondAt
+
+  assert.ok(
+    second > first + 100,
+    `a repeated wrong password cost ${second} ms against ${first} ms for the first`
+  )
+
+  // Locking must not be a way around it, or the throttle is one keystroke of
+  // scripting away from doing nothing at all.
+  vault.lock()
+  const afterLockAt = Date.now()
+  await rejectsWithKey(() => vault.unlock('wrong-three'), 'error.wrongPassword')
+  const afterLock = Date.now() - afterLockAt
+  assert.ok(afterLock > first + 100, `locking reset the throttle: ${afterLock} ms`)
+
+  // The right password still works, and clears the penalty for next time.
+  await vault.unlock(PASSWORD)
+  assert.equal(vault.isUnlocked(), true, 'the throttle refused a correct password')
+  vault.lock()
+  const cleanAt = Date.now()
+  await vault.unlock(PASSWORD)
+  assert.ok(Date.now() - cleanAt < first + 500, 'a success did not clear the penalty')
+})
+
 test('a mutation whose callback throws leaves the data untouched', async () => {
   fresh()
   await vault.create(PASSWORD)
