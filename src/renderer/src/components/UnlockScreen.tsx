@@ -15,6 +15,15 @@ interface Props {
   vaultPath: string
   /** Po založení trezoru dorazí obnovovací klíč k zobrazení. */
   onCreated: (recoveryKey: string) => void
+  /**
+   * Po obnově obnovovacím klíčem dorazí **nový** klíč k zobrazení.
+   *
+   * Obnova rotuje DEK, čímž použitý klíč přestane platit. Kdyby se návratová
+   * hodnota zahodila, uživatel by přišel o jedinou záchranu pro zapomenuté
+   * heslo a nedozvěděl by se to — přesně před tím varuje komentář nad
+   * `unlockWithRecovery` ve `vault.ts`.
+   */
+  onRecovered: (recoveryKey: string) => void
   onUnlocked: () => void
 }
 
@@ -25,6 +34,7 @@ export default function UnlockScreen({
   hasRecovery,
   vaultPath,
   onCreated,
+  onRecovered,
   onUnlocked
 }: Props) {
   const t = useT()
@@ -55,8 +65,11 @@ export default function UnlockScreen({
     setBusy(true)
     try {
       if (mode === 'recovery') {
-        unwrap(await api.vault.unlockWithRecovery(recoveryKey, password))
+        // Návratovou hodnotu NELZE zahodit: obnova rotuje DEK, takže právě
+        // použitý klíč přestal platit a tenhle je jediný, který zbyl.
+        const freshKey = unwrap(await api.vault.unlockWithRecovery(recoveryKey, password))
         reset()
+        onRecovered(freshKey)
         onUnlocked()
       } else if (exists) {
         unwrap(await api.vault.unlock(password))

@@ -1964,3 +1964,52 @@ test('přenos profilu zahodí kotvu po jiném trezoru', async () => {
   await vault.unlock(PASSWORD)
   assert.deepEqual(vault.rollback, { kind: 'unknown' }, 'přenesený trezor nesmí být obviněn')
 })
+
+test('a failed reseal during recovery does not leave the vault open', async () => {
+  /*
+   * The third path with the same invariant, and the one that was missing the
+   * guard the other two carry. `adopt()` makes isUnlocked() true before the
+   * reseal; if the reseal then fails, the renderer shows an error and stays on
+   * the lock screen while SSH and MCP -- both gated on isUnlocked() -- see an
+   * open vault with no auto-lock countdown behind it.
+   */
+  fresh()
+  const recoveryKey = await vault.create(PASSWORD)
+  vault.lock()
+
+  fs.mkdirSync(vaultPath() + '.tmp')
+  await assert.rejects(
+    () => vault.unlockWithRecovery(recoveryKey, OTHER_PASSWORD),
+    'a blocked recovery reported success'
+  )
+  assert.equal(vault.isUnlocked(), false, 'a failed recovery left the vault unlocked')
+  fs.rmSync(vaultPath() + '.tmp', { recursive: true, force: true })
+
+  // Nic se nezapsalo, takže původní klíč i heslo pořád platí.
+  await vault.unlockWithRecovery(recoveryKey, OTHER_PASSWORD)
+  assert.equal(vault.isUnlocked(), true, 'the one chance at recovery was burned')
+})
+
+test('obnova vrací nový klíč, protože ten použitý rotací přestal platit', async () => {
+  /*
+   * The value the renderer was throwing away. Recovery rotates the DEK, so the
+   * key just used stops working -- if the caller does not show what comes back,
+   * the user is left with no way back in and no sign that anything changed.
+   */
+  fresh()
+  const first = await vault.create(PASSWORD)
+  vault.lock()
+
+  const second = await vault.unlockWithRecovery(first, OTHER_PASSWORD)
+  assert.notEqual(second, first, 'obnova musí vrátit jiný klíč než ten použitý')
+  assert.match(second, /^[0-9A-Z]{5}(-[0-9A-Z]{5}){5}$/, 'a použitelný, ne prázdný řetězec')
+
+  vault.lock()
+  await assert.rejects(
+    () => vault.unlockWithRecovery(first, THIRD_PASSWORD),
+    'starý klíč musí po rotaci přestat platit'
+  )
+  vault.lock()
+  await vault.unlockWithRecovery(second, THIRD_PASSWORD)
+  assert.equal(vault.isUnlocked(), true, 'nový klíč musí fungovat')
+})

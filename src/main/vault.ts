@@ -642,10 +642,24 @@ class Vault {
     // rotuje DEK. Použitý obnovovací klíč tím přestane platit — kdo by ho měl,
     // po tomhle už dovnitř nevidí — a uživatel dostane nový.
     const freshRecoveryKey = generateRecoveryKey()
-    await this.reseal([
-      { type: 'password', secret: newPassword },
-      { type: 'recovery', secret: normalizeRecoveryKey(freshRecoveryKey) }
-    ])
+    /*
+     * Stejná pojistka jako v `create()` a v migraci v2→v3, a ze stejného
+     * důvodu: `adopt()` výš už nastavil `dek`, `wraps` i `data`, takže
+     * `isUnlocked()` je od té chvíle `true`. Kdyby `reseal` selhal (profil jen
+     * pro čtení, plný disk), volající dostane chybu, renderer zůstane na
+     * zamykací obrazovce — a hlavní proces by měl odemčeno. Na `isUnlocked()`
+     * visí SSH i MCP, takže by za zamčenou obrazovkou zůstal otevřený trezor
+     * bez běžícího odpočtu automatického zamčení.
+     */
+    try {
+      await this.reseal([
+        { type: 'password', secret: newPassword },
+        { type: 'recovery', secret: normalizeRecoveryKey(freshRecoveryKey) }
+      ])
+    } catch (err) {
+      this.lock()
+      throw err
+    }
     return freshRecoveryKey
   }
 

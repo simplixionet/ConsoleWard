@@ -311,6 +311,7 @@ export default function App() {
           hasRecovery={vaultStatus.hasRecovery}
           vaultPath={vaultStatus.path}
           onCreated={(key) => setRecoveryKeyToShow({ key, isNew: true })}
+          onRecovered={(key) => setRecoveryKeyToShow({ key, isNew: false })}
           onUnlocked={refreshVault}
         />
         {recoveryModal}
@@ -480,8 +481,19 @@ export default function App() {
         />
       )}
 
+      {/*
+        `key` je nosný ze stejného důvodu jako u dialogů níž — a tenhle ho
+        neměl. Bez něj React přes dvě různé výzvy komponentu jen přesmykne
+        místo remountu, takže `useState` inicializátory a prodleva proti
+        prokliku se nespustí znovu: odpověď na klíč serveru A může padnout na
+        obrazovku, která už se ptá na klíč serveru B.
+      */}
       {hostKeyQueue.length > 0 && (
-        <HostKeyDialog prompt={hostKeyQueue[0]} onAnswer={(accept) => void answerHostKey(accept)} />
+        <HostKeyDialog
+          key={hostKeyQueue[0].requestId}
+          prompt={hostKeyQueue[0]}
+          onAnswer={(accept) => void answerHostKey(accept)}
+        />
       )}
 
       {/*
