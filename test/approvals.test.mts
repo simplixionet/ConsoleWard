@@ -86,6 +86,22 @@ function fresh() {
   return { queue, spy }
 }
 
+/**
+ * A request that should be refused resolves to this instead of hanging.
+ *
+ * Without the race, a build with no cap leaves `askCommand` pending until
+ * somebody answers it — so a broken cap makes these tests hang rather than go
+ * red, and a hang in CI reads as a stuck runner rather than as a regression.
+ */
+const ACCEPTED = Symbol('the call was admitted instead of refused')
+
+function refusal<T>(call: Promise<T>): Promise<unknown> {
+  return Promise.race([
+    call.then(() => ACCEPTED, (err) => err),
+    new Promise((r) => setTimeout(() => r(ACCEPTED), 50))
+  ])
+}
+
 /* --------------------------------------------------------------- strop */
 
 test('the request past the cap is refused and leaves no record behind', async () => {
@@ -96,9 +112,8 @@ test('the request past the cap is refused and leaves no record behind', async ()
   assert.equal(queue.size(), MAX_PENDING_APPROVALS, 'the queue refused its own allowance')
 
   const refused = command()
-  await assert.rejects(
-    () => queue.askCommand(refused),
-    isQueueFull,
+  assert.ok(
+    isQueueFull(await refusal(queue.askCommand(refused))),
     'the request past the cap was accepted'
   )
 
@@ -127,9 +142,8 @@ test('the share that completes an approved command is exempt from the cap', asyn
   for (let i = 0; i < MAX_PENDING_APPROVALS; i++) pending.push(queue.askCommand(command()))
 
   // A read_terminal share is a fresh demand on the human, so it is refused.
-  await assert.rejects(
-    () => queue.askShare(share('read_terminal')),
-    isQueueFull,
+  assert.ok(
+    isQueueFull(await refusal(queue.askShare(share('read_terminal')))),
     'a full queue accepted a new read_terminal share'
   )
 
