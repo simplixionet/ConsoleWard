@@ -1799,3 +1799,111 @@ test('a v3 header that cannot be encoded is reported as damaged, not crashed', a
     assert.notEqual(err.name, 'TypeError', `${label} crashed instead of reporting an error`)
   }
 })
+
+/* ------------------------------------------------ kotva proti vrácení souboru */
+
+const guardPath = (): string => path.join(dir, 'vault.guard')
+
+test('vault.guard vznikne vedle trezoru a drží poslední zápis', async () => {
+  fresh()
+  await vault.create(PASSWORD)
+
+  assert.ok(fs.existsSync(guardPath()), 'kotva musí vzniknout hned se založením')
+
+  const before = readVaultFile().counter
+  await vault.mutate((d) => d.connections.push(sampleConnection()))
+  const after = readVaultFile().counter
+
+  assert.ok(after! > before!, 'zápis musí posunout čítač')
+  // Kotva se drží čítače, ne času: bez keyringu je payload prostý text.
+  const anchor = JSON.parse(
+    Buffer.from(JSON.parse(fs.readFileSync(guardPath(), 'utf8')).payload, 'base64').toString('utf8')
+  )
+  assert.equal(anchor.counter, after, 'kotva musí odpovídat souboru po zápisu')
+})
+
+test('běžné odemčení nehlásí vrácení souboru', async () => {
+  fresh()
+  await vault.create(PASSWORD)
+  await vault.mutate((d) => d.connections.push(sampleConnection()))
+  vault.lock()
+
+  await vault.unlock(PASSWORD)
+  assert.deepEqual(vault.rollback, { kind: 'ok' })
+})
+
+/*
+ * The whole point of C6. An attacker who can only write files swaps yesterday's
+ * vault.enc back in; every signature inside it is valid, because it really was
+ * ours. Only the anchor outside the file notices.
+ */
+test('podstrčení starší kopie se pozná', async () => {
+  fresh()
+  await vault.create(PASSWORD)
+  const stale = fs.readFileSync(vaultPath())
+  const staleCounter = readVaultFile().counter!
+
+  for (let i = 0; i < 3; i++) {
+    await vault.mutate((d) => d.connections.push(sampleConnection()))
+  }
+  const freshCounter = readVaultFile().counter!
+  assert.ok(freshCounter > staleCounter)
+
+  vault.lock()
+  fs.writeFileSync(vaultPath(), stale)
+  await vault.unlock(PASSWORD)
+
+  assert.equal(vault.rollback.kind, 'rollback')
+  assert.deepEqual(
+    vault.rollback.kind === 'rollback'
+      ? { expected: vault.rollback.expected, found: vault.rollback.found }
+      : null,
+    { expected: freshCounter, found: staleCounter }
+  )
+})
+
+test('smazaná kotva nehlásí nic – nemá s čím porovnávat', async () => {
+  fresh()
+  await vault.create(PASSWORD)
+  const stale = fs.readFileSync(vaultPath())
+  await vault.mutate((d) => d.connections.push(sampleConnection()))
+
+  vault.lock()
+  fs.writeFileSync(vaultPath(), stale)
+  fs.rmSync(guardPath())
+
+  await vault.unlock(PASSWORD)
+  assert.deepEqual(vault.rollback, { kind: 'unknown' }, 'bez kotvy se nesmí hádat')
+})
+
+test('zamčení verdikt zahodí', async () => {
+  fresh()
+  await vault.create(PASSWORD)
+  const stale = fs.readFileSync(vaultPath())
+  await vault.mutate((d) => d.connections.push(sampleConnection()))
+  vault.lock()
+  fs.writeFileSync(vaultPath(), stale)
+  await vault.unlock(PASSWORD)
+  assert.equal(vault.rollback.kind, 'rollback')
+
+  vault.lock()
+  assert.deepEqual(vault.rollback, { kind: 'unknown' }, 'varování nesmí přežít zamčení')
+})
+
+/*
+ * The recovery path was the one route into the vault that skipped the anchor in
+ * the first draft -- and someone recovering into a planted older file is who
+ * most needs to be told.
+ */
+test('obnova obnovovacím klíčem taky pozná vrácení souboru', async () => {
+  fresh()
+  const recoveryKey = await vault.create(PASSWORD)
+  const stale = fs.readFileSync(vaultPath())
+
+  await vault.mutate((d) => d.connections.push(sampleConnection()))
+  vault.lock()
+  fs.writeFileSync(vaultPath(), stale)
+
+  await vault.unlockWithRecovery(recoveryKey, OTHER_PASSWORD)
+  assert.equal(vault.rollback.kind, 'rollback')
+})

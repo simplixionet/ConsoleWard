@@ -42,6 +42,13 @@ import type { Connection, KnownHost, Settings, Snippet } from '../shared/types'
 import { MIN_PASSWORD_LENGTH } from '../shared/passwordStrength'
 import { appError } from './i18n'
 import { DEFAULT_SETTINGS } from './settings'
+import {
+  readAnchorFile,
+  verdict as guardVerdict,
+  writeAnchorFile,
+  type GuardSealer,
+  type GuardVerdict
+} from './vaultGuard'
 
 const scryptAsync = promisify(scrypt) as (
   password: string | Buffer,
@@ -402,6 +409,23 @@ function assertHeaderShape(file: VaultFileV3): void {
 
 /* -------------------------------------------------------------- trezor */
 
+/**
+ * Pečetidlo, které nic neumí — stav stroje bez platformního trezoru hesel.
+ *
+ * `seal` a `open` vyhazují schválně: kdyby vracely vstup beze změny, kotva by
+ * se tvářila jako zapečetěná, aniž by byla. Nedostupnost se hlásí přes
+ * `available()`, ne mlčky.
+ */
+const NO_SEALER: GuardSealer = {
+  available: () => false,
+  seal: () => {
+    throw new Error('vault: no guard sealer installed')
+  },
+  open: () => {
+    throw new Error('vault: no guard sealer installed')
+  }
+}
+
 class Vault {
   private dek: Buffer | null = null
   private wraps: KeyWrap[] = []
@@ -415,12 +439,45 @@ class Vault {
   /** Konec fronty pokusů o odemčení; viz `awaitUnlockSlot`. */
   private unlocks: Promise<unknown> = Promise.resolve()
 
+  /**
+   * Pečetidlo kotvy. Instaluje ho `index.ts`, protože `safeStorage` se sem
+   * importovat nesmí: testovací soubory stubují z Electronu jen `app` a
+   * chybějící pojmenovaný export je shodí už při načtení, ne v jednom testu.
+   *
+   * Výchozí „žádné" je zároveň to, co běží na Linuxu bez keyringu — kotva se
+   * pak zapisuje jako prostý text a přizná to.
+   */
+  private sealer: GuardSealer = NO_SEALER
+
+  /** Verdikt z poslední kotvy. Platí až po odemčení; `lock()` ho ruší. */
+  private guard: GuardVerdict = { kind: 'unknown' }
+
   get filePath(): string {
     return path.join(app.getPath('userData'), 'vault.enc')
   }
 
   private get backupPath(): string {
     return this.filePath + '.bak'
+  }
+
+  /** Kotva je sourozenec trezoru, ne jeho přípona – kopie profilu vezme obojí. */
+  private get guardPath(): string {
+    return path.join(app.getPath('userData'), 'vault.guard')
+  }
+
+  installGuardSealer(sealer: GuardSealer): void {
+    this.sealer = sealer
+  }
+
+  /**
+   * Co kotva říká o souboru, který je právě otevřený.
+   *
+   * `unknown`, dokud se neodemklo — hlavička je sice čitelná i bez hesla, ale
+   * tvrdit něco o souboru, který se ani nepovedlo rozšifrovat, by znamenalo
+   * varovat u každého překlepu v hesle.
+   */
+  get rollback(): GuardVerdict {
+    return this.guard
   }
 
   exists(): boolean {
@@ -462,6 +519,13 @@ class Vault {
     this.dek = dek
     this.data = emptyData()
     this.counter = 0
+    /*
+     * Zakládá se nový trezor, takže kotva po tom předchozím na stejné cestě je
+     * bezpředmětná — porovnávat proti ní by hlásilo vrácení souboru pokaždé,
+     * když si někdo trezor smaže a založí znovu. `persist` níž ji stejně
+     * přepíše; tohle jen říká, že se o ní vědomě nesoudí.
+     */
+    this.guard = { kind: 'unknown' }
     this.wraps = [
       await makeWrap('password', masterPassword, dek),
       await makeWrap('recovery', normalizeRecoveryKey(recoveryKey), dek)
@@ -508,6 +572,14 @@ class Vault {
     }
     this.failedUnlocks = 0
     this.adopt(file, dek)
+    /*
+     * Před migrací níž, jinak si verdikt přepíše její vlastní zápis.
+     *
+     * Nula pro v2 není náhradní hodnota, ale správná odpověď: kotva vznikne až
+     * prvním v3 zápisem, takže v2 soubor vedle kotvy je sestup na starší
+     * formát — přesně to vrácení, které se hledá.
+     */
+    this.guard = await this.readAnchor(this.counter)
 
     // Migrace v2 → v3. Přepsat soubor jde až teď, kdy je DEK v ruce. DEK ani
     // wrapy se nemění: obnovovací wrap by šlo postavit znovu jen s obnovovacím
@@ -555,6 +627,13 @@ class Vault {
     }
 
     this.adopt(file, dek)
+    /*
+     * I obnova obnovovacím klíčem musí verdikt zjistit, a to PŘED `reseal`
+     * níž. Kdo se zotavuje do podstrčeného staršího souboru, je ten, kdo se to
+     * potřebuje dozvědět nejvíc — a bez tohohle by to byla jediná cesta do
+     * trezoru, která kotvu přeskočí.
+     */
+    this.guard = await this.readAnchor(this.counter)
     validatePassword(newPassword)
 
     // Obnova je ze své podstaty reakce na kompromitaci nebo ztrátu, takže
@@ -574,6 +653,9 @@ class Vault {
     this.data = null
     this.wraps = []
     this.counter = 0
+    // Verdikt patří k otevřenému souboru. Nechat ho tu by znamenalo, že po
+    // zamčení a odemčení jiného trezoru svítí varování o tom předchozím.
+    this.guard = { kind: 'unknown' }
   }
 
   /**
@@ -884,6 +966,9 @@ class Vault {
     this.dek = randomBytes(32)
     this.data = normalizeData(JSON.parse(plaintext) as Partial<VaultData>)
     this.counter = 0
+    // Stejně jako u v2: kotva vedle souboru ve formátu v1 znamená sestup, ne
+    // starožitnost. Před `persist` níž, protože ten kotvu přepíše.
+    this.guard = await this.readAnchor(0)
     this.wraps = [await makeWrap('password', masterPassword, this.dek)]
     // The v1 half of the guard the v2 branch of `unlock` already has. Without
     // it a v1 user on a read-only or full profile directory gets an error, the
@@ -1090,6 +1175,50 @@ class Vault {
     // Až po úspěšném přejmenování. Jinak by paměť tvrdila vyšší číslo, než jaké
     // je v souboru, a příští zápis by v řadě udělal díru.
     this.counter = counter
+    await this.recordAnchor(counter)
+  }
+
+  /**
+   * Posune kotvu na právě zapsané číslo.
+   *
+   * **Až po úspěšném `rename`, nikdy před ním.** Kotva napřed by po každém
+   * nečistém vypnutí tvrdila, že soubor je starší, než má být, a varování,
+   * které křičí na nevinné, se za týden odklikává poslepu.
+   *
+   * Selhání se polyká. Trezor je v tu chvíli **už zapsaný** — vyhodit chybu by
+   * volajícímu řeklo, že zápis neprošel, a ten by na to reagoval (vrátil změnu
+   * v paměti, ukázal chybu) kvůli něčemu, co se povedlo. Cena je, že na
+   * profilu, kam nejde psát, detekce tiše nefunguje; proto ta zpráva do logu,
+   * ať to jde aspoň zpětně poznat.
+   */
+  /**
+   * Přečte kotvu a porovná ji s číslem z hlavičky.
+   *
+   * Chybějící i nečitelná kotva dají `unknown`, tedy žádné varování. Rozdíl
+   * mezi nimi tu **nezakládá jiné chování** — je v logu a v tom, že parser
+   * nelže o tom, co na disku je.
+   *
+   * A nečitelná kotva se příštím zápisem přepíše. Zní to jako díra (poškoď
+   * kotvu a detekce se resetuje), ale kdo umí kotvu poškodit, umí ji hlavně
+   * smazat, takže odmítnutí zápisu nic nezachrání — jen by z jednoho poškození
+   * udělalo trvale vypnutou detekci, kterou už nic neopraví. Sebeuzdravení je
+   * z těch dvou možností ta lepší.
+   */
+  private async readAnchor(fileCounter: number): Promise<GuardVerdict> {
+    const read = await readAnchorFile(this.guardPath, this.sealer)
+    if (read.kind === 'ok') return guardVerdict(read.anchor, fileCounter)
+    if (read.kind === 'unreadable') {
+      console.warn('vault: rollback anchor is unreadable:', read.reason)
+    }
+    return { kind: 'unknown' }
+  }
+
+  private async recordAnchor(counter: number): Promise<void> {
+    try {
+      await writeAnchorFile(this.guardPath, counter, Date.now(), this.sealer)
+    } catch (err) {
+      console.warn('vault: could not update the rollback anchor:', (err as Error).message)
+    }
   }
 }
 
