@@ -12,11 +12,9 @@
   "common.loading": "Cargando…",
   "common.show": "Mostrar",
   "common.hide": "Ocultar",
-
   "app.settings": "Ajustes",
   "app.lock": "Bloquear",
   "app.lockTitle": "Bloquear la caja fuerte",
-
   "unlock.titleUnlock": "Desbloquear la caja fuerte",
   "unlock.titleCreate": "Crear la caja fuerte",
   "unlock.titleRecovery": "Recuperar el acceso",
@@ -35,7 +33,6 @@
   "unlock.backToPassword": "← Volver al acceso con contraseña",
   "unlock.noRecovery": "Esta caja fuerte no tiene clave de recuperación: una contraseña olvidada no se puede recuperar.",
   "unlock.mismatch": "Las contraseñas no coinciden.",
-
   "recovery.title": "Clave de recuperación",
   "recovery.introNew": "Tu caja fuerte está lista. Esta clave te devuelve el acceso a tus datos si olvidas la contraseña maestra.",
   "recovery.introRegenerated": "La nueva clave de recuperación está activa. La anterior acaba de dejar de funcionar.",
@@ -49,13 +46,11 @@
   "recovery.fileHeader": "ConsoleWard – clave de recuperación",
   "recovery.fileBody1": "Esta clave restablece una contraseña maestra olvidada y da acceso a todas las conexiones, contraseñas y claves guardadas.",
   "recovery.fileBody2": "Consérvala separada del archivo de la caja fuerte, por ejemplo en un gestor de contraseñas o en papel.",
-
   "sidebar.connections": "Conexiones",
   "sidebar.snippets": "Comandos",
   "sidebar.searchConnections": "Buscar conexiones…",
   "sidebar.searchSnippets": "Buscar comandos…",
   "sidebar.new": "+ Nuevo",
-
   "conn.newTitle": "Nueva conexión",
   "conn.editTitle": "Editar: {{name}}",
   "conn.newTooltip": "Nueva conexión",
@@ -98,7 +93,6 @@
   "conn.deleteTitle": "¿Eliminar la conexión?",
   "conn.deleteBody": "¿Eliminar de verdad {{name}} ({{user}}@{{host}})? La contraseña y la clave guardadas desaparecerán para siempre.",
   "conn.deleted": "La conexión «{{name}}» se ha eliminado.",
-
   "snip.newTitle": "Nuevo elemento",
   "snip.editTitle": "Editar: {{title}}",
   "snip.newTooltip": "Nuevo elemento",
@@ -133,7 +127,6 @@
   "snip.deleteTitle": "¿Eliminar el elemento?",
   "snip.deleteBody": "¿Eliminar de verdad {{title}}? El contenido desaparecerá para siempre.",
   "snip.deleted": "«{{title}}» se ha eliminado.",
-
   "term.noSession": "Ninguna sesión abierta",
   "term.noSessionHint": "Elige una conexión a la izquierda y haz clic en ella.",
   "term.closeSession": "Cerrar la sesión",
@@ -156,7 +149,6 @@
   "term.connCount_other": "{{count}} conexiones",
   "term.snipCount_one": "{{count}} comando",
   "term.snipCount_other": "{{count}} comandos",
-
   "hostkey.titleUnknown": "Servidor desconocido",
   "hostkey.titleChanged": "La clave del servidor ha CAMBIADO",
   "hostkey.bodyUnknown": "Te conectas a {{host}}:{{port}} por primera vez. Verifica la huella de la clave, por ejemplo con ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub en el propio servidor, y solo entonces acéptala.",
@@ -167,7 +159,6 @@
   "hostkey.reject": "Rechazar",
   "hostkey.accept": "Aceptar y guardar",
   "hostkey.acceptAnyway": "Aceptar igualmente y sobrescribir",
-
   "settings.title": "Ajustes",
   "settings.tabGeneral": "General",
   "settings.tabSecurity": "Seguridad",
@@ -190,6 +181,7 @@
   "settings.recoveryRemove": "Eliminar",
   "settings.recoveryRemoved": "La clave de recuperación se ha eliminado.",
   "settings.recoveryWarn": "Generar una clave nueva invalida la anterior de inmediato. Eliminarla te deja sin el único rescate para una contraseña olvidada.",
+  "settings.recoveryConfirmHint": "Introduce tu contraseña maestra. La caja fuerte se vuelve a cifrar con una clave nueva, que es lo que hace que la clave de recuperación anterior deje de funcionar de verdad.",
   "settings.changePassword": "Cambiar la contraseña maestra",
   "settings.changePasswordHint": "Vuelve a envolver la clave de la caja fuerte con una contraseña nueva. La anterior deja de funcionar de inmediato.",
   "settings.oldPassword": "Contraseña anterior",
@@ -201,7 +193,9 @@
   "settings.vaultFile": "Archivo de la caja fuerte:",
   "settings.hostsEmpty": "Aún no hay huellas de servidores guardadas.",
   "settings.forget": "Olvidar",
-
+  "link.confirmTitle": "¿Abrir este enlace?",
+  "link.confirmBody": "El enlace procede de la aplicación o de la salida del terminal. Comprueba la dirección completa antes de abrirlo.",
+  "link.open": "Abrir en el navegador",
   "settings.mcpIntro": "Expone tus sesiones a un cliente de IA como Claude Code mediante un servidor MCP local en 127.0.0.1. Las direcciones de los servidores, los nombres de usuario y las contraseñas no se envían nunca: la IA solo ve los nombres de las sesiones. Tú apruebas cada comando y cada lectura de la salida.",
   "settings.mcpWarnLead": "Lo que sale de tu equipo:",
   "settings.mcpWarn": "los comandos que propone la IA y la salida que tú liberas. Tu cliente de IA los envía a su proveedor. Las credenciales se quedan aquí, la salida no.",
@@ -220,7 +214,6 @@
   "settings.mcpRegenerated": "El token se ha regenerado: vuelve a configurarlo en tu cliente de IA.",
   "settings.mcpCommandCopied": "Comando copiado al portapapeles.",
   "settings.mcpTokenHint": "El token da acceso a tus sesiones: trátalo como una contraseña. Tras regenerarlo tienes que configurarlo de nuevo en el cliente de IA.",
-
   "mcp.approveTitle": "La IA propone un comando",
   "mcp.session": "Sesión",
   "mcp.aiReason": "Motivo indicado por la IA",
@@ -245,7 +238,6 @@
   "mcp.sendNothing": "No enviar nada",
   "mcp.sendSelected": "Enviar lo seleccionado",
   "mcp.sendAll": "Enviarlo todo",
-
   "secret.privateKey": "clave privada",
   "secret.privateKeyStart": "inicio de una clave privada",
   "secret.jwt": "token JWT",
@@ -260,7 +252,6 @@
   "secret.sshPublicKey": "clave pública SSH",
   "secret.randomString": "cadena aleatoria larga",
   "secret.ipAddress": "dirección IP",
-
   "error.vaultLocked": "La caja fuerte está bloqueada.",
   "error.vaultExists": "La caja fuerte ya existe.",
   "error.vaultMissing": "La caja fuerte aún no existe.",

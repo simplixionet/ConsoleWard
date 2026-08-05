@@ -12,11 +12,9 @@
   "common.loading": "Caricamento…",
   "common.show": "Mostra",
   "common.hide": "Nascondi",
-
   "app.settings": "Impostazioni",
   "app.lock": "Blocca",
   "app.lockTitle": "Blocca la cassaforte",
-
   "unlock.titleUnlock": "Sblocca la cassaforte",
   "unlock.titleCreate": "Crea la cassaforte",
   "unlock.titleRecovery": "Recupera l'accesso",
@@ -35,7 +33,6 @@
   "unlock.backToPassword": "← Torna all'accesso con password",
   "unlock.noRecovery": "Questa cassaforte non ha una chiave di recupero: una password dimenticata non può essere recuperata.",
   "unlock.mismatch": "Le password non coincidono.",
-
   "recovery.title": "Chiave di recupero",
   "recovery.introNew": "La cassaforte è pronta. Questa chiave ti riporta ai tuoi dati se dimentichi la password principale.",
   "recovery.introRegenerated": "La nuova chiave di recupero è attiva. Quella precedente ha appena smesso di funzionare.",
@@ -49,13 +46,11 @@
   "recovery.fileHeader": "ConsoleWard – chiave di recupero",
   "recovery.fileBody1": "Questa chiave reimposta una password principale dimenticata e dà accesso a ogni connessione, password e chiave salvata.",
   "recovery.fileBody2": "Tienila separata dal file della cassaforte, per esempio in un gestore di password o su carta.",
-
   "sidebar.connections": "Connessioni",
   "sidebar.snippets": "Comandi",
   "sidebar.searchConnections": "Cerca connessioni…",
   "sidebar.searchSnippets": "Cerca comandi…",
   "sidebar.new": "+ Nuovo",
-
   "conn.newTitle": "Nuova connessione",
   "conn.editTitle": "Modifica: {{name}}",
   "conn.newTooltip": "Nuova connessione",
@@ -98,7 +93,6 @@
   "conn.deleteTitle": "Eliminare la connessione?",
   "conn.deleteBody": "Vuoi davvero eliminare {{name}} ({{user}}@{{host}})? La password e la chiave salvate andranno perse per sempre.",
   "conn.deleted": "La connessione «{{name}}» è stata eliminata.",
-
   "snip.newTitle": "Nuovo elemento",
   "snip.editTitle": "Modifica: {{title}}",
   "snip.newTooltip": "Nuovo elemento",
@@ -133,7 +127,6 @@
   "snip.deleteTitle": "Eliminare l'elemento?",
   "snip.deleteBody": "Vuoi davvero eliminare {{title}}? Il contenuto andrà perso per sempre.",
   "snip.deleted": "«{{title}}» è stato eliminato.",
-
   "term.noSession": "Nessuna sessione aperta",
   "term.noSessionHint": "Scegli una connessione a sinistra e fai clic su di essa.",
   "term.closeSession": "Chiudi la sessione",
@@ -156,7 +149,6 @@
   "term.connCount_other": "{{count}} connessioni",
   "term.snipCount_one": "{{count}} comando",
   "term.snipCount_other": "{{count}} comandi",
-
   "hostkey.titleUnknown": "Server sconosciuto",
   "hostkey.titleChanged": "La chiave del server è CAMBIATA",
   "hostkey.bodyUnknown": "Ti stai connettendo a {{host}}:{{port}} per la prima volta. Verifica l'impronta della chiave — per esempio con ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub sul server stesso — e solo allora accettala.",
@@ -167,7 +159,6 @@
   "hostkey.reject": "Rifiuta",
   "hostkey.accept": "Accetta e salva",
   "hostkey.acceptAnyway": "Accetta comunque e sovrascrivi",
-
   "settings.title": "Impostazioni",
   "settings.tabGeneral": "Generale",
   "settings.tabSecurity": "Sicurezza",
@@ -190,6 +181,7 @@
   "settings.recoveryRemove": "Rimuovi",
   "settings.recoveryRemoved": "La chiave di recupero è stata rimossa.",
   "settings.recoveryWarn": "Generare una nuova chiave invalida subito quella precedente. Rimuoverla ti priva dell'unico salvagente per una password dimenticata.",
+  "settings.recoveryConfirmHint": "Inserisci la password principale. La cassaforte viene ricifrata con una nuova chiave, ed è questo a rendere davvero inefficace la vecchia chiave di recupero.",
   "settings.changePassword": "Cambia la password principale",
   "settings.changePasswordHint": "Riavvolge la chiave della cassaforte con una nuova password. La precedente smette di funzionare subito.",
   "settings.oldPassword": "Password precedente",
@@ -201,7 +193,9 @@
   "settings.vaultFile": "File della cassaforte:",
   "settings.hostsEmpty": "Ancora nessuna impronta di server salvata.",
   "settings.forget": "Dimentica",
-
+  "link.confirmTitle": "Aprire questo link?",
+  "link.confirmBody": "Il link proviene dall'applicazione o dall'output del terminale. Controlla l'indirizzo completo prima di aprirlo.",
+  "link.open": "Apri nel browser",
   "settings.mcpIntro": "Espone le tue sessioni a un client IA come Claude Code tramite un server MCP locale su 127.0.0.1. Gli indirizzi dei server, i nomi utente e le password non vengono mai inviati: l'IA vede solo i nomi delle sessioni. Sei tu ad approvare ogni comando e ogni lettura dell'output.",
   "settings.mcpWarnLead": "Cosa lascia il tuo computer:",
   "settings.mcpWarn": "i comandi proposti dall'IA e l'output che rilasci. Il tuo client IA li invia al proprio fornitore. Le credenziali restano qui, l'output no.",
@@ -220,7 +214,6 @@
   "settings.mcpRegenerated": "Il token è stato rigenerato: reimpostalo nel tuo client IA.",
   "settings.mcpCommandCopied": "Comando copiato negli appunti.",
   "settings.mcpTokenHint": "Il token dà accesso alle tue sessioni: trattalo come una password. Dopo la rigenerazione devi reimpostarlo nel client IA.",
-
   "mcp.approveTitle": "L'IA propone un comando",
   "mcp.session": "Sessione",
   "mcp.aiReason": "Motivo indicato dall'IA",
@@ -245,7 +238,6 @@
   "mcp.sendNothing": "Non inviare nulla",
   "mcp.sendSelected": "Invia la selezione",
   "mcp.sendAll": "Invia tutto",
-
   "secret.privateKey": "chiave privata",
   "secret.privateKeyStart": "inizio di una chiave privata",
   "secret.jwt": "token JWT",
@@ -260,7 +252,6 @@
   "secret.sshPublicKey": "chiave pubblica SSH",
   "secret.randomString": "lunga stringa casuale",
   "secret.ipAddress": "indirizzo IP",
-
   "error.vaultLocked": "La cassaforte è bloccata.",
   "error.vaultExists": "La cassaforte esiste già.",
   "error.vaultMissing": "La cassaforte non esiste ancora.",

@@ -62,10 +62,30 @@ export function tailLines(text: string, maxLines: number): string {
  * schovat skrytý řádek navíc.
  */
 export function visualizeControlChars(text: string): string {
-  return text
-    .replace(new RegExp(ESC, 'g'), '␛')
-    .replace(/\n/g, '␊\n')
-    .replace(/\r/g, '␍')
-    .replace(/\t/g, '→')
-    .replace(new RegExp('[\u0000-\u0008\u000B-\u001F\u007F]', 'g'), '␦')
+  return (
+    text
+      .replace(new RegExp(ESC, 'g'), '␛')
+      .replace(/\n/g, '␊\n')
+      .replace(/\r/g, '␍')
+      .replace(/\t/g, '→')
+      .replace(new RegExp('[\u0000-\u0008\u000B-\u001F\u007F]', 'g'), '␦')
+      // C1 controls. They arrive as single code points from UTF-8 sources and
+      // were passing through untouched, unlike their C0 equivalents above.
+      .replace(/[\u0080-\u009F]/g, '␦')
+      // Bidi controls: RTL/LTR overrides, embeddings, isolates and the pop
+      // markers. These do not print — they reorder. Left invisible, a command
+      // can render as one thing and execute as another, which is exactly what
+      // this dialog exists to prevent. `unicode-bidi: plaintext` on the box
+      // handles the rendering; marking them makes the tampering visible rather
+      // than merely neutralised.
+      .replace(/[\u202A-\u202E\u2066-\u2069\u200E\u200F\u061C]/g, '␤')
+      // Zero-width and invisible formatting: ZWSP, ZWNJ, ZWJ, word joiner,
+      // invisible operators, BOM/ZWNBSP and the Mongolian vowel separator.
+      // An invisible character in a command is only ever there to mislead a
+      // reader — the shell does not need it.
+      .replace(/[\u200B-\u200D\u2060-\u2064\uFEFF\u180E]/g, '␣')
+      // Unicode tag characters. Deprecated, invisible everywhere, and a known
+      // channel for smuggling text past human review.
+      .replace(/[\u{E0000}-\u{E007F}]/gu, '␦')
+  )
 }

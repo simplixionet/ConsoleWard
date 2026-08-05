@@ -34,6 +34,9 @@ export default function SettingsDialog({
   const [oldPw, setOldPw] = useState('')
   const [newPw, setNewPw] = useState('')
   const [newPw2, setNewPw2] = useState('')
+  // Which recovery-key operation is waiting for the master password, if any.
+  const [recoveryAction, setRecoveryAction] = useState<'regenerate' | 'remove' | null>(null)
+  const [recoveryPw, setRecoveryPw] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [mcpStatus, setMcpStatus] = useState<McpStatus | null>(null)
@@ -87,33 +90,41 @@ export default function SettingsDialog({
       return
     }
     try {
-      unwrap(await api.vault.changePassword(oldPw, newPw))
+      // Changing the password rotates the data key, so the old recovery key
+      // stops working and a new one comes back. Showing it is not optional —
+      // dropping it would silently leave the user with no way back into the
+      // vault if they forget the password they just set.
+      const freshRecoveryKey = unwrap(await api.vault.changePassword(oldPw, newPw))
       setOldPw('')
       setNewPw('')
       setNewPw2('')
-      setNotice(t('settings.passwordChanged'))
+      if (freshRecoveryKey) {
+        onRecoveryKeyGenerated(freshRecoveryKey)
+        onRecoveryChanged()
+      } else {
+        setNotice(t('settings.passwordChanged'))
+      }
     } catch (err) {
       setError(errorMessage(err))
     }
   }
 
-  async function regenerateRecovery(): Promise<void> {
+  async function confirmRecoveryAction(): Promise<void> {
+    if (!recoveryAction || !recoveryPw) return
     setError(null)
+    const action = recoveryAction
+    const password = recoveryPw
     try {
-      const key = unwrap(await api.vault.regenerateRecoveryKey())
-      onRecoveryKeyGenerated(key)
+      if (action === 'regenerate') {
+        const key = unwrap(await api.vault.regenerateRecoveryKey(password))
+        onRecoveryKeyGenerated(key)
+      } else {
+        unwrap(await api.vault.removeRecoveryKey(password))
+        setNotice(t('settings.recoveryRemoved'))
+      }
       onRecoveryChanged()
-    } catch (err) {
-      setError(errorMessage(err))
-    }
-  }
-
-  async function removeRecovery(): Promise<void> {
-    setError(null)
-    try {
-      unwrap(await api.vault.removeRecoveryKey())
-      onRecoveryChanged()
-      setNotice(t('settings.recoveryRemoved'))
+      setRecoveryAction(null)
+      setRecoveryPw('')
     } catch (err) {
       setError(errorMessage(err))
     }
@@ -280,19 +291,68 @@ export default function SettingsDialog({
                   {hasRecovery ? t('settings.recoverySet') : t('settings.recoveryNotSet')}
                 </span>
                 <div className="recovery-status-actions">
-                  <button className="btn small" onClick={regenerateRecovery}>
+                  <button className="btn small" onClick={() => setRecoveryAction('regenerate')}>
                     {hasRecovery
                       ? t('settings.recoveryRegenerate')
                       : t('settings.recoveryCreate')}
                   </button>
                   {hasRecovery && (
-                    <button className="btn small danger" onClick={removeRecovery}>
+                    <button
+                      className="btn small danger"
+                      onClick={() => setRecoveryAction('remove')}
+                    >
                       {t('settings.recoveryRemove')}
                     </button>
                   )}
                 </div>
               </div>
               {hasRecovery && <p className="hint">{t('settings.recoveryWarn')}</p>}
+
+              {/*
+                Both operations now demand the master password. It is not
+                ceremony: each one rotates the vault's data key, which cannot be
+                done without the password, and until that rotation existed an
+                unlocked session was enough to mint a key that opened the vault
+                forever — or to "remove" one that kept working from the backup.
+              */}
+              {recoveryAction && (
+                <div className="recovery-confirm">
+                  <p className="hint">{t('settings.recoveryConfirmHint')}</p>
+                  <label>
+                    {t('unlock.masterPassword')}
+                    <input
+                      type="password"
+                      autoFocus
+                      value={recoveryPw}
+                      onChange={(e) => setRecoveryPw(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') void confirmRecoveryAction()
+                      }}
+                    />
+                  </label>
+                  <div className="recovery-status-actions">
+                    <button
+                      className={`btn small ${recoveryAction === 'remove' ? 'danger' : ''}`}
+                      disabled={!recoveryPw}
+                      onClick={() => void confirmRecoveryAction()}
+                    >
+                      {recoveryAction === 'remove'
+                        ? t('settings.recoveryRemove')
+                        : t('settings.recoveryRegenerate')}
+                    </button>
+                    <button
+                      className="btn small"
+                      autoFocus={recoveryAction === 'remove'}
+                      onClick={() => {
+                        setRecoveryAction(null)
+                        setRecoveryPw('')
+                      }}
+                    >
+                      {t('common.cancel')}
+                    </button>
+                  </div>
+                </div>
+              )}
 
               <hr />
 

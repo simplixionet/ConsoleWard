@@ -12,11 +12,9 @@
   "common.loading": "Načítám…",
   "common.show": "Zobrazit",
   "common.hide": "Skrýt",
-
   "app.settings": "Nastavení",
   "app.lock": "Zamknout",
   "app.lockTitle": "Zamknout trezor",
-
   "unlock.titleUnlock": "Odemknout trezor",
   "unlock.titleCreate": "Vytvořit trezor",
   "unlock.titleRecovery": "Obnova přístupu",
@@ -35,7 +33,6 @@
   "unlock.backToPassword": "← Zpět na přihlášení heslem",
   "unlock.noRecovery": "Tento trezor nemá obnovovací klíč — zapomenuté heslo nelze obnovit.",
   "unlock.mismatch": "Hesla se neshodují.",
-
   "recovery.title": "Obnovovací klíč",
   "recovery.introNew": "Trezor je vytvořený. Tímto klíčem se dostaneš k datům, kdybys zapomněl hlavní heslo.",
   "recovery.introRegenerated": "Nový obnovovací klíč je aktivní. Předchozí právě přestal platit.",
@@ -49,13 +46,11 @@
   "recovery.fileHeader": "ConsoleWard – obnovovací klíč",
   "recovery.fileBody1": "Tímto klíčem lze resetovat zapomenuté hlavní heslo a získat přístup ke všem uloženým připojením, heslům a klíčům.",
   "recovery.fileBody2": "Ulož ho odděleně od souboru trezoru — třeba do správce hesel nebo na papír.",
-
   "sidebar.connections": "Připojení",
   "sidebar.snippets": "Příkazy",
   "sidebar.searchConnections": "Hledat připojení…",
   "sidebar.searchSnippets": "Hledat v příkazech…",
   "sidebar.new": "+ Nové",
-
   "conn.newTitle": "Nové připojení",
   "conn.editTitle": "Upravit: {{name}}",
   "conn.newTooltip": "Nové připojení",
@@ -98,7 +93,6 @@
   "conn.deleteTitle": "Smazat připojení?",
   "conn.deleteBody": "Opravdu smazat {{name}} ({{user}}@{{host}})? Uložené heslo i klíč budou nenávratně odstraněny.",
   "conn.deleted": "Připojení „{{name}}“ bylo smazáno.",
-
   "snip.newTitle": "Nová položka",
   "snip.editTitle": "Upravit: {{title}}",
   "snip.newTooltip": "Nová položka",
@@ -133,7 +127,6 @@
   "snip.deleteTitle": "Smazat položku?",
   "snip.deleteBody": "Opravdu smazat {{title}}? Obsah bude nenávratně odstraněn.",
   "snip.deleted": "„{{title}}“ byla smazána.",
-
   "term.noSession": "Žádná otevřená relace",
   "term.noSessionHint": "Vyber připojení vlevo a klikni na něj.",
   "term.closeSession": "Zavřít relaci",
@@ -158,7 +151,6 @@
   "term.snipCount_one": "{{count}} příkaz",
   "term.snipCount_few": "{{count}} příkazy",
   "term.snipCount_other": "{{count}} příkazů",
-
   "hostkey.titleUnknown": "Neznámý server",
   "hostkey.titleChanged": "Klíč serveru se ZMĚNIL",
   "hostkey.bodyUnknown": "K serveru {{host}}:{{port}} se připojuješ poprvé. Ověř otisk klíče — třeba příkazem ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub přímo na serveru — a teprve pak ho přijmi.",
@@ -169,7 +161,6 @@
   "hostkey.reject": "Odmítnout",
   "hostkey.accept": "Přijmout a uložit",
   "hostkey.acceptAnyway": "Přesto přijmout a přepsat",
-
   "settings.title": "Nastavení",
   "settings.tabGeneral": "Obecné",
   "settings.tabSecurity": "Zabezpečení",
@@ -192,6 +183,7 @@
   "settings.recoveryRemove": "Odstranit",
   "settings.recoveryRemoved": "Obnovovací klíč byl odstraněn.",
   "settings.recoveryWarn": "Vygenerováním nového klíče starý okamžitě přestane platit. Odstraněním ztratíš jedinou záchranu pro případ zapomenutého hesla.",
+  "settings.recoveryConfirmHint": "Zadej hlavní heslo. Trezor se přešifruje novým klíčem — teprve tím starý obnovovací klíč skutečně přestane platit.",
   "settings.changePassword": "Změna hlavního hesla",
   "settings.changePasswordHint": "Přebalí klíč trezoru novým heslem. Staré okamžitě přestane platit.",
   "settings.oldPassword": "Staré heslo",
@@ -203,7 +195,9 @@
   "settings.vaultFile": "Soubor trezoru:",
   "settings.hostsEmpty": "Zatím žádné uložené otisky serverů.",
   "settings.forget": "Zapomenout",
-
+  "link.confirmTitle": "Otevřít tento odkaz?",
+  "link.confirmBody": "Odkaz pochází z aplikace nebo z výstupu terminálu. Než ho otevřeš, zkontroluj celou adresu.",
+  "link.open": "Otevřít v prohlížeči",
   "settings.mcpIntro": "Zpřístupní tvoje relace AI klientovi, například Claude Code, přes lokální MCP server na 127.0.0.1. Adresy serverů, uživatelská jména ani hesla se nikdy neposílají — AI vidí jen názvy relací. Každý příkaz i každé čtení výstupu schvaluješ.",
   "settings.mcpWarnLead": "Co odejde na internet:",
   "settings.mcpWarn": "příkazy, které AI navrhne, a výstup, který pustíš. Tvůj AI klient je posílá svému poskytovateli. Přihlašovací údaje zůstávají tady, výstup ne.",
@@ -222,7 +216,6 @@
   "settings.mcpRegenerated": "Token byl přegenerován — přenastav ho v AI klientovi.",
   "settings.mcpCommandCopied": "Příkaz zkopírován do schránky.",
   "settings.mcpTokenHint": "Token je přístup k tvým relacím — zacházej s ním jako s heslem. Po přegenerování je potřeba ho v AI klientovi nastavit znovu.",
-
   "mcp.approveTitle": "AI navrhuje příkaz",
   "mcp.session": "Relace",
   "mcp.aiReason": "Důvod podle AI",
@@ -247,7 +240,6 @@
   "mcp.sendNothing": "Neposílat nic",
   "mcp.sendSelected": "Poslat označené",
   "mcp.sendAll": "Poslat celý text",
-
   "secret.privateKey": "privátní klíč",
   "secret.privateKeyStart": "začátek privátního klíče",
   "secret.jwt": "JWT token",
@@ -262,7 +254,6 @@
   "secret.sshPublicKey": "veřejný SSH klíč",
   "secret.randomString": "dlouhý náhodný řetězec",
   "secret.ipAddress": "IP adresa",
-
   "error.vaultLocked": "Trezor je zamčený.",
   "error.vaultExists": "Trezor už existuje.",
   "error.vaultMissing": "Trezor zatím neexistuje.",

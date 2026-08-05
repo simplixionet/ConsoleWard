@@ -12,11 +12,9 @@
   "common.loading": "Laden…",
   "common.show": "Tonen",
   "common.hide": "Verbergen",
-
   "app.settings": "Instellingen",
   "app.lock": "Vergrendelen",
   "app.lockTitle": "De kluis vergrendelen",
-
   "unlock.titleUnlock": "Kluis ontgrendelen",
   "unlock.titleCreate": "Kluis aanmaken",
   "unlock.titleRecovery": "Toegang herstellen",
@@ -35,7 +33,6 @@
   "unlock.backToPassword": "← Terug naar aanmelden met wachtwoord",
   "unlock.noRecovery": "Deze kluis heeft geen herstelsleutel — een vergeten wachtwoord kan niet worden hersteld.",
   "unlock.mismatch": "De wachtwoorden komen niet overeen.",
-
   "recovery.title": "Herstelsleutel",
   "recovery.introNew": "Je kluis is klaar. Met deze sleutel kom je weer bij je gegevens als je het hoofdwachtwoord vergeet.",
   "recovery.introRegenerated": "De nieuwe herstelsleutel is actief. De vorige werkt vanaf nu niet meer.",
@@ -49,13 +46,11 @@
   "recovery.fileHeader": "ConsoleWard – herstelsleutel",
   "recovery.fileBody1": "Deze sleutel stelt een vergeten hoofdwachtwoord opnieuw in en geeft toegang tot elke opgeslagen verbinding, elk wachtwoord en elke sleutel.",
   "recovery.fileBody2": "Bewaar hem gescheiden van het kluisbestand — bijvoorbeeld in een wachtwoordmanager of op papier.",
-
   "sidebar.connections": "Verbindingen",
   "sidebar.snippets": "Commando's",
   "sidebar.searchConnections": "Verbindingen zoeken…",
   "sidebar.searchSnippets": "Commando's zoeken…",
   "sidebar.new": "+ Nieuw",
-
   "conn.newTitle": "Nieuwe verbinding",
   "conn.editTitle": "Bewerken: {{name}}",
   "conn.newTooltip": "Nieuwe verbinding",
@@ -98,7 +93,6 @@
   "conn.deleteTitle": "Verbinding verwijderen?",
   "conn.deleteBody": "{{name}} ({{user}}@{{host}}) echt verwijderen? Het opgeslagen wachtwoord en de sleutel zijn dan definitief weg.",
   "conn.deleted": "Verbinding ‘{{name}}’ is verwijderd.",
-
   "snip.newTitle": "Nieuw item",
   "snip.editTitle": "Bewerken: {{title}}",
   "snip.newTooltip": "Nieuw item",
@@ -133,7 +127,6 @@
   "snip.deleteTitle": "Item verwijderen?",
   "snip.deleteBody": "{{title}} echt verwijderen? De inhoud is dan definitief weg.",
   "snip.deleted": "‘{{title}}’ is verwijderd.",
-
   "term.noSession": "Geen open sessie",
   "term.noSessionHint": "Kies links een verbinding en klik erop.",
   "term.closeSession": "Sessie sluiten",
@@ -156,7 +149,6 @@
   "term.connCount_other": "{{count}} verbindingen",
   "term.snipCount_one": "{{count}} commando",
   "term.snipCount_other": "{{count}} commando's",
-
   "hostkey.titleUnknown": "Onbekende server",
   "hostkey.titleChanged": "De serversleutel is VERANDERD",
   "hostkey.bodyUnknown": "Je verbindt voor het eerst met {{host}}:{{port}}. Controleer de vingerafdruk van de sleutel — bijvoorbeeld met ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub op de server zelf — en accepteer hem pas daarna.",
@@ -167,7 +159,6 @@
   "hostkey.reject": "Weigeren",
   "hostkey.accept": "Accepteren en opslaan",
   "hostkey.acceptAnyway": "Toch accepteren en overschrijven",
-
   "settings.title": "Instellingen",
   "settings.tabGeneral": "Algemeen",
   "settings.tabSecurity": "Beveiliging",
@@ -190,6 +181,7 @@
   "settings.recoveryRemove": "Verwijderen",
   "settings.recoveryRemoved": "De herstelsleutel is verwijderd.",
   "settings.recoveryWarn": "Een nieuwe sleutel maakt de oude meteen ongeldig. Verwijder je hem, dan verlies je de enige redding bij een vergeten wachtwoord.",
+  "settings.recoveryConfirmHint": "Voer je hoofdwachtwoord in. De kluis wordt opnieuw versleuteld met een nieuwe sleutel, en dat is wat de oude herstelsleutel echt ongeldig maakt.",
   "settings.changePassword": "Hoofdwachtwoord wijzigen",
   "settings.changePasswordHint": "Verpakt de kluissleutel opnieuw met een nieuw wachtwoord. Het oude werkt meteen niet meer.",
   "settings.oldPassword": "Oud wachtwoord",
@@ -201,7 +193,9 @@
   "settings.vaultFile": "Kluisbestand:",
   "settings.hostsEmpty": "Nog geen opgeslagen servervingerafdrukken.",
   "settings.forget": "Vergeten",
-
+  "link.confirmTitle": "Deze link openen?",
+  "link.confirmBody": "De link komt uit de applicatie of uit terminaluitvoer. Controleer het volledige adres voordat je hem opent.",
+  "link.open": "Openen in browser",
   "settings.mcpIntro": "Stelt je sessies beschikbaar aan een AI-client zoals Claude Code via een lokale MCP-server op 127.0.0.1. Serveradressen, gebruikersnamen en wachtwoorden worden nooit verstuurd — de AI ziet alleen sessienamen. Jij keurt elk commando en elke uitlezing van de uitvoer goed.",
   "settings.mcpWarnLead": "Wat je computer verlaat:",
   "settings.mcpWarn": "de commando's die de AI voorstelt en de uitvoer die jij vrijgeeft. Je AI-client stuurt die naar zijn aanbieder. Inloggegevens blijven hier, de uitvoer niet.",
@@ -220,7 +214,6 @@
   "settings.mcpRegenerated": "Het token is opnieuw gegenereerd — stel het opnieuw in je AI-client in.",
   "settings.mcpCommandCopied": "Commando naar het klembord gekopieerd.",
   "settings.mcpTokenHint": "Het token geeft toegang tot je sessies — behandel het als een wachtwoord. Na het opnieuw genereren moet je het weer in de AI-client instellen.",
-
   "mcp.approveTitle": "De AI stelt een commando voor",
   "mcp.session": "Sessie",
   "mcp.aiReason": "Reden volgens de AI",
@@ -245,7 +238,6 @@
   "mcp.sendNothing": "Niets versturen",
   "mcp.sendSelected": "Selectie versturen",
   "mcp.sendAll": "Alles versturen",
-
   "secret.privateKey": "privésleutel",
   "secret.privateKeyStart": "begin van een privésleutel",
   "secret.jwt": "JWT-token",
@@ -260,7 +252,6 @@
   "secret.sshPublicKey": "openbare SSH-sleutel",
   "secret.randomString": "lange willekeurige tekenreeks",
   "secret.ipAddress": "IP-adres",
-
   "error.vaultLocked": "De kluis is vergrendeld.",
   "error.vaultExists": "De kluis bestaat al.",
   "error.vaultMissing": "De kluis bestaat nog niet.",

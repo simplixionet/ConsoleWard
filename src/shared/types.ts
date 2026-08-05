@@ -202,12 +202,27 @@ export interface AppApi {
     /** Vrací vygenerovaný obnovovací klíč – zobraz ho uživateli, uložený nikde není. */
     create(masterPassword: string): Promise<Result<string>>
     unlock(masterPassword: string): Promise<Result<null>>
-    /** Odemkne obnovovacím klíčem a zároveň nastaví nové hlavní heslo. */
-    unlockWithRecovery(recoveryKey: string, newPassword: string): Promise<Result<null>>
+    /**
+     * Odemkne obnovovacím klíčem a zároveň nastaví nové hlavní heslo.
+     *
+     * Rotuje datový klíč, takže **použitý obnovovací klíč přestane platit**.
+     * Vrací nový — zobraz ho uživateli, uložený nikde není.
+     */
+    unlockWithRecovery(recoveryKey: string, newPassword: string): Promise<Result<string>>
     lock(): Promise<Result<null>>
-    changePassword(oldPw: string, newPw: string): Promise<Result<null>>
-    regenerateRecoveryKey(): Promise<Result<string>>
-    removeRecoveryKey(): Promise<Result<null>>
+    /**
+     * Změní hlavní heslo a rotuje datový klíč.
+     *
+     * Vrací nový obnovovací klíč, pokud trezor nějaký měl, jinak `null`. Starý
+     * pod novým datovým klíčem postavit nejde — neukládá se nikde. **Zobraz
+     * návratovou hodnotu uživateli**; zahodit ji znamená připravit ho o jedinou
+     * záchranu pro zapomenuté heslo, aniž by se to dozvěděl.
+     */
+    changePassword(oldPw: string, newPw: string): Promise<Result<string | null>>
+    /** Heslo je povinné — operace vydává klíč, který trezor otevírá navždy. */
+    regenerateRecoveryKey(password: string): Promise<Result<string>>
+    /** Heslo je povinné. Rotuje datový klíč, takže odvolání skutečně platí. */
+    removeRecoveryKey(password: string): Promise<Result<null>>
     onLocked(cb: () => void): () => void
   }
   connections: {

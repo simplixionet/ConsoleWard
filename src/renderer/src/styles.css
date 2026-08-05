@@ -349,6 +349,12 @@ input.mono {
   line-height: 1.55;
   color: var(--text);
   user-select: text;
+  /* The reason is attacker-supplied text. Unbounded, it could grow until it
+     pushed the command itself below the fold while the Run button stayed
+     pinned in the footer — the reader approves what they cannot see. Capped
+     and scrolled, so it can never displace the thing being approved. */
+  max-height: 140px;
+  overflow-y: auto;
 }
 .command-box {
   margin: 0;
@@ -365,6 +371,13 @@ input.mono {
   max-height: 220px;
   overflow-y: auto;
   user-select: text;
+  /* Bidi isolation. Without it a right-to-left override in the command can
+     reorder what is rendered so the displayed text differs from the bytes that
+     execute — Trojan Source, aimed at the one dialog whose entire job is
+     showing the truth. `plaintext` makes the box render in logical order and
+     `isolate` stops any embedded direction leaking into surrounding chrome. */
+  unicode-bidi: plaintext;
+  direction: ltr;
 }
 .danger-box {
   background: rgba(255, 107, 107, 0.09);

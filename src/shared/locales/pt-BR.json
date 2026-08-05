@@ -12,11 +12,9 @@
   "common.loading": "Carregando…",
   "common.show": "Mostrar",
   "common.hide": "Ocultar",
-
   "app.settings": "Configurações",
   "app.lock": "Bloquear",
   "app.lockTitle": "Bloquear o cofre",
-
   "unlock.titleUnlock": "Desbloquear o cofre",
   "unlock.titleCreate": "Criar o cofre",
   "unlock.titleRecovery": "Recuperar o acesso",
@@ -35,7 +33,6 @@
   "unlock.backToPassword": "← Voltar ao acesso por senha",
   "unlock.noRecovery": "Este cofre não tem chave de recuperação — uma senha esquecida não pode ser recuperada.",
   "unlock.mismatch": "As senhas não coincidem.",
-
   "recovery.title": "Chave de recuperação",
   "recovery.introNew": "Seu cofre está pronto. Esta chave devolve o acesso aos seus dados se você esquecer a senha mestra.",
   "recovery.introRegenerated": "A nova chave de recuperação está ativa. A anterior acabou de deixar de funcionar.",
@@ -49,13 +46,11 @@
   "recovery.fileHeader": "ConsoleWard – chave de recuperação",
   "recovery.fileBody1": "Esta chave redefine uma senha mestra esquecida e dá acesso a todas as conexões, senhas e chaves salvas.",
   "recovery.fileBody2": "Guarde-a separada do arquivo do cofre — por exemplo em um gerenciador de senhas ou no papel.",
-
   "sidebar.connections": "Conexões",
   "sidebar.snippets": "Comandos",
   "sidebar.searchConnections": "Buscar conexões…",
   "sidebar.searchSnippets": "Buscar comandos…",
   "sidebar.new": "+ Novo",
-
   "conn.newTitle": "Nova conexão",
   "conn.editTitle": "Editar: {{name}}",
   "conn.newTooltip": "Nova conexão",
@@ -98,7 +93,6 @@
   "conn.deleteTitle": "Excluir a conexão?",
   "conn.deleteBody": "Excluir mesmo {{name}} ({{user}}@{{host}})? A senha e a chave salvas serão perdidas para sempre.",
   "conn.deleted": "A conexão “{{name}}” foi excluída.",
-
   "snip.newTitle": "Novo item",
   "snip.editTitle": "Editar: {{title}}",
   "snip.newTooltip": "Novo item",
@@ -133,7 +127,6 @@
   "snip.deleteTitle": "Excluir o item?",
   "snip.deleteBody": "Excluir mesmo {{title}}? O conteúdo será perdido para sempre.",
   "snip.deleted": "“{{title}}” foi excluído.",
-
   "term.noSession": "Nenhuma sessão aberta",
   "term.noSessionHint": "Escolha uma conexão à esquerda e clique nela.",
   "term.closeSession": "Fechar a sessão",
@@ -156,7 +149,6 @@
   "term.connCount_other": "{{count}} conexões",
   "term.snipCount_one": "{{count}} comando",
   "term.snipCount_other": "{{count}} comandos",
-
   "hostkey.titleUnknown": "Servidor desconhecido",
   "hostkey.titleChanged": "A chave do servidor MUDOU",
   "hostkey.bodyUnknown": "Você está se conectando a {{host}}:{{port}} pela primeira vez. Verifique a impressão digital da chave — por exemplo com ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub no próprio servidor — e só então aceite.",
@@ -167,7 +159,6 @@
   "hostkey.reject": "Recusar",
   "hostkey.accept": "Aceitar e salvar",
   "hostkey.acceptAnyway": "Aceitar mesmo assim e sobrescrever",
-
   "settings.title": "Configurações",
   "settings.tabGeneral": "Geral",
   "settings.tabSecurity": "Segurança",
@@ -190,6 +181,7 @@
   "settings.recoveryRemove": "Remover",
   "settings.recoveryRemoved": "A chave de recuperação foi removida.",
   "settings.recoveryWarn": "Gerar uma nova chave invalida a anterior imediatamente. Removê-la tira de você o único resgate para uma senha esquecida.",
+  "settings.recoveryConfirmHint": "Digite sua senha mestra. O cofre é criptografado novamente com uma nova chave, e é isso que faz a chave de recuperação antiga realmente parar de funcionar.",
   "settings.changePassword": "Alterar a senha mestra",
   "settings.changePasswordHint": "Reembala a chave do cofre com uma senha nova. A anterior deixa de funcionar imediatamente.",
   "settings.oldPassword": "Senha anterior",
@@ -201,7 +193,9 @@
   "settings.vaultFile": "Arquivo do cofre:",
   "settings.hostsEmpty": "Ainda não há impressões digitais de servidores salvas.",
   "settings.forget": "Esquecer",
-
+  "link.confirmTitle": "Abrir este link?",
+  "link.confirmBody": "O link veio do aplicativo ou da saída do terminal. Confira o endereço completo antes de abri-lo.",
+  "link.open": "Abrir no navegador",
   "settings.mcpIntro": "Expõe suas sessões a um cliente de IA como o Claude Code por meio de um servidor MCP local em 127.0.0.1. Endereços de servidores, nomes de usuário e senhas nunca são enviados — a IA vê apenas os nomes das sessões. Você aprova cada comando e cada leitura da saída.",
   "settings.mcpWarnLead": "O que sai da sua máquina:",
   "settings.mcpWarn": "os comandos que a IA propõe e a saída que você libera. Seu cliente de IA os envia ao provedor dele. As credenciais ficam aqui, a saída não.",
@@ -220,7 +214,6 @@
   "settings.mcpRegenerated": "O token foi gerado de novo — configure-o novamente no seu cliente de IA.",
   "settings.mcpCommandCopied": "Comando copiado para a área de transferência.",
   "settings.mcpTokenHint": "O token dá acesso às suas sessões — trate-o como uma senha. Depois de gerá-lo de novo você precisa configurá-lo outra vez no cliente de IA.",
-
   "mcp.approveTitle": "A IA propõe um comando",
   "mcp.session": "Sessão",
   "mcp.aiReason": "Motivo informado pela IA",
@@ -245,7 +238,6 @@
   "mcp.sendNothing": "Não enviar nada",
   "mcp.sendSelected": "Enviar a seleção",
   "mcp.sendAll": "Enviar tudo",
-
   "secret.privateKey": "chave privada",
   "secret.privateKeyStart": "início de uma chave privada",
   "secret.jwt": "token JWT",
@@ -260,7 +252,6 @@
   "secret.sshPublicKey": "chave pública SSH",
   "secret.randomString": "cadeia aleatória longa",
   "secret.ipAddress": "endereço IP",
-
   "error.vaultLocked": "O cofre está bloqueado.",
   "error.vaultExists": "O cofre já existe.",
   "error.vaultMissing": "O cofre ainda não existe.",

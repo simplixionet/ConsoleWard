@@ -294,7 +294,7 @@ class Vault {
    * Odemkne obnovovacím klíčem a rovnou nastaví nové hlavní heslo.
    * Bez nastavení nového hesla by trezor zůstal přístupný jen přes obnovu.
    */
-  async unlockWithRecovery(recoveryKey: string, newPassword: string): Promise<void> {
+  async unlockWithRecovery(recoveryKey: string, newPassword: string): Promise<string> {
     const normalized = normalizeRecoveryKey(recoveryKey)
     validatePassword(newPassword)
 
@@ -314,10 +314,17 @@ class Vault {
     }
 
     this.adopt(file, dek)
-    // Nahradí staré (zapomenuté) heslo novým – DEK zůstává, obsah se nepřešifrovává.
-    this.wraps = this.wraps.filter((w) => w.type !== 'password')
-    this.wraps.unshift(await makeWrap('password', newPassword, this.dek!))
-    await this.persist()
+    validatePassword(newPassword)
+
+    // Obnova je ze své podstaty reakce na kompromitaci nebo ztrátu, takže
+    // rotuje DEK. Použitý obnovovací klíč tím přestane platit — kdo by ho měl,
+    // po tomhle už dovnitř nevidí — a uživatel dostane nový.
+    const freshRecoveryKey = generateRecoveryKey()
+    await this.reseal([
+      { type: 'password', secret: newPassword },
+      { type: 'recovery', secret: normalizeRecoveryKey(freshRecoveryKey) }
+    ])
+    return freshRecoveryKey
   }
 
   lock(): void {
@@ -327,7 +334,20 @@ class Vault {
     this.wraps = []
   }
 
-  async changePassword(oldPw: string, newPw: string): Promise<void> {
+  /**
+   * Změní hlavní heslo a **rotuje datový klíč**.
+   *
+   * Vrací nový obnovovací klíč, pokud trezor nějaký měl. To je nevyhnutelný
+   * důsledek rotace: starý obnovovací wrap by se musel postavit pod novým DEK,
+   * a k tomu je potřeba obnovovací klíč v plaintextu — ten se ale nikde
+   * neukládá, což je celý smysl jeho návrhu. Buď tedy rotace, nebo tichá
+   * nemožnost odvolání; volba padla na rotaci.
+   *
+   * Volající **musí** vrácený klíč uživateli zobrazit. Zahození návratové
+   * hodnoty znamená, že uživatel přijde o jedinou záchranu pro zapomenuté
+   * heslo, aniž by se to dozvěděl.
+   */
+  async changePassword(oldPw: string, newPw: string): Promise<string | null> {
     this.requireUnlocked()
     const wrap = this.wraps.find((w) => w.type === 'password')
     if (!wrap) throw appError('error.noPasswordSet')
@@ -340,9 +360,19 @@ class Vault {
     }
 
     validatePassword(newPw)
-    this.wraps = this.wraps.filter((w) => w.type !== 'password')
-    this.wraps.unshift(await makeWrap('password', newPw, this.dek!))
-    await this.persist()
+
+    const hadRecovery = this.wraps.some((w) => w.type === 'recovery')
+    const recoveryKey = hadRecovery ? generateRecoveryKey() : null
+
+    const secrets: Array<{ type: KeyWrap['type']; secret: string }> = [
+      { type: 'password', secret: newPw }
+    ]
+    if (recoveryKey) {
+      secrets.push({ type: 'recovery', secret: normalizeRecoveryKey(recoveryKey) })
+    }
+
+    await this.reseal(secrets)
+    return recoveryKey
   }
 
   /**
@@ -359,23 +389,50 @@ class Vault {
    * platit. Nebyla to pravda a nikdo si toho nevšiml, protože komentář zněl
    * jako záruka. Skutečná revokace vyžaduje rotaci DEK a přešifrování obsahu.
    */
-  async regenerateRecoveryKey(): Promise<string> {
+  async regenerateRecoveryKey(password: string): Promise<string> {
     this.requireUnlocked()
+    const wrap = this.wraps.find((w) => w.type === 'password')
+    if (!wrap) throw appError('error.noPasswordSet')
+
+    // Heslo je tu povinné ze dvou důvodů. Jednak ho rotace DEK potřebuje, aby
+    // šel postavit nový wrap. Jednak bez něj stačily dvě minuty u odemčené
+    // relace na vygenerování 150bitového klíče, který trezor otevírá navždy a
+    // jde zkopírovat do schránky nebo do souboru — `changePassword` staré heslo
+    // vyžadoval, tahle operace ne, a přitom je stejně mocná.
+    try {
+      const check = await openWrap(wrap, password)
+      check.fill(0)
+    } catch {
+      throw appError('error.wrongPassword')
+    }
+
     const recoveryKey = generateRecoveryKey()
-    this.wraps = this.wraps.filter((w) => w.type !== 'recovery')
-    this.wraps.push(await makeWrap('recovery', normalizeRecoveryKey(recoveryKey), this.dek!))
-    await this.persist()
+    await this.reseal([
+      { type: 'password', secret: password },
+      { type: 'recovery', secret: normalizeRecoveryKey(recoveryKey) }
+    ])
     return recoveryKey
   }
 
-  /** Zruší možnost obnovy. Pak už zapomenuté heslo znamená ztrátu dat. */
-  async removeRecoveryKey(): Promise<void> {
+  /**
+   * Zruší možnost obnovy. Pak už zapomenuté heslo znamená ztrátu dat.
+   *
+   * Rotuje DEK, takže odvolaný klíč skutečně přestane platit — dřív zůstal
+   * použitelný přes `.bak` navždy.
+   */
+  async removeRecoveryKey(password: string): Promise<void> {
     this.requireUnlocked()
-    if (!this.wraps.some((w) => w.type === 'password')) {
-      throw appError('error.lastUnlockMethod')
+    const wrap = this.wraps.find((w) => w.type === 'password')
+    if (!wrap) throw appError('error.lastUnlockMethod')
+
+    try {
+      const check = await openWrap(wrap, password)
+      check.fill(0)
+    } catch {
+      throw appError('error.wrongPassword')
     }
-    this.wraps = this.wraps.filter((w) => w.type !== 'recovery')
-    await this.persist()
+
+    await this.reseal([{ type: 'password', secret: password }])
   }
 
   read(): VaultData {
@@ -455,6 +512,91 @@ class Vault {
 
   private requireUnlocked(): void {
     if (!this.isUnlocked()) throw appError('error.vaultLocked')
+  }
+
+  /**
+   * Totéž jako `requireUnlocked`, ale volatelné zvenčí.
+   *
+   * Existuje pro IPC handlery SSH. Zámek musí platit i pro ně — jinak zamčená
+   * aplikace pořád píše do vzdáleného shellu, protože relace žijí v hlavním
+   * procesu nezávisle na tom, co si o nich myslí renderer.
+   */
+  requireUnlockedPublic(): void {
+    this.requireUnlocked()
+  }
+
+  /**
+   * Přepečetí trezor pod **novým** datovým klíčem.
+   *
+   * Tohle je jádro skutečné revokace. Dřív každá „revokační" operace jen
+   * vyměnila wrap a nechala DEK být — jenže `persist()` před každým zápisem
+   * kopíruje trezor do `.bak`, takže vedle souboru zůstal wrap otevřený starým
+   * tajemstvím, který vydal tentýž DEK, kterým šlo dešifrovat i všechny
+   * *budoucí* verze. Odvolání kl��če tedy neodvolalo nic.
+   *
+   * Teď se vygeneruje nový DEK, všechny wrapy se postaví pod ním, `persist()`
+   * obsah přešifruje a záloha se přepíše náhodnými daty a smaže. Starý wrap ani
+   * starý DEK nikde nezůstanou.
+   *
+   * Dva invarianty, na kterých to stojí:
+   *
+   * 1. **Nic se nepřiřadí do instance, dokud nejsou hotové všechny wrapy.**
+   *    Dřív se seznam nejdřív profiltroval a teprve pak se čekalo na
+   *    `makeWrap()`; když scrypt selhal, zůstal trezor bez hesla a další
+   *    nesouvisející zápis to potvrdil na disk. Hlavní heslo bylo mrtvé při
+   *    příštím spuštění.
+   * 2. **Při selhání `persist()` se stav vrátí zpět.** Jinak by DEK v paměti
+   *    přestal odpovídat souboru na disku.
+   */
+  private async reseal(secrets: Array<{ type: KeyWrap['type']; secret: string }>): Promise<void> {
+    if (!secrets.some((s) => s.type === 'password')) {
+      throw appError('error.noUnlockMethod')
+    }
+
+    const newDek = randomBytes(32)
+    let built: KeyWrap[]
+    try {
+      built = []
+      for (const s of secrets) built.push(await makeWrap(s.type, s.secret, newDek))
+    } catch (err) {
+      newDek.fill(0)
+      throw err
+    }
+
+    const prevDek = this.dek
+    const prevWraps = this.wraps
+    this.dek = newDek
+    this.wraps = built
+
+    try {
+      await this.persist()
+    } catch (err) {
+      this.dek = prevDek
+      this.wraps = prevWraps
+      newDek.fill(0)
+      throw err
+    }
+
+    prevDek?.fill(0)
+    await this.destroyBackup()
+  }
+
+  /**
+   * Přepíše zálohu náhodnými daty a smaže ji.
+   *
+   * Samotné `unlink` nestačí: obsah zůstane na disku, dokud ho něco nepřepíše,
+   * a `.bak` po rotaci drží starý wrap i starý obsah. Přepis nedává záruku na
+   * SSD s wear levellingem ani na copy-on-write souborovém systému — je to
+   * zlepšení, ne důkaz — ale je výrazně lepší než ponechat soubor ležet.
+   */
+  private async destroyBackup(): Promise<void> {
+    try {
+      const stat = await fsp.stat(this.backupPath)
+      await fsp.writeFile(this.backupPath, randomBytes(stat.size))
+      await fsp.rm(this.backupPath, { force: true })
+    } catch {
+      // Záloha neexistuje, nebo ji drží něco jiného. Rotace tím neselhává.
+    }
   }
 
   private async persist(): Promise<void> {

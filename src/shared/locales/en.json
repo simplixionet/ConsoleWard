@@ -12,11 +12,9 @@
   "common.loading": "Loading…",
   "common.show": "Show",
   "common.hide": "Hide",
-
   "app.settings": "Settings",
   "app.lock": "Lock",
   "app.lockTitle": "Lock the vault",
-
   "unlock.titleUnlock": "Unlock vault",
   "unlock.titleCreate": "Create vault",
   "unlock.titleRecovery": "Recover access",
@@ -35,7 +33,6 @@
   "unlock.backToPassword": "← Back to password sign-in",
   "unlock.noRecovery": "This vault has no recovery key — a forgotten password cannot be recovered.",
   "unlock.mismatch": "The passwords do not match.",
-
   "recovery.title": "Recovery key",
   "recovery.introNew": "Your vault is ready. This key gets you back to your data if you ever forget the master password.",
   "recovery.introRegenerated": "The new recovery key is active. The previous one stopped working just now.",
@@ -49,13 +46,11 @@
   "recovery.fileHeader": "ConsoleWard – recovery key",
   "recovery.fileBody1": "This key resets a forgotten master password and grants access to every stored connection, password and key.",
   "recovery.fileBody2": "Keep it separate from the vault file — for example in a password manager or on paper.",
-
   "sidebar.connections": "Connections",
   "sidebar.snippets": "Commands",
   "sidebar.searchConnections": "Search connections…",
   "sidebar.searchSnippets": "Search commands…",
   "sidebar.new": "+ New",
-
   "conn.newTitle": "New connection",
   "conn.editTitle": "Edit: {{name}}",
   "conn.newTooltip": "New connection",
@@ -98,7 +93,6 @@
   "conn.deleteTitle": "Delete connection?",
   "conn.deleteBody": "Really delete {{name}} ({{user}}@{{host}})? The stored password and key will be gone for good.",
   "conn.deleted": "Connection “{{name}}” was deleted.",
-
   "snip.newTitle": "New item",
   "snip.editTitle": "Edit: {{title}}",
   "snip.newTooltip": "New item",
@@ -133,7 +127,6 @@
   "snip.deleteTitle": "Delete item?",
   "snip.deleteBody": "Really delete {{title}}? The content will be gone for good.",
   "snip.deleted": "“{{title}}” was deleted.",
-
   "term.noSession": "No open session",
   "term.noSessionHint": "Pick a connection on the left and click it.",
   "term.closeSession": "Close session",
@@ -156,7 +149,6 @@
   "term.connCount_other": "{{count}} connections",
   "term.snipCount_one": "{{count}} command",
   "term.snipCount_other": "{{count}} commands",
-
   "hostkey.titleUnknown": "Unknown server",
   "hostkey.titleChanged": "The server key has CHANGED",
   "hostkey.bodyUnknown": "You are connecting to {{host}}:{{port}} for the first time. Verify the key fingerprint — for example with ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub on the server itself — and only then accept it.",
@@ -167,7 +159,6 @@
   "hostkey.reject": "Reject",
   "hostkey.accept": "Accept and store",
   "hostkey.acceptAnyway": "Accept anyway and overwrite",
-
   "settings.title": "Settings",
   "settings.tabGeneral": "General",
   "settings.tabSecurity": "Security",
@@ -190,6 +181,7 @@
   "settings.recoveryRemove": "Remove",
   "settings.recoveryRemoved": "The recovery key was removed.",
   "settings.recoveryWarn": "Generating a new key invalidates the old one immediately. Removing it costs you the only rescue for a forgotten password.",
+  "settings.recoveryConfirmHint": "Enter your master password. This re-encrypts the vault under a new key, which is what makes the old recovery key genuinely stop working.",
   "settings.changePassword": "Change the master password",
   "settings.changePasswordHint": "Re-wraps the vault key with a new password. The old one stops working immediately.",
   "settings.oldPassword": "Old password",
@@ -201,7 +193,9 @@
   "settings.vaultFile": "Vault file:",
   "settings.hostsEmpty": "No stored server fingerprints yet.",
   "settings.forget": "Forget",
-
+  "link.confirmTitle": "Open this link?",
+  "link.confirmBody": "This link came from the application or from terminal output. Check the full address before opening it.",
+  "link.open": "Open in browser",
   "settings.mcpIntro": "Exposes your sessions to an AI client such as Claude Code through a local MCP server on 127.0.0.1. Server addresses, usernames and passwords are never sent — the AI sees only session names. You approve every command and every read of the output.",
   "settings.mcpWarnLead": "What leaves your machine:",
   "settings.mcpWarn": "the commands the AI proposes and the output you release. Your AI client sends them to its provider. Credentials stay here, output does not.",
@@ -220,7 +214,6 @@
   "settings.mcpRegenerated": "The token was regenerated — set it again in your AI client.",
   "settings.mcpCommandCopied": "Command copied to the clipboard.",
   "settings.mcpTokenHint": "The token grants access to your sessions — treat it like a password. After regenerating it you have to set it again in the AI client.",
-
   "mcp.approveTitle": "The AI proposes a command",
   "mcp.session": "Session",
   "mcp.aiReason": "Reason given by the AI",
@@ -245,7 +238,6 @@
   "mcp.sendNothing": "Send nothing",
   "mcp.sendSelected": "Send the selection",
   "mcp.sendAll": "Send everything",
-
   "secret.privateKey": "private key",
   "secret.privateKeyStart": "start of a private key",
   "secret.jwt": "JWT token",
@@ -260,7 +252,6 @@
   "secret.sshPublicKey": "SSH public key",
   "secret.randomString": "long random string",
   "secret.ipAddress": "IP address",
-
   "error.vaultLocked": "The vault is locked.",
   "error.vaultExists": "The vault already exists.",
   "error.vaultMissing": "The vault does not exist yet.",

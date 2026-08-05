@@ -31,8 +31,9 @@ const api: AppApi = {
       ipcRenderer.invoke(CH.vaultUnlockWithRecovery, recoveryKey, newPassword),
     lock: () => ipcRenderer.invoke(CH.vaultLock),
     changePassword: (oldPw, newPw) => ipcRenderer.invoke(CH.vaultChangePassword, oldPw, newPw),
-    regenerateRecoveryKey: () => ipcRenderer.invoke(CH.vaultRegenerateRecovery),
-    removeRecoveryKey: () => ipcRenderer.invoke(CH.vaultRemoveRecovery),
+    regenerateRecoveryKey: (password) =>
+      ipcRenderer.invoke(CH.vaultRegenerateRecovery, password),
+    removeRecoveryKey: (password) => ipcRenderer.invoke(CH.vaultRemoveRecovery, password),
     onLocked: (cb) => on(CH.vaultLockedEvent, cb)
   },
   connections: {

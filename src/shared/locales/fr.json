@@ -12,11 +12,9 @@
   "common.loading": "Chargement…",
   "common.show": "Afficher",
   "common.hide": "Masquer",
-
   "app.settings": "Paramètres",
   "app.lock": "Verrouiller",
   "app.lockTitle": "Verrouiller le coffre",
-
   "unlock.titleUnlock": "Déverrouiller le coffre",
   "unlock.titleCreate": "Créer le coffre",
   "unlock.titleRecovery": "Récupérer l'accès",
@@ -35,7 +33,6 @@
   "unlock.backToPassword": "← Retour à la connexion par mot de passe",
   "unlock.noRecovery": "Ce coffre n'a pas de clé de récupération : un mot de passe oublié ne peut pas être retrouvé.",
   "unlock.mismatch": "Les mots de passe ne correspondent pas.",
-
   "recovery.title": "Clé de récupération",
   "recovery.introNew": "Ton coffre est prêt. Cette clé te redonne accès à tes données si tu oublies le mot de passe maître.",
   "recovery.introRegenerated": "La nouvelle clé de récupération est active. La précédente vient de cesser de fonctionner.",
@@ -49,13 +46,11 @@
   "recovery.fileHeader": "ConsoleWard – clé de récupération",
   "recovery.fileBody1": "Cette clé réinitialise un mot de passe maître oublié et donne accès à toutes les connexions, tous les mots de passe et toutes les clés enregistrés.",
   "recovery.fileBody2": "Garde-la séparée du fichier du coffre, par exemple dans un gestionnaire de mots de passe ou sur papier.",
-
   "sidebar.connections": "Connexions",
   "sidebar.snippets": "Commandes",
   "sidebar.searchConnections": "Rechercher des connexions…",
   "sidebar.searchSnippets": "Rechercher des commandes…",
   "sidebar.new": "+ Nouveau",
-
   "conn.newTitle": "Nouvelle connexion",
   "conn.editTitle": "Modifier : {{name}}",
   "conn.newTooltip": "Nouvelle connexion",
@@ -98,7 +93,6 @@
   "conn.deleteTitle": "Supprimer la connexion ?",
   "conn.deleteBody": "Supprimer vraiment {{name}} ({{user}}@{{host}}) ? Le mot de passe et la clé enregistrés seront perdus définitivement.",
   "conn.deleted": "La connexion « {{name}} » a été supprimée.",
-
   "snip.newTitle": "Nouvel élément",
   "snip.editTitle": "Modifier : {{title}}",
   "snip.newTooltip": "Nouvel élément",
@@ -133,7 +127,6 @@
   "snip.deleteTitle": "Supprimer l'élément ?",
   "snip.deleteBody": "Supprimer vraiment {{title}} ? Le contenu sera perdu définitivement.",
   "snip.deleted": "« {{title}} » a été supprimé.",
-
   "term.noSession": "Aucune session ouverte",
   "term.noSessionHint": "Choisis une connexion à gauche et clique dessus.",
   "term.closeSession": "Fermer la session",
@@ -156,7 +149,6 @@
   "term.connCount_other": "{{count}} connexions",
   "term.snipCount_one": "{{count}} commande",
   "term.snipCount_other": "{{count}} commandes",
-
   "hostkey.titleUnknown": "Serveur inconnu",
   "hostkey.titleChanged": "La clé du serveur a CHANGÉ",
   "hostkey.bodyUnknown": "Tu te connectes à {{host}}:{{port}} pour la première fois. Vérifie l'empreinte de la clé — par exemple avec ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub sur le serveur lui-même — et accepte-la seulement ensuite.",
@@ -167,7 +159,6 @@
   "hostkey.reject": "Refuser",
   "hostkey.accept": "Accepter et enregistrer",
   "hostkey.acceptAnyway": "Accepter quand même et écraser",
-
   "settings.title": "Paramètres",
   "settings.tabGeneral": "Général",
   "settings.tabSecurity": "Sécurité",
@@ -190,6 +181,7 @@
   "settings.recoveryRemove": "Supprimer",
   "settings.recoveryRemoved": "La clé de récupération a été supprimée.",
   "settings.recoveryWarn": "Générer une nouvelle clé invalide l'ancienne immédiatement. La supprimer te prive du seul recours en cas de mot de passe oublié.",
+  "settings.recoveryConfirmHint": "Saisis ton mot de passe maître. Le coffre est rechiffré avec une nouvelle clé, et c'est cela qui rend l'ancienne clé de récupération réellement inopérante.",
   "settings.changePassword": "Changer le mot de passe maître",
   "settings.changePasswordHint": "Ré-enveloppe la clé du coffre avec un nouveau mot de passe. L'ancien cesse de fonctionner immédiatement.",
   "settings.oldPassword": "Ancien mot de passe",
@@ -201,7 +193,9 @@
   "settings.vaultFile": "Fichier du coffre :",
   "settings.hostsEmpty": "Aucune empreinte de serveur enregistrée pour l'instant.",
   "settings.forget": "Oublier",
-
+  "link.confirmTitle": "Ouvrir ce lien ?",
+  "link.confirmBody": "Le lien provient de l'application ou de la sortie du terminal. Vérifie l'adresse complète avant de l'ouvrir.",
+  "link.open": "Ouvrir dans le navigateur",
   "settings.mcpIntro": "Expose tes sessions à un client IA tel que Claude Code via un serveur MCP local sur 127.0.0.1. Les adresses des serveurs, les noms d'utilisateur et les mots de passe ne sont jamais envoyés : l'IA ne voit que les noms des sessions. Tu approuves chaque commande et chaque lecture de la sortie.",
   "settings.mcpWarnLead": "Ce qui quitte ta machine :",
   "settings.mcpWarn": "les commandes proposées par l'IA et la sortie que tu libères. Ton client IA les envoie à son fournisseur. Les identifiants restent ici, la sortie non.",
@@ -220,7 +214,6 @@
   "settings.mcpRegenerated": "Le jeton a été régénéré : reconfigure-le dans ton client IA.",
   "settings.mcpCommandCopied": "Commande copiée dans le presse-papiers.",
   "settings.mcpTokenHint": "Le jeton donne accès à tes sessions : traite-le comme un mot de passe. Après régénération, tu dois le reconfigurer dans le client IA.",
-
   "mcp.approveTitle": "L'IA propose une commande",
   "mcp.session": "Session",
   "mcp.aiReason": "Motif indiqué par l'IA",
@@ -245,7 +238,6 @@
   "mcp.sendNothing": "Ne rien envoyer",
   "mcp.sendSelected": "Envoyer la sélection",
   "mcp.sendAll": "Tout envoyer",
-
   "secret.privateKey": "clé privée",
   "secret.privateKeyStart": "début d'une clé privée",
   "secret.jwt": "jeton JWT",
@@ -260,7 +252,6 @@
   "secret.sshPublicKey": "clé publique SSH",
   "secret.randomString": "longue chaîne aléatoire",
   "secret.ipAddress": "adresse IP",
-
   "error.vaultLocked": "Le coffre est verrouillé.",
   "error.vaultExists": "Le coffre existe déjà.",
   "error.vaultMissing": "Le coffre n'existe pas encore.",

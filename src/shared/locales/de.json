@@ -12,11 +12,9 @@
   "common.loading": "Lade…",
   "common.show": "Anzeigen",
   "common.hide": "Verbergen",
-
   "app.settings": "Einstellungen",
   "app.lock": "Sperren",
   "app.lockTitle": "Tresor sperren",
-
   "unlock.titleUnlock": "Tresor entsperren",
   "unlock.titleCreate": "Tresor anlegen",
   "unlock.titleRecovery": "Zugang wiederherstellen",
@@ -35,7 +33,6 @@
   "unlock.backToPassword": "← Zurück zur Passwortanmeldung",
   "unlock.noRecovery": "Dieser Tresor hat keinen Wiederherstellungsschlüssel — ein vergessenes Passwort lässt sich nicht wiederherstellen.",
   "unlock.mismatch": "Die Passwörter stimmen nicht überein.",
-
   "recovery.title": "Wiederherstellungsschlüssel",
   "recovery.introNew": "Dein Tresor ist bereit. Mit diesem Schlüssel kommst du wieder an deine Daten, falls du das Hauptpasswort vergisst.",
   "recovery.introRegenerated": "Der neue Wiederherstellungsschlüssel ist aktiv. Der bisherige gilt ab sofort nicht mehr.",
@@ -49,13 +46,11 @@
   "recovery.fileHeader": "ConsoleWard – Wiederherstellungsschlüssel",
   "recovery.fileBody1": "Dieser Schlüssel setzt ein vergessenes Hauptpasswort zurück und gewährt Zugriff auf jede gespeicherte Verbindung, jedes Passwort und jeden Schlüssel.",
   "recovery.fileBody2": "Bewahre ihn getrennt von der Tresordatei auf — etwa in einem Passwortmanager oder auf Papier.",
-
   "sidebar.connections": "Verbindungen",
   "sidebar.snippets": "Befehle",
   "sidebar.searchConnections": "Verbindungen suchen…",
   "sidebar.searchSnippets": "Befehle suchen…",
   "sidebar.new": "+ Neu",
-
   "conn.newTitle": "Neue Verbindung",
   "conn.editTitle": "Bearbeiten: {{name}}",
   "conn.newTooltip": "Neue Verbindung",
@@ -98,7 +93,6 @@
   "conn.deleteTitle": "Verbindung löschen?",
   "conn.deleteBody": "{{name}} ({{user}}@{{host}}) wirklich löschen? Das gespeicherte Passwort und der Schlüssel sind danach endgültig weg.",
   "conn.deleted": "Verbindung „{{name}}“ wurde gelöscht.",
-
   "snip.newTitle": "Neuer Eintrag",
   "snip.editTitle": "Bearbeiten: {{title}}",
   "snip.newTooltip": "Neuer Eintrag",
@@ -133,7 +127,6 @@
   "snip.deleteTitle": "Eintrag löschen?",
   "snip.deleteBody": "{{title}} wirklich löschen? Der Inhalt ist danach endgültig weg.",
   "snip.deleted": "„{{title}}“ wurde gelöscht.",
-
   "term.noSession": "Keine offene Sitzung",
   "term.noSessionHint": "Wähle links eine Verbindung und klicke sie an.",
   "term.closeSession": "Sitzung schließen",
@@ -156,7 +149,6 @@
   "term.connCount_other": "{{count}} Verbindungen",
   "term.snipCount_one": "{{count}} Befehl",
   "term.snipCount_other": "{{count}} Befehle",
-
   "hostkey.titleUnknown": "Unbekannter Server",
   "hostkey.titleChanged": "Der Serverschlüssel hat sich GEÄNDERT",
   "hostkey.bodyUnknown": "Du verbindest dich zum ersten Mal mit {{host}}:{{port}}. Prüfe den Fingerabdruck des Schlüssels — etwa mit ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub direkt auf dem Server — und akzeptiere ihn erst dann.",
@@ -167,7 +159,6 @@
   "hostkey.reject": "Ablehnen",
   "hostkey.accept": "Akzeptieren und speichern",
   "hostkey.acceptAnyway": "Trotzdem akzeptieren und überschreiben",
-
   "settings.title": "Einstellungen",
   "settings.tabGeneral": "Allgemein",
   "settings.tabSecurity": "Sicherheit",
@@ -190,6 +181,7 @@
   "settings.recoveryRemove": "Entfernen",
   "settings.recoveryRemoved": "Der Wiederherstellungsschlüssel wurde entfernt.",
   "settings.recoveryWarn": "Ein neuer Schlüssel macht den alten sofort ungültig. Wenn du ihn entfernst, verlierst du die einzige Rettung für ein vergessenes Passwort.",
+  "settings.recoveryConfirmHint": "Gib dein Hauptpasswort ein. Der Tresor wird mit einem neuen Schlüssel neu verschlüsselt — erst dadurch verliert der alte Wiederherstellungsschlüssel wirklich seine Gültigkeit.",
   "settings.changePassword": "Hauptpasswort ändern",
   "settings.changePasswordHint": "Verpackt den Tresorschlüssel mit einem neuen Passwort neu. Das alte gilt ab sofort nicht mehr.",
   "settings.oldPassword": "Altes Passwort",
@@ -201,7 +193,9 @@
   "settings.vaultFile": "Tresordatei:",
   "settings.hostsEmpty": "Noch keine gespeicherten Server-Fingerabdrücke.",
   "settings.forget": "Vergessen",
-
+  "link.confirmTitle": "Diesen Link öffnen?",
+  "link.confirmBody": "Der Link stammt aus der Anwendung oder aus der Terminalausgabe. Prüfe die vollständige Adresse, bevor du ihn öffnest.",
+  "link.open": "Im Browser öffnen",
   "settings.mcpIntro": "Macht deine Sitzungen über einen lokalen MCP-Server auf 127.0.0.1 für einen KI-Client wie Claude Code zugänglich. Serveradressen, Benutzernamen und Passwörter werden nie übertragen — die KI sieht nur Sitzungsnamen. Du genehmigst jeden Befehl und jedes Lesen der Ausgabe.",
   "settings.mcpWarnLead": "Was deinen Rechner verlässt:",
   "settings.mcpWarn": "die Befehle, die die KI vorschlägt, und die Ausgabe, die du freigibst. Dein KI-Client schickt beides an seinen Anbieter. Zugangsdaten bleiben hier, die Ausgabe nicht.",
@@ -220,7 +214,6 @@
   "settings.mcpRegenerated": "Der Token wurde neu erzeugt — trage ihn erneut in deinem KI-Client ein.",
   "settings.mcpCommandCopied": "Befehl in die Zwischenablage kopiert.",
   "settings.mcpTokenHint": "Der Token gewährt Zugriff auf deine Sitzungen — behandle ihn wie ein Passwort. Nach dem Neuerzeugen musst du ihn im KI-Client erneut eintragen.",
-
   "mcp.approveTitle": "Die KI schlägt einen Befehl vor",
   "mcp.session": "Sitzung",
   "mcp.aiReason": "Begründung der KI",
@@ -245,7 +238,6 @@
   "mcp.sendNothing": "Nichts senden",
   "mcp.sendSelected": "Markiertes senden",
   "mcp.sendAll": "Alles senden",
-
   "secret.privateKey": "privater Schlüssel",
   "secret.privateKeyStart": "Anfang eines privaten Schlüssels",
   "secret.jwt": "JWT-Token",
@@ -260,7 +252,6 @@
   "secret.sshPublicKey": "öffentlicher SSH-Schlüssel",
   "secret.randomString": "lange Zufallszeichenkette",
   "secret.ipAddress": "IP-Adresse",
-
   "error.vaultLocked": "Der Tresor ist gesperrt.",
   "error.vaultExists": "Der Tresor existiert bereits.",
   "error.vaultMissing": "Der Tresor existiert noch nicht.",
