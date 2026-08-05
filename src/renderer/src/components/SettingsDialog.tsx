@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Simplixio — Stanislav Opletal <info@simplixio.net>
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { KnownHost, McpStatus, Settings } from '@shared/types'
 import { api, errorMessage, unwrap } from '../api'
 import { LOCALES, useI18n } from '../i18n'
@@ -39,6 +39,7 @@ export default function SettingsDialog({
   const [recoveryPw, setRecoveryPw] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const noticeTimer = useRef<number | null>(null)
   const [mcpStatus, setMcpStatus] = useState<McpStatus | null>(null)
   const [mcpToken, setMcpToken] = useState<string | null>(null)
   const [tokenVisible, setTokenVisible] = useState(false)
@@ -51,9 +52,22 @@ export default function SettingsDialog({
     return off
   }, [])
 
+  /**
+   * Shows a notice for `ms`, cancelling whatever was showing before.
+   *
+   * The timer used to be fired and forgotten, so an earlier short notice could
+   * clear a later long one. Copying the MCP command (3 s) and then the bare
+   * token (6 s) did exactly that: the token's warning — the one saying a secret
+   * is now on a clipboard every program can read — vanished after the leftover
+   * three seconds instead of six.
+   */
   function flash(message: string, ms = 2500): void {
+    if (noticeTimer.current !== null) window.clearTimeout(noticeTimer.current)
     setNotice(message)
-    window.setTimeout(() => setNotice(null), ms)
+    noticeTimer.current = window.setTimeout(() => {
+      noticeTimer.current = null
+      setNotice(null)
+    }, ms)
   }
 
   async function refreshHosts(): Promise<void> {

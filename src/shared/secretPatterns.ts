@@ -62,7 +62,24 @@ interface PatternSpec {
 
 const PATTERNS: PatternSpec[] = [
   {
-    re: /-----BEGIN[ A-Z]*PRIVATE KEY-----[\s\S]*?-----END[ A-Z]*PRIVATE KEY-----/g,
+    /*
+     * Celý blok privátního klíče, od BEGIN po END.
+     *
+     * `{0,8192}?` rather than `*?`, for the same reason `secret.urlCreds` got a
+     * bound: unbounded, every BEGIN with no END after it rescans to the end of
+     * the buffer, so a text full of headers is quadratic. Measured on 256 KB of
+     * bare `-----BEGIN PRIVATE KEY-----` lines: 133 ms before, and since B4 that
+     * runs on the main process event loop, driven by whatever a compromised
+     * host chooses to print.
+     *
+     * Bounding is safe here only because of the pattern directly below. A key
+     * whose body exceeds the bound stops matching as a *block*, but
+     * `secret.privateKeyStart` still catches its header on its own and also at
+     * `high`, so nothing becomes invisible — the finding is merely labelled as a
+     * start marker rather than a complete block. 8192 is around 2.5x the body of
+     * a 4096-bit RSA key, which is the largest thing realistically pasted here.
+     */
+    re: /-----BEGIN[ A-Z]*PRIVATE KEY-----[\s\S]{0,8192}?-----END[ A-Z]*PRIVATE KEY-----/g,
     label: 'secret.privateKey',
     severity: 'high'
   },

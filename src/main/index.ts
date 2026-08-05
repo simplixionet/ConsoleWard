@@ -517,11 +517,13 @@ function registerIpc(): void {
 
   /* známé hostitele */
   handle(CH.hostsList, (): KnownHost[] =>
-    // Not a collator: a host key is base64, an opaque identifier nobody reads
-    // as a word. Locale-aware collation would reorder it by rules that mean
-    // nothing here and differ between users; a code-unit sort is stable
-    // everywhere, which is the only property this list needs.
-    [...vault.read().knownHosts].sort((a, b) => (a.hostKey < b.hostKey ? -1 : 1))
+    // `hostKey` is `host:port` — a name the user reads and scans, not an opaque
+    // identifier. An earlier comment here claimed it was base64 and used that to
+    // justify a code-unit sort; it was simply wrong about the data. So this gets
+    // the same collator as the other two lists, which also means `web2` sorts
+    // before `web10` and `Zeta` next to `zeta` rather than before every
+    // lowercase name.
+    [...vault.read().knownHosts].sort((a, b) => collator().compare(a.hostKey, b.hostKey))
   )
 
   handle(CH.hostsForget, async (hostKey: string) => {

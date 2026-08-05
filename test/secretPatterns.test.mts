@@ -614,6 +614,46 @@ describe('findSecrets: known gaps', () => {
     assert.ok(elapsed < 500, `findSecrets took ${elapsed.toFixed(0)} ms on 256 KB of "a.-"`)
   })
 
+  test('secret.privateKey does not rescan the buffer from every BEGIN header', () => {
+    // The same defect C8 fixed one pattern above, left behind at the time. An
+    // unbounded `[\s\S]*?` makes every BEGIN with no END after it scan to the
+    // end of the buffer. Measured on this input: 6 / 25 / 98 / 388 ms at 32 /
+    // 64 / 128 / 256 KB — four times the cost for twice the input — against
+    // 11 / 21 / 42 / 82 ms once bounded.
+    //
+    // Since B4 this runs on the main process event loop, driven by whatever a
+    // compromised host prints, so the shape matters more than the constant.
+    const headers = '-----BEGIN PRIVATE KEY-----\n'.repeat(9600)
+    assert.ok(headers.length > 250 * 1024, 'exercise the real scan ceiling')
+
+    const started = performance.now()
+    findSecrets(headers)
+    const elapsed = performance.now() - started
+    assert.ok(elapsed < 300, `findSecrets took ${elapsed.toFixed(0)} ms on 256 KB of headers`)
+  })
+
+  test('a key too long to match as a block is still caught by its header', () => {
+    // What makes bounding safe. A body over the bound stops matching as a
+    // complete block, but the header alone is its own pattern and also `high`,
+    // so nothing becomes invisible — it is merely labelled a start marker.
+    const huge = `-----BEGIN RSA PRIVATE KEY-----\n${'A'.repeat(20000)}\n-----END RSA PRIVATE KEY-----`
+    const found = findSecrets(huge)
+    assert.ok(
+      found.some((m) => m.severity === 'high'),
+      'an oversized private key was not flagged at all'
+    )
+  })
+
+  test('a real 4096-bit key still matches as a whole block', () => {
+    // The bound must clear the largest thing realistically pasted here. A
+    // 4096-bit RSA body is around 3.2 KB of base64.
+    const real = `-----BEGIN RSA PRIVATE KEY-----\n${'A'.repeat(3300)}\n-----END RSA PRIVATE KEY-----`
+    assert.ok(
+      findSecrets(real).some((m) => m.label === 'secret.privateKey'),
+      'the bound is too tight for a real 4096-bit key'
+    )
+  })
+
   test('and not from a run of scheme characters either', () => {
     // Worse than 'a.-' because every other character opens a boundary: 34.7 s
     // before the bound, 12 ms after. A fix aimed only at '.' and '-' would
