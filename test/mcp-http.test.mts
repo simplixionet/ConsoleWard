@@ -33,7 +33,8 @@ const {
   mcp,
   modelErrorFor,
   onceClosed,
-  readJsonBody
+  readJsonBody,
+  takesSlot
 } = await import('../src/main/mcp.ts')
 const { MAX_PENDING_APPROVALS } = await import('../src/main/approvals.ts')
 
@@ -244,9 +245,6 @@ describe('checkAuth', () => {
 /* ------------------------------------------------------------ the in-flight cap */
 
 describe('the in-flight cap counts calls, not streams', () => {
-  /** The predicate the handler applies before taking a slot. */
-  const takesSlot = (method: string): boolean => method === 'POST'
-
   test('a JSON-RPC call takes a slot', () => {
     assert.equal(takesSlot('POST'), true)
   })
