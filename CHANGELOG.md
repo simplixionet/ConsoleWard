@@ -100,9 +100,18 @@ a change from a previous version.
   dialog: a fresh non-interactive shell in the home directory, so aliases, shell
   functions and any PATH from the login files are absent, nothing carries over
   between calls, and anything that would prompt fails rather than waiting.
-- `read_terminal` opens a dialog where the human selects, edits or redacts the
-  output; only that is returned. Every payload tells the model it may be an
-  excerpt.
+- `read_terminal` opens a dialog that asks **what** to send before showing any
+  of it, and has **no "send everything" button**. The excerpt is either
+  highlighted in the console with the mouse — the dialog shrinks to a corner
+  panel that keeps the session and the reason in view and counts the selection
+  live — or taken as the last 20 lines. Only then is it shown for reading,
+  editing and redacting, now short enough that the highlighting below has
+  something to be useful on. Sending the whole buffer still works, but only by
+  highlighting all of it. Every payload tells the model it may be an excerpt.
+- No step can send by accident: the first step has no button that sends at all,
+  "continue" is disabled until something is selected and never falls back to the
+  whole buffer, and sending nothing is its own button rather than what happens
+  when you do nothing.
 - Suspicious spans highlighted in the sharing dialog — passwords in assignments,
   JWT/AWS/GitHub/Slack tokens, credentials in URLs, password hashes, IP
   addresses. Documented as a hint, not a guarantee, and the dialog says so when

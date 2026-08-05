@@ -181,16 +181,32 @@ claude mcp add --transport http consoleward http://127.0.0.1:7345/ --header "Aut
 |---|---|
 | `list_sessions` | `id`, the name you gave the connection (a placeholder if you gave none) and status — **address, port and username are never sent** |
 | `run_command` | proposes a command; **it does not run until you approve it** in a dialog |
-| `read_terminal` | asks for output; you choose or rewrite exactly what goes back |
+| `read_terminal` | asks for output; **you highlight the excerpt yourself**, then read and edit it before it goes back |
 
 The approval dialog shows the command's **literal text with control characters made
 visible**, so an extra line cannot hide in it. There is no "approve all" and no
 "remember" — you see every command separately. That is the entire point of the gate.
 
-In the sharing dialog the output is **editable**: select a portion and send only that,
-rewrite anything, or replace a selection with `[REDACTED]`. Suspicious spans (passwords
-in assignments, tokens, private keys, credentials in URLs, IP addresses) are highlighted.
-That is a hint, not a guarantee — regular expressions do not catch everything.
+Sharing takes two deliberate steps, and **there is no "send everything" button**.
+
+1. **Choose what to send.** Either highlight it in the console with the mouse — the
+   dialog shrinks to a corner panel that keeps the session name and the AI's reason in
+   view, and counts your selection live — or take the last 20 lines. Nothing has left
+   yet at this point, and the step cannot send: no button on it does.
+2. **Read it and send it.** Only what you chose comes back, now short enough to actually
+   read. It is **editable**: rewrite anything, or replace a selection with `[REDACTED]`.
+   Suspicious spans (passwords in assignments, tokens, private keys, credentials in URLs,
+   IP addresses) are highlighted. That is a hint, not a guarantee — regular expressions
+   do not catch everything.
+
+You can still send an entire buffer, but only by highlighting the whole thing, which
+means scrolling past it. The old dialog poured the whole scrollback into a text box and
+offered one click to send it; highlighting three hundred suspicious spans in text nobody
+reads is decoration, not a safeguard.
+
+**Continue stays disabled until something is selected.** An empty selection cannot be
+sent by accident and never falls back to the whole buffer. If you want to send nothing,
+that is its own button — a decision, not the result of not acting.
 
 The AI is always told the content is an excerpt, so it does not reason from partial
 output as though it had seen everything.
