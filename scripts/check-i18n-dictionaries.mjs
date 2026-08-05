@@ -29,8 +29,16 @@ const I18N_SOURCE = path.join(PROJECT_ROOT, 'src/shared/i18n.ts')
 /** The shipping set, in the order the picker offers it (D-01). */
 const SHIPPING = ['en', 'cs', 'de', 'es', 'fr', 'it', 'pt-BR', 'nl']
 
-/** The only two pluralised keys in the dictionary. */
-const PLURAL_KEYS = ['term.connCount', 'term.snipCount']
+/**
+ * The pluralised keys in the dictionary.
+ *
+ * Hand-maintained on purpose: a key listed here is exempted from strict parity
+ * with English, so deriving the list from whatever happens to end in `_one`
+ * would let a typo'd key exempt itself. Adding a pluralised string means adding
+ * it here, and D2 then insists every locale carries every category its language
+ * actually uses.
+ */
+const PLURAL_KEYS = ['term.connCount', 'term.snipCount', 'mcp.pickLines', 'mcp.pickChars']
 
 /** Namespaces where a weakened string is a security failure, not a typo. */
 const SECURITY_NAMESPACES = ['hostkey.', 'mcp.', 'secret.', 'recovery.']

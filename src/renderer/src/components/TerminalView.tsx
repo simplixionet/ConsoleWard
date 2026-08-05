@@ -9,7 +9,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import type { SessionInfo, Settings } from '@shared/types'
 import { api } from '../api'
 import { useT } from '../i18n'
-import { registerFocus, registerSink } from '../terminalBus'
+import { registerFocus, registerSelection, registerSink } from '../terminalBus'
 import { reportActivity } from '../activity'
 
 const THEME = {
@@ -76,6 +76,14 @@ export default function TerminalView({ session, settings, visible }: Props) {
 
     const unregister = registerSink(session.id, (bytes) => term.write(bytes))
     const unregisterFocus = registerFocus(session.id, () => term.focus())
+    const unregisterSelection = registerSelection(session.id, {
+      read: () => term.getSelection(),
+      subscribe: (onChange) => {
+        const sub = term.onSelectionChange(onChange)
+        return () => sub.dispose()
+      },
+      clear: () => term.clearSelection()
+    })
 
     const dataSub = term.onData((data) => {
       reportActivity(() => api.app.notifyActivity())
@@ -112,6 +120,7 @@ export default function TerminalView({ session, settings, visible }: Props) {
     return () => {
       unregister()
       unregisterFocus()
+      unregisterSelection()
       dataSub.dispose()
       term.dispose()
       termRef.current = null

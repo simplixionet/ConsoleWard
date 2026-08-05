@@ -50,6 +50,7 @@ export function forget(sessionId: string): void {
   sinks.delete(sessionId)
   pending.delete(sessionId)
   focusers.delete(sessionId)
+  selections.delete(sessionId)
 }
 
 /* Fokus terminálu – aby po vložení příkazu stačilo stisknout Enter. */
@@ -65,4 +66,34 @@ export function registerFocus(sessionId: string, focus: () => void): () => void 
 
 export function focusTerminal(sessionId: string): void {
   focusers.get(sessionId)?.()
+}
+
+/* Označení myší v terminálu – čte ho sdílecí dialog. */
+
+/**
+ * Čtení výběru v jednom terminálu.
+ *
+ * The share dialog needs live access to a terminal it does not own and cannot
+ * reach: xterm.js instances live inside TerminalView, one per session, and the
+ * dialog is a sibling. Same shape as the sink and focus registries above, for
+ * the same reason.
+ */
+export interface SelectionSource {
+  read(): string
+  subscribe(onChange: () => void): () => void
+  clear(): void
+}
+
+const selections = new Map<string, SelectionSource>()
+
+export function registerSelection(sessionId: string, source: SelectionSource): () => void {
+  selections.set(sessionId, source)
+  return () => {
+    if (selections.get(sessionId) === source) selections.delete(sessionId)
+  }
+}
+
+/** Null, pokud relace nemá živý terminál – dialog pak výběr z konzole nenabídne. */
+export function terminalSelection(sessionId: string): SelectionSource | null {
+  return selections.get(sessionId) ?? null
 }

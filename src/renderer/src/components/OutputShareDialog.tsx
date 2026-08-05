@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Simplixio — Stanislav Opletal <info@simplixio.net>
 
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ShareRequest } from '@shared/types'
+import { EXCERPT_LINES, lastLines } from '@shared/excerpt'
 import {
   MAX_HITS_PER_PATTERN,
   MAX_SCAN_CHARS,
@@ -11,26 +12,273 @@ import {
 } from '@shared/secretPatterns'
 import { useT } from '../i18n'
 import { useArmedAfterPaint } from '../armDelay'
+import { terminalSelection } from '../terminalBus'
+
+/**
+ * Co z výstupu odejde AI — ve třech krocích.
+ *
+ * Původní podoba nasypala celý buffer do textarey a nabídla „odeslat vše".
+ * Tisíc řádků nikdo nečte, takže se to odklikávalo a zvýrazňování tajemství
+ * bylo k ničemu: podbarvit tři sta míst v textu, který se stejně nečte, není
+ * ochrana, jen ozdoba. Proto se teď nejdřív vybírá **co**, a teprve to krátké
+ * se kontroluje.
+ *
+ * Klíčové je, že žádný krok neumí odeslat celý buffer. Kdo chce poslat všechno,
+ * musí to všechno v konzoli označit — a přitom to uvidí.
+ */
+
+type Stage = 'choose' | 'picking' | 'review'
 
 interface Props {
   request: ShareRequest
   onAnswer: (shared: boolean, text: string) => void
+  /** Přepne hlavní okno na relaci, ze které se vybírá. */
+  onShowSession: (sessionId: string) => void
 }
 
-/**
- * Výběr toho, co z výstupu skutečně odejde AI.
- *
- * Text je editovatelný, takže cokoliv můžeš přepsat nebo smazat. Podezřelá
- * místa se podbarvují — regulární výrazy nezachytí všechno, jde jen o to, aby
- * ti nápadné věci padly do oka, když je pozdě večer a proklikáváš dvacátý dialog.
- */
-export default function OutputShareDialog({ request, onAnswer }: Props) {
+export default function OutputShareDialog({ request, onAnswer, onShowSession }: Props) {
+  const [stage, setStage] = useState<Stage>('choose')
+  const [excerpt, setExcerpt] = useState('')
+
+  /*
+   * Every stage is its own component, and that is load-bearing rather than
+   * tidiness: `useArmedAfterPaint` starts its clock on mount, so a stage that
+   * appears under a cursor which has just clicked the button now occupying that
+   * spot gets its own arming delay. Rendered as one component with a `stage`
+   * variable, the arm would expire once at the start and the second half of a
+   * double click could carry straight through to "send".
+   */
+  if (stage === 'picking') {
+    return (
+      <PickStage
+        request={request}
+        onBack={() => setStage('choose')}
+        onCancel={() => onAnswer(false, '')}
+        onPicked={(text) => {
+          setExcerpt(text)
+          setStage('review')
+        }}
+      />
+    )
+  }
+
+  if (stage === 'review') {
+    return (
+      <ReviewStage
+        request={request}
+        initialText={excerpt}
+        onBack={() => setStage('choose')}
+        onAnswer={onAnswer}
+      />
+    )
+  }
+
+  return (
+    <ChooseStage
+      request={request}
+      onPickInConsole={() => {
+        onShowSession(request.sessionId)
+        setStage('picking')
+      }}
+      onLastLines={() => {
+        setExcerpt(lastLines(request.text, EXCERPT_LINES))
+        setStage('review')
+      }}
+      onNothing={() => onAnswer(false, '')}
+    />
+  )
+}
+
+/* --------------------------------------------------------------- 1. výběr */
+
+function ChooseStage({
+  request,
+  onPickInConsole,
+  onLastLines,
+  onNothing
+}: {
+  request: ShareRequest
+  onPickInConsole: () => void
+  onLastLines: () => void
+  onNothing: () => void
+}) {
+  const t = useT()
+  /*
+   * No `armed` gate here on purpose: not one button on this stage sends
+   * anything. That is the point of splitting the dialog — a stray click on a
+   * window that just raised itself can no longer leak output, it can at worst
+   * open the review step, which sends nothing until it is clicked again.
+   */
+  const canPick = terminalSelection(request.sessionId) !== null
+  const hasText = request.text.length > 0
+
+  return (
+    <div className="modal-backdrop">
+      <div className="modal choose-modal">
+        <div className="modal-head">
+          <h2>{titleFor(request, t)}</h2>
+        </div>
+
+        <div className="modal-body">
+          <div className="approval-meta">
+            <div>
+              <span className="meta-label">{t('mcp.session')}</span>
+              <span className="meta-value">{request.sessionName}</span>
+            </div>
+          </div>
+
+          <div>
+            <div className="meta-label">{t('mcp.aiReason')}</div>
+            <div className="ai-reason">{request.reason || t('mcp.noReason')}</div>
+          </div>
+
+          {request.autoShareOverridden && (
+            <div className="warn-box danger-box">{t('mcp.autoShareOverridden')}</div>
+          )}
+
+          <div className="hint">{t('mcp.chooseHint')}</div>
+
+          {!canPick && <div className="warn-box">{t('mcp.pickUnavailable')}</div>}
+        </div>
+
+        <div className="modal-foot">
+          <button className="btn" autoFocus onClick={onNothing}>
+            {t('mcp.sendNothing')}
+          </button>
+          <button className="btn" disabled={!hasText} onClick={onLastLines}>
+            {t('mcp.lastLines', { count: EXCERPT_LINES })}
+          </button>
+          <button className="btn primary" disabled={!canPick} onClick={onPickInConsole}>
+            {t('mcp.pickInConsole')}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/* ------------------------------------------------- 2. označování v konzoli */
+
+function PickStage({
+  request,
+  onPicked,
+  onBack,
+  onCancel
+}: {
+  request: ShareRequest
+  onPicked: (text: string) => void
+  onBack: () => void
+  onCancel: () => void
+}) {
+  const t = useT()
+  const [selected, setSelected] = useState('')
+  const [lost, setLost] = useState(false)
+
+  useEffect(() => {
+    const source = terminalSelection(request.sessionId)
+    if (!source) {
+      setLost(true)
+      return
+    }
+    const read = (): void => {
+      try {
+        setSelected(source.read())
+      } catch {
+        // Terminál se mezitím odpojil (relace zavřená za běhu dialogu).
+        setSelected('')
+        setLost(true)
+      }
+    }
+    /*
+     * Wipe whatever was highlighted before the dialog opened. A selection the
+     * human made ten minutes ago for some unrelated reason is not consent, and
+     * leaving it in place would arm "continue" the moment this panel appears —
+     * exactly the accident the "disabled until something is selected" rule
+     * exists to prevent.
+     */
+    try {
+      source.clear()
+    } catch {
+      /* nevadí, přečte se stejně */
+    }
+    read()
+    return source.subscribe(read)
+  }, [request.sessionId])
+
+  const chars = selected.length
+  const lines = selected === '' ? 0 : selected.split('\n').length
+
+  return (
+    <div className="pick-panel">
+      <div className="pick-head">
+        <span className="pick-title">{t('mcp.pickTitle')}</span>
+        <span className="pick-session">{request.sessionName}</span>
+      </div>
+
+      <div className="pick-reason">{request.reason || t('mcp.noReason')}</div>
+
+      {lost ? (
+        <div className="warn-box danger-box">{t('mcp.pickLost')}</div>
+      ) : (
+        <div className="pick-hint">{t('mcp.pickHint')}</div>
+      )}
+
+      <div className="pick-count">
+        {chars > 0 ? (
+          <>
+            {t('mcp.pickLines', { count: lines })} · {t('mcp.pickChars', { count: chars })}
+          </>
+        ) : (
+          t('mcp.pickNothingYet')
+        )}
+      </div>
+
+      <div className="pick-foot">
+        <button className="btn small" onClick={onBack}>
+          {t('mcp.back')}
+        </button>
+        <div className="spacer" />
+        <button className="btn small" onClick={onCancel}>
+          {t('mcp.sendNothing')}
+        </button>
+        <button
+          className="btn small primary"
+          disabled={chars === 0}
+          onClick={() => onPicked(selected)}
+        >
+          {t('mcp.continue')}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------ 3. kontrola */
+
+function ReviewStage({
+  request,
+  initialText,
+  onBack,
+  onAnswer
+}: {
+  request: ShareRequest
+  initialText: string
+  onBack: () => void
+  onAnswer: (shared: boolean, text: string) => void
+}) {
   const t = useT()
   const armed = useArmedAfterPaint()
-  const [text, setText] = useState(request.text)
+  const [text, setText] = useState(initialText)
   const [selection, setSelection] = useState<{ start: number; end: number }>({ start: 0, end: 0 })
   const areaRef = useRef<HTMLTextAreaElement>(null)
   const backdropRef = useRef<HTMLDivElement>(null)
+
+  /*
+   * Sized once from the excerpt as it arrived, not from the live text: deleting
+   * a couple of lines while redacting would otherwise shrink the field under
+   * the cursor and slide the buttons up towards it.
+   */
+  const height = useMemo(() => reviewHeight(initialText), [initialText])
 
   const scan = useMemo(() => scanSecrets(text), [text])
   const matches = scan.matches
@@ -54,17 +302,6 @@ export default function OutputShareDialog({ request, onAnswer }: Props) {
     back.scrollLeft = el.scrollLeft
   }
 
-  function selectLastLines(count: number): void {
-    const el = areaRef.current
-    if (!el) return
-    const lines = text.split('\n')
-    const from = Math.max(0, lines.length - count)
-    const start = lines.slice(0, from).join('\n').length + (from > 0 ? 1 : 0)
-    el.focus()
-    el.setSelectionRange(start, text.length)
-    setSelection({ start, end: text.length })
-  }
-
   function redactSelection(): void {
     if (!hasSelection) return
     const marker = t('mcp.redacted')
@@ -75,9 +312,6 @@ export default function OutputShareDialog({ request, onAnswer }: Props) {
     requestAnimationFrame(() => areaRef.current?.setSelectionRange(caret, caret))
   }
 
-  const originLabel =
-    request.origin === 'command_output' ? t('mcp.shareTitleOutput') : t('mcp.shareTitleRead')
-
   const summaryText = summary
     .map(({ labelKey, count }) => (count > 1 ? `${count}× ${t(labelKey)}` : t(labelKey)))
     .join(', ')
@@ -86,7 +320,7 @@ export default function OutputShareDialog({ request, onAnswer }: Props) {
     <div className="modal-backdrop">
       <div className="modal share-modal">
         <div className="modal-head">
-          <h2>{originLabel}</h2>
+          <h2>{titleFor(request, t)}</h2>
         </div>
 
         <div className="modal-body">
@@ -95,11 +329,6 @@ export default function OutputShareDialog({ request, onAnswer }: Props) {
               <span className="meta-label">{t('mcp.session')}</span>
               <span className="meta-value">{request.sessionName}</span>
             </div>
-          </div>
-
-          <div>
-            <div className="meta-label">{t('mcp.aiReason')}</div>
-            <div className="ai-reason">{request.reason || t('mcp.noReason')}</div>
           </div>
 
           {request.autoShareOverridden && (
@@ -120,9 +349,6 @@ export default function OutputShareDialog({ request, onAnswer }: Props) {
           )}
 
           <div className="share-toolbar">
-            <button type="button" className="btn small" onClick={() => selectLastLines(20)}>
-              {t('mcp.selectLast')}
-            </button>
             <button
               type="button"
               className="btn small"
@@ -140,7 +366,17 @@ export default function OutputShareDialog({ request, onAnswer }: Props) {
             </span>
           </div>
 
-          <div className="hl-wrap">
+          {/*
+            An estimate, not a measurement: a line that wraps takes more than
+            one row, so a wide excerpt can still need scrolling. That is the
+            acceptable half — the box is bounded at both ends, so the worst case
+            is a short scroll, never a field collapsed to nothing or one that
+            pushes the send buttons off screen.
+          */}
+          <div
+            className="hl-wrap review-wrap"
+            style={{ '--review-height': `${height}px` } as React.CSSProperties}
+          >
             <div className="hl-backdrop" ref={backdropRef} aria-hidden="true">
               {renderHighlighted(text, matches)}
             </div>
@@ -164,23 +400,47 @@ export default function OutputShareDialog({ request, onAnswer }: Props) {
         </div>
 
         <div className="modal-foot">
+          <button className="btn" onClick={onBack}>
+            {t('mcp.back')}
+          </button>
+          <div className="spacer" />
           <button className="btn" autoFocus onClick={() => onAnswer(false, '')}>
             {t('mcp.sendNothing')}
           </button>
+          {/*
+            Disabled on an empty excerpt for the same reason "continue" is: an
+            approval that sends nothing is indistinguishable from a refusal to
+            the model, but not to the human, who walks away believing they
+            answered. Redacting everything is a refusal — say so with the other
+            button.
+          */}
           <button
-            className="btn"
-            disabled={!armed || !hasSelection}
-            onClick={() => onAnswer(true, text.slice(selection.start, selection.end))}
+            className="btn primary"
+            disabled={!armed || text.length === 0}
+            onClick={() => onAnswer(true, text)}
           >
-            {t('mcp.sendSelected')}
-          </button>
-          <button className="btn primary" disabled={!armed} onClick={() => onAnswer(true, text)}>
-            {t('mcp.sendAll')}
+            {t('mcp.send')}
           </button>
         </div>
       </div>
     </div>
   )
+}
+
+/** Řádkování 1.6 × 12px z .hl-input, plus vnitřní odsazení a rámeček. */
+const REVIEW_LINE_PX = 19.2
+const REVIEW_CHROME_PX = 22
+const REVIEW_MIN_PX = 120
+const REVIEW_MAX_PX = 320
+
+function reviewHeight(text: string): number {
+  const lines = text === '' ? 1 : text.split('\n').length
+  const wanted = Math.round(lines * REVIEW_LINE_PX) + REVIEW_CHROME_PX
+  return Math.min(REVIEW_MAX_PX, Math.max(REVIEW_MIN_PX, wanted))
+}
+
+function titleFor(request: ShareRequest, t: (key: string) => string): string {
+  return request.origin === 'command_output' ? t('mcp.shareTitleOutput') : t('mcp.shareTitleRead')
 }
 
 function renderHighlighted(

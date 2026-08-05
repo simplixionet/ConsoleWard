@@ -471,6 +471,13 @@ export default function App() {
         <OutputShareDialog
           key={shareQueue[0].id}
           request={shareQueue[0]}
+          /*
+            Selecting in the console only means anything if the console on
+            screen is the one the model asked about. Switching tabs for the
+            human beats trusting them to notice they are highlighting the
+            wrong session.
+          */
+          onShowSession={(sessionId) => setActiveSession(sessionId)}
           onAnswer={(shared, text) => {
             const req = shareQueue[0]
             setShareQueue((prev) => prev.slice(1))
