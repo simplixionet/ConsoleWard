@@ -581,11 +581,14 @@ function registerIpc(): void {
   handle(CH.dialogReadTextFile, async (title: string) => {
     if (!mainWindow) return null
     const res = await dialog.showOpenDialog(mainWindow, {
-      title: title || 'Vybrat soubor',
+      title: title || t('dialog.selectFile'),
       properties: ['openFile'],
       filters: [
-        { name: 'Privátní klíče', extensions: ['pem', 'key', 'ppk', 'rsa', 'ed25519', 'pub', ''] },
-        { name: 'Všechny soubory', extensions: ['*'] }
+        {
+          name: t('dialog.privateKeys'),
+          extensions: ['pem', 'key', 'ppk', 'rsa', 'ed25519', 'pub', '']
+        },
+        { name: t('dialog.allFiles'), extensions: ['*'] }
       ]
     })
     if (res.canceled || res.filePaths.length === 0) return null
@@ -596,9 +599,9 @@ function registerIpc(): void {
   handle(CH.dialogSaveTextFile, async (suggestedName: string, content: string) => {
     if (!mainWindow) return null
     const res = await dialog.showSaveDialog(mainWindow, {
-      title: 'Uložit soubor',
+      title: t('dialog.saveFile'),
       defaultPath: suggestedName,
-      filters: [{ name: 'Textový soubor', extensions: ['txt'] }]
+      filters: [{ name: t('dialog.textFile'), extensions: ['txt'] }]
     })
     if (res.canceled || !res.filePath) return null
     await fsp.writeFile(res.filePath, String(content ?? ''), { encoding: 'utf8', mode: 0o600 })

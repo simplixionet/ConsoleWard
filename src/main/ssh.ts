@@ -594,7 +594,16 @@ export function sha256Fingerprint(key: Buffer): string {
   return 'SHA256:' + createHash('sha256').update(key).digest('base64').replace(/=+$/, '')
 }
 
-/** The key type is the first SSH string in the blob: 4-byte length, then data. */
+/**
+ * The key type is the first SSH string in the blob: 4-byte length, then data.
+ *
+ * The fallback is deliberately not translated. This value is shown in the
+ * host-key dialog but it is also persisted into the known-hosts entry, so a
+ * localised string would write whatever language happened to be selected into
+ * the vault and leave stored entries disagreeing with each other. Key types
+ * (`ssh-ed25519`, `ssh-rsa`) are protocol identifiers and are never translated
+ * either, so an untranslated placeholder is also the consistent choice.
+ */
 export function parseKeyType(key: Buffer): string {
   try {
     const len = key.readUInt32BE(0)
@@ -604,7 +613,7 @@ export function parseKeyType(key: Buffer): string {
   } catch {
     /* ignored — this is only a label */
   }
-  return 'neznámý'
+  return 'unknown'
 }
 
 function resolveAgent(configured?: string): string {
