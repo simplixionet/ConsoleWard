@@ -10,7 +10,6 @@ import type { SessionInfo, Settings } from '@shared/types'
 import { api } from '../api'
 import { useT } from '../i18n'
 import { registerFocus, registerSelection, registerSink } from '../terminalBus'
-import { reportActivity } from '../activity'
 
 const THEME = {
   background: '#0b0e13',
@@ -85,8 +84,20 @@ export default function TerminalView({ session, settings, visible }: Props) {
       clear: () => term.clearSelection()
     })
 
+    /*
+      Deliberately no activity report here. `onData` carries two very different
+      kinds of bytes: what the user typed, and what the emulator answers the
+      server on its own — CPR, device attributes, DECRQM, XTWINOPS, DECRQSS, OSC
+      colour queries. xterm fires the same event for both (`triggerDataEvent`
+      only forwards `wasUserInput` to a separate internal emitter that is not
+      exposed), so treating this as proof of a human let a remote host defer the
+      auto-lock indefinitely by printing `ESC [ 6 n` on a timer.
+
+      Presence is reported from App.tsx's capture-phase window listeners, which
+      see genuine DOM input and nothing else. Writing the reply to the server is
+      still exactly right — that is what the sequences are for.
+    */
     const dataSub = term.onData((data) => {
-      reportActivity(() => api.app.notifyActivity())
       void api.ssh.write(session.id, data)
     })
 

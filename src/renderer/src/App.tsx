@@ -171,13 +171,35 @@ export default function App() {
     }
   }, [refreshVault, showToast])
 
-  // Aktivita uživatele odkládá automatické zamčení.
+  /*
+    Aktivita uživatele odkládá automatické zamčení.
+
+    Capture, not bubble, and that argument is load-bearing. xterm registers its
+    own keydown listener on the hidden textarea and ends the ordinary key path
+    with `cancel(event, true)`, whose `force` argument makes it call
+    stopPropagation() no matter how the terminal is configured — so a keystroke
+    typed into a session never bubbles back up to window. On the bubble phase
+    these listeners saw menus, dialogs and the sidebar but *not* the one place
+    the user spends the whole session, and that gap used to be papered over by
+    also reporting from xterm's `onData` in TerminalView.
+
+    That patch was worse than the hole it filled. `onData` is not a user-input
+    event: xterm fires it for every reply the emulator owes the server — CPR,
+    device attributes, DECRQM, XTWINOPS size reports, DECRQSS, OSC colour
+    queries. A hostile host that printed `ESC [ 6 n` on a ten-second timer
+    therefore kept asserting "the human is here" through an idle machine, and
+    the vault never locked. The bytes are consumed by the parser, so nothing was
+    ever drawn on screen to give it away.
+
+    Capture runs at window before the event descends to the textarea, so nothing
+    downstream can suppress it, and only real DOM input ever gets that far.
+  */
   useEffect(() => {
     const notify = (): void => reportActivity(() => api.app.notifyActivity())
     const events: (keyof WindowEventMap)[] = ['mousedown', 'keydown', 'wheel']
-    for (const e of events) window.addEventListener(e, notify)
+    for (const e of events) window.addEventListener(e, notify, true)
     return () => {
-      for (const e of events) window.removeEventListener(e, notify)
+      for (const e of events) window.removeEventListener(e, notify, true)
     }
   }, [])
 

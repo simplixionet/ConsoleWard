@@ -5,9 +5,13 @@
  * Telling the main process the human is still here.
  *
  * Every report clears and re-arms the auto-lock timer over IPC. Unthrottled
- * that fired once per keystroke and dozens of times per scroll gesture — and
- * once per keystroke again from the terminal's own `onData`, so typing into a
- * session reported twice per character.
+ * that fired once per keystroke and dozens of times per scroll gesture.
+ *
+ * Callers must pass only genuine user input. This used to be reported from
+ * xterm's `onData` as well, which looks like a keystroke feed and is not: the
+ * emulator fires the same event for the replies it owes the server, so a remote
+ * host could hold the vault open by printing a cursor-position query on a
+ * timer. The single caller is now App.tsx's capture-phase window listeners.
  *
  * Auto-lock is measured in minutes, so a report that is up to this many
  * milliseconds late changes nothing about when the vault locks. What it does
