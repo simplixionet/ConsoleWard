@@ -585,6 +585,25 @@ function registerIpc(): void {
   // relace držel dál a `write`/`resize` nikdo nehlídal — takže zamčená
   // aplikace pořád uměla psát do vzdáleného shellu. Zámek buď znamená konec
   // přístupu, nebo neznamená nic.
+  /*
+    Které relace hlavní proces zrovna drží.
+
+    Needed because locking is not the same thing as disconnecting. With
+    `disconnectOnLock` off — a setting the user can choose — doLock() leaves the
+    SSH clients connected on purpose, but the renderer clears its session list
+    on `vault:locked` regardless. Nothing then put those sessions back: there
+    was no channel to ask, so after unlocking they were live, authenticated and
+    invisible. The user could not switch to one, could not read it and could not
+    close it for the rest of the process lifetime, while MCP still enumerated
+    them and could still run approved commands on them.
+
+    Guarded like the rest of the ssh handlers: a locked vault has nothing to say
+    about its sessions.
+  */
+  handle(CH.sshList, () => {
+    vault.requireUnlockedPublic()
+    return ssh.list()
+  })
   handle(CH.sshConnect, (connectionId: string) => {
     vault.requireUnlockedPublic()
     return ssh.connect(connectionId)

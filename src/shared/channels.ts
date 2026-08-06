@@ -29,6 +29,7 @@ export const CH = {
   hostsList: 'hosts:list',
   hostsForget: 'hosts:forget',
 
+  sshList: 'ssh:list',
   sshConnect: 'ssh:connect',
   sshWrite: 'ssh:write',
   sshResize: 'ssh:resize',

@@ -93,14 +93,32 @@ export default function App() {
   /* ---------------------------------------------------------- inicializace */
 
   const loadData = useCallback(async () => {
-    const [list, snips, cfg] = await Promise.all([
+    const [list, snips, cfg, live] = await Promise.all([
       api.connections.list(),
       api.snippets.list(),
-      api.settings.get()
+      api.settings.get(),
+      api.ssh.list()
     ])
     if (list.ok) setConnections(list.value)
     if (snips.ok) setSnippets(snips.value)
     if (cfg.ok) setSettings(cfg.value)
+    /*
+      Relace se přebírají od hlavního procesu, ne z paměti rendereru.
+
+      Locking is not disconnecting. With `disconnectOnLock` off — the user's
+      choice — doLock() deliberately leaves the SSH clients connected, but the
+      handler above clears the session list on `vault:locked` either way. There
+      was nothing to put them back, so after unlocking those sessions were live,
+      authenticated and unreachable: no tab, no way to read them, no way to
+      close them for the rest of the process lifetime, while MCP went on
+      enumerating them and running approved commands on them.
+
+      Main is the authority on what is connected, so ask it. On a cold start it
+      answers with an empty list and this costs nothing. Output that arrived
+      while the terminal was unmounted is still queued in terminalBus and gets
+      replayed when the view registers its sink again.
+    */
+    if (live.ok) setSessions(live.value)
   }, [])
 
   const refreshVault = useCallback(async () => {

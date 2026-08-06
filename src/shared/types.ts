@@ -273,6 +273,8 @@ export interface AppApi {
     forget(hostKey: string): Promise<Result<null>>
   }
   ssh: {
+    /** Relace, které hlavní proces drží — po odemčení se podle nich obnoví seznam. */
+    list(): Promise<Result<SessionInfo[]>>
     connect(connectionId: string): Promise<Result<string>>
     write(sessionId: string, data: string): Promise<Result<null>>
     resize(sessionId: string, cols: number, rows: number): Promise<Result<null>>
