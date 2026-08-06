@@ -10,7 +10,7 @@
     "build": "electron-vite build",
     "start": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "dist": "electron-vite build && electron-builder --win",
+    "dist": "electron-vite build && electron-builder --win --publish never",
     "check:i18n-ui": "node scripts/check-i18n-ui.mjs",
     "check:i18n": "node scripts/check-i18n-dictionaries.mjs",
     "build:icon": "electron scripts/icon/main.js",
