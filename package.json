@@ -16,6 +16,7 @@
     "build:icon": "electron scripts/icon/main.js",
     "test": "node --experimental-test-module-mocks --import ./test/setup.mts --test test/**/*.test.mts",
     "notice": "node scripts/generate-notice.mjs",
+    "notice:dist": "node scripts/generate-notice.mjs --dist",
     "check:notice": "node scripts/generate-notice.mjs --check"
   },
   "keywords": [

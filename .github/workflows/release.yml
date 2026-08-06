@@ -60,17 +60,21 @@ jobs:
       # afterwards without cutting a new tag.
       #
       # Regenerated here, NOT checked, and the difference is the whole point.
-      # `cpu-features` and `buildcheck` are optional native dependencies: they
-      # install only where a compiler is present, so the committed NOTICE —
-      # written on a machine without one — legitimately omits them while this
-      # runner legitimately ships them. `--check` fails on exactly that, and
-      # the first tagged release failed on it. Generating is still a gate: the
-      # script exits non-zero when an INSTALLED package's terms cannot be
-      # reproduced, which is the failure that actually matters here.
+      # `cpu-features`, `buildcheck` and `nan` are optional native dependencies:
+      # they install only where a compiler is present, so the committed NOTICE
+      # deliberately omits them — it has to be reproducible on a laptop — while
+      # this runner legitimately ships them.
+      #
+      # `--dist` is what makes that split explicit: it is the only form that
+      # reads the installed tree, and this is the only place it runs. Without it
+      # the installer would go out carrying native code whose licence terms were
+      # not reproduced beside it, which is the obligation this file exists for.
+      # Generating is still a gate: the script exits non-zero when an INSTALLED
+      # package's terms cannot be reproduced.
       #
       # Before the build below, so what ships is what this machine installed.
       - name: Third-party notices for what this machine ships
-        run: npm run notice
+        run: npm run notice:dist
 
       - name: Icon is present and parses as an ICO
         shell: bash
