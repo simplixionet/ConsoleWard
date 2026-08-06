@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Simplixio — Stanislav Opletal <info@simplixio.net>
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { CommandApproval } from '@shared/types'
 import { useT } from '../i18n'
 import { useArmedAfterPaint } from '../armDelay'
@@ -28,6 +28,29 @@ export default function CommandApprovalDialog({ request, onAnswer }: Props) {
   // it stays in the warning.
   const multiline = /[\n\r]/.test(request.command)
 
+  /*
+    Whether the command is taller than the box that shows it.
+
+    `.command-box` is capped at 220px with `overflow-y: auto`, so a long enough
+    command is simply scrolled out of sight while the Run button stays pinned in
+    the footer. The scrollbar is the only cue, and against the box's dark
+    background it is easy to miss — worst of all when the overflow is slight,
+    because then the thumb is nearly full height and reads as no scrollbar.
+
+    That matters more here than the cap itself does: the gate's whole value is
+    that the human sees the exact bytes that will run, and mcp.injectionWarn
+    tells them to read it even when it looks harmless. Measured rather than
+    guessed from a character count, because the real threshold depends on the
+    font, the DPI and the width of the wrapped lines.
+  */
+  const boxRef = useRef<HTMLPreElement>(null)
+  const [clipped, setClipped] = useState(false)
+  useEffect(() => {
+    const el = boxRef.current
+    if (!el) return
+    setClipped(el.scrollHeight > el.clientHeight + 1)
+  }, [request.commandVisualized])
+
   return (
     <div className="modal-backdrop">
       <div className="modal wide-modal danger-modal">
@@ -49,11 +72,20 @@ export default function CommandApprovalDialog({ request, onAnswer }: Props) {
           </div>
 
           <div>
-            <div className="meta-label">{t('mcp.commandToRun')}</div>
-            <pre className="command-box">{request.commandVisualized}</pre>
+            <div className="meta-label meta-label-row">
+              <span>{t('mcp.commandToRun')}</span>
+              {/* The length of what RUNS, not of the visualised copy: the
+                  control-character glyphs expand the text on screen. */}
+              <span className="meta-count">{t('mcp.totalCount', { count: request.command.length })}</span>
+            </div>
+            <pre className="command-box" ref={boxRef}>
+              {request.commandVisualized}
+            </pre>
           </div>
 
           <div className="note-box">{t('mcp.separateShellWarn')}</div>
+
+          {clipped && <div className="warn-box">{t('mcp.commandClippedWarn')}</div>}
 
           {multiline && <div className="warn-box">{t('mcp.multilineWarn')}</div>}
 

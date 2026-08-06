@@ -225,6 +225,7 @@
   "mcp.noReason": "(keine angegeben)",
   "mcp.commandToRun": "Auszuführender Befehl",
   "mcp.multilineWarn": "Der Befehl enthält mehrere Zeilen — sie laufen alle nacheinander.",
+  "mcp.commandClippedWarn": "Der Befehl ist länger als das Feld — scrolle bis ans Ende, bevor du zustimmst.",
   "mcp.injectionWarn": "Der Vorschlag entstand aus Text, der aus der Ausgabe des Servers stammen kann. Lies ihn auch dann, wenn er harmlos wirkt.",
   "mcp.separateShellWarn": "Das läuft NICHT in deinem offenen Terminal. Es bekommt einen eigenen Kanal auf derselben Verbindung: eine frische Shell im Home-Verzeichnis, ohne deine Aliase, Shell-Funktionen und PATH-Ergänzungen, und ohne Möglichkeit, auf eine Passwortabfrage zu antworten.",
   "mcp.autoShare": "Ausgabe nach dem Durchlauf automatisch senden — außer sie sieht nach Zugangsdaten aus",

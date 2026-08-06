@@ -225,6 +225,7 @@
   "mcp.noReason": "(none given)",
   "mcp.commandToRun": "Command to run",
   "mcp.multilineWarn": "The command contains several lines — all of them will run one after another.",
+  "mcp.commandClippedWarn": "The command is taller than the box — scroll to the end of it before you approve.",
   "mcp.injectionWarn": "The proposal was built from text that may have come out of the server's own output. Read it even when it looks harmless.",
   "mcp.separateShellWarn": "This will NOT run in your open terminal. It gets its own channel on the same connection: a fresh shell in the home directory, without your aliases, shell functions or PATH additions, and with no way to answer a password prompt.",
   "mcp.autoShare": "Send the output automatically once it finishes — unless it looks like it contains a credential",

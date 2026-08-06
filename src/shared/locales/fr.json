@@ -225,6 +225,7 @@
   "mcp.noReason": "(non indiqué)",
   "mcp.commandToRun": "Commande à exécuter",
   "mcp.multilineWarn": "La commande contient plusieurs lignes : elles s'exécuteront toutes à la suite.",
+  "mcp.commandClippedWarn": "La commande dépasse le cadre : fais défiler jusqu'au bout avant de l'approuver.",
   "mcp.injectionWarn": "La proposition a été construite à partir de texte pouvant provenir de la sortie du serveur. Lis-la même si elle paraît inoffensive.",
   "mcp.separateShellWarn": "Cela ne s'exécutera PAS dans ton terminal ouvert. La commande obtient son propre canal sur la même connexion : un shell neuf dans le répertoire personnel, sans tes alias, fonctions de shell ni ajouts au PATH, et sans moyen de répondre à une demande de mot de passe.",
   "mcp.autoShare": "Envoyer la sortie automatiquement à la fin, sauf si elle semble contenir des identifiants",

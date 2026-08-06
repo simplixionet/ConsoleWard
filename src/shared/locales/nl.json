@@ -225,6 +225,7 @@
   "mcp.noReason": "(niet opgegeven)",
   "mcp.commandToRun": "Uit te voeren commando",
   "mcp.multilineWarn": "Het commando bevat meerdere regels — ze worden allemaal na elkaar uitgevoerd.",
+  "mcp.commandClippedWarn": "De opdracht is langer dan het kader — scroll naar het einde voordat je goedkeurt.",
   "mcp.injectionWarn": "Het voorstel is opgebouwd uit tekst die uit de uitvoer van de server kan komen. Lees het ook als het onschuldig lijkt.",
   "mcp.separateShellWarn": "Dit wordt NIET uitgevoerd in je geopende terminal. Het krijgt een eigen kanaal op dezelfde verbinding: een verse shell in de thuismap, zonder je aliassen, shell-functies of PATH-aanvullingen, en zonder manier om op een wachtwoordvraag te antwoorden.",
   "mcp.autoShare": "Uitvoer na afloop automatisch versturen, tenzij er inloggegevens in lijken te staan",

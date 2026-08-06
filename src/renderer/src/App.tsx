@@ -504,11 +504,25 @@ export default function App() {
       )}
 
       {/*
-        `key` je nosný ze stejného důvodu jako u dialogů níž — a tenhle ho
-        neměl. Bez něj React přes dvě různé výzvy komponentu jen přesmykne
-        místo remountu, takže `useState` inicializátory a prodleva proti
-        prokliku se nespustí znovu: odpověď na klíč serveru A může padnout na
-        obrazovku, která už se ptá na klíč serveru B.
+        Nejvýš jeden schvalovací dialog naráz.
+
+        These three used to render on independent conditions, all rooted in
+        `.modal-backdrop` at the same z-index and in the same parent — so paint
+        order was DOM order and whichever came last covered the ones before it.
+        The dangerous dialog was always the covered one.
+
+        That is worse than an ordering annoyance, because `useArmedAfterPaint`
+        keys off requestAnimationFrame, which is document-wide: an occluded but
+        still-mounted dialog arms on schedule. Its `key` does not change when
+        the cover unmounts, so React does not remount it and the delay does not
+        restart — the danger button is live in the very first painted frame
+        after the dialog above it goes away. The anti-click-through delay exists
+        precisely to stop a click landing on a button the user has not read yet.
+
+        Rendering one at a time removes the whole class. The order is by how
+        long the request can wait: a host-key prompt times out in two minutes,
+        an approval in five, so the shorter fuse goes first. A deferred request
+        that does hit its timeout is denied, which is the safe direction.
       */}
       {hostKeyQueue.length > 0 && (
         <HostKeyDialog
@@ -527,7 +541,7 @@ export default function App() {
         DECISIONS.md says does not exist. Keying on the request id forces a
         fresh mount per request.
       */}
-      {commandQueue.length > 0 && (
+      {hostKeyQueue.length === 0 && commandQueue.length > 0 && (
         <CommandApprovalDialog
           key={commandQueue[0].id}
           request={commandQueue[0]}
@@ -539,7 +553,7 @@ export default function App() {
         />
       )}
 
-      {shareQueue.length > 0 && (
+      {hostKeyQueue.length === 0 && commandQueue.length === 0 && shareQueue.length > 0 && (
         <OutputShareDialog
           key={shareQueue[0].id}
           request={shareQueue[0]}
