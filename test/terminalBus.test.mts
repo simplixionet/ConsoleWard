@@ -18,8 +18,8 @@ function fakeSource(text: string): SelectionSource {
   }
 }
 
-describe('registr výběru z terminálu', () => {
-  it('vrátí, co bylo zaregistrováno', () => {
+describe('terminal selection registry', () => {
+  it('hands back what was registered', () => {
     const source = fakeSource('ahoj')
     const off = registerSelection('s1', source)
     assert.equal(terminalSelection('s1'), source)
@@ -27,7 +27,7 @@ describe('registr výběru z terminálu', () => {
     off()
   })
 
-  it('neznámá relace nemá výběr', () => {
+  it('an unknown session has no selection', () => {
     assert.equal(terminalSelection('neexistuje'), null)
   })
 
@@ -36,7 +36,7 @@ describe('registr výběru z terminálu', () => {
    * something, so session teardown must clear this registry and not just the
    * data sinks — otherwise the button comes back pointing at a disposed xterm.
    */
-  it('forget zahodí i výběr, ne jen sinky', () => {
+  it('forget drops the selection too, not just the sinks', () => {
     registerSelection('s2', fakeSource('x'))
     assert.notEqual(terminalSelection('s2'), null)
     forget('s2')
@@ -48,20 +48,20 @@ describe('registr výběru z terminálu', () => {
    * unregistering by key alone drops the terminal that is actually on screen and
    * silently kills console selection for a live session.
    */
-  it('odhlášení staré instance nesmí smazat novou', () => {
-    const older = fakeSource('starý')
-    const newer = fakeSource('nový')
+  it('unregistering the old instance must not wipe the new one', () => {
+    const older = fakeSource('older')
+    const newer = fakeSource('newer')
     const offOlder = registerSelection('s3', older)
     const offNewer = registerSelection('s3', newer)
 
     offOlder()
 
-    assert.equal(terminalSelection('s3'), newer, 'nová instance musí přežít')
+    assert.equal(terminalSelection('s3'), newer, 'the newer instance must survive')
     offNewer()
     assert.equal(terminalSelection('s3'), null)
   })
 
-  it('odhlášení je idempotentní', () => {
+  it('unregistering is idempotent', () => {
     const source = fakeSource('x')
     const off = registerSelection('s4', source)
     off()
@@ -69,7 +69,7 @@ describe('registr výběru z terminálu', () => {
     assert.equal(terminalSelection('s4'), null)
   })
 
-  it('relace se navzájem nemíchají', () => {
+  it('sessions never bleed into one another', () => {
     const a = fakeSource('a')
     const b = fakeSource('b')
     registerSelection('s5a', a)

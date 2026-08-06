@@ -1693,25 +1693,25 @@ test('a v3 header that cannot be encoded is reported as damaged, not crashed', a
 
 const guardPath = (): string => path.join(dir, 'vault.guard')
 
-test('vault.guard vznikne vedle trezoru a drží poslední zápis', async () => {
+test('vault.guard appears beside the vault and holds the last write', async () => {
   fresh()
   await vault.create(PASSWORD)
 
-  assert.ok(fs.existsSync(guardPath()), 'kotva musí vzniknout hned se založením')
+  assert.ok(fs.existsSync(guardPath()), 'the anchor must appear the moment the vault is created')
 
   const before = readVaultFile().counter
   await vault.mutate((d) => d.connections.push(sampleConnection()))
   const after = readVaultFile().counter
 
-  assert.ok(after! > before!, 'zápis musí posunout čítač')
+  assert.ok(after! > before!, 'a write must advance the counter')
   // The anchor tracks the counter, not the clock; with no keyring it is plain text.
   const anchor = JSON.parse(
     Buffer.from(JSON.parse(fs.readFileSync(guardPath(), 'utf8')).payload, 'base64').toString('utf8')
   )
-  assert.equal(anchor.counter, after, 'kotva musí odpovídat souboru po zápisu')
+  assert.equal(anchor.counter, after, 'the anchor must match the file after a write')
 })
 
-test('běžné odemčení nehlásí vrácení souboru', async () => {
+test('an ordinary unlock reports no rollback', async () => {
   fresh()
   await vault.create(PASSWORD)
   await vault.mutate((d) => d.connections.push(sampleConnection()))
@@ -1723,7 +1723,7 @@ test('běžné odemčení nehlásí vrácení souboru', async () => {
 
 // An attacker who can only write files swaps yesterday's vault.enc back in: every
 // tag in it verifies, because it really was ours. Only the anchor outside notices.
-test('podstrčení starší kopie se pozná', async () => {
+test('an older copy planted underneath is caught', async () => {
   fresh()
   await vault.create(PASSWORD)
   const stale = fs.readFileSync(vaultPath())
@@ -1748,7 +1748,7 @@ test('podstrčení starší kopie se pozná', async () => {
   )
 })
 
-test('smazaná kotva nehlásí nic – nemá s čím porovnávat', async () => {
+test('a deleted anchor reports nothing — it has nothing to compare against', async () => {
   fresh()
   await vault.create(PASSWORD)
   const stale = fs.readFileSync(vaultPath())
@@ -1759,10 +1759,10 @@ test('smazaná kotva nehlásí nic – nemá s čím porovnávat', async () => {
   fs.rmSync(guardPath())
 
   await vault.unlock(PASSWORD)
-  assert.deepEqual(vault.rollback, { kind: 'unknown' }, 'bez kotvy se nesmí hádat')
+  assert.deepEqual(vault.rollback, { kind: 'unknown' }, 'with no anchor it must not guess')
 })
 
-test('zamčení verdikt zahodí', async () => {
+test('locking throws the verdict away', async () => {
   fresh()
   await vault.create(PASSWORD)
   const stale = fs.readFileSync(vaultPath())
@@ -1773,12 +1773,12 @@ test('zamčení verdikt zahodí', async () => {
   assert.equal(vault.rollback.kind, 'rollback')
 
   vault.lock()
-  assert.deepEqual(vault.rollback, { kind: 'unknown' }, 'varování nesmí přežít zamčení')
+  assert.deepEqual(vault.rollback, { kind: 'unknown' }, 'the warning must not survive a lock')
 })
 
 // Recovery is a route in too, and someone recovering into a planted older file is
 // who most needs telling.
-test('obnova obnovovacím klíčem taky pozná vrácení souboru', async () => {
+test('a recovery-key unlock spots a rolled-back file too', async () => {
   fresh()
   const recoveryKey = await vault.create(PASSWORD)
   const stale = fs.readFileSync(vaultPath())
@@ -1794,7 +1794,7 @@ test('obnova obnovovacím klíčem taky pozná vrácení souboru', async () => {
 // The vault write has already landed by the time the anchor is touched, so a
 // failure here must not be reported as a failed write -- the caller would undo
 // in-memory state over something that actually succeeded.
-test('nezapsatelná kotva neshodí zápis trezoru', async () => {
+test('an anchor that cannot be written does not fail the vault write', async () => {
   fresh()
   await vault.create(PASSWORD)
 
@@ -1803,14 +1803,14 @@ test('nezapsatelná kotva neshodí zápis trezoru', async () => {
 
   await vault.mutate((d) => d.connections.push(sampleConnection()))
 
-  assert.equal(vault.read().connections.length, 1, 'změna musí projít i bez kotvy')
-  assert.ok(readVaultFile().counter! >= 2, 'trezor se musí zapsat')
+  assert.equal(vault.read().connections.length, 1, 'the change must go through without an anchor')
+  assert.ok(readVaultFile().counter! >= 2, 'the vault itself must still be written')
 })
 
 // Deleting vault.enc and leaving vault.guard behind is something a person can do,
 // and the transplanted vault would then be judged against a counter that was never
 // its own. The anchor belongs to the file, not to the directory.
-test('přenos profilu zahodí kotvu po jiném trezoru', async () => {
+test('a profile migration drops an anchor that belonged to another vault', async () => {
   fresh()
   await vault.create(PASSWORD)
   for (let i = 0; i < 3; i++) {
@@ -1827,14 +1827,14 @@ test('přenos profilu zahodí kotvu po jiném trezoru', async () => {
   fs.copyFileSync(vaultPath(), path.join(legacyDir, 'vault.enc'))
 
   fs.rmSync(vaultPath())
-  assert.ok(fs.existsSync(guardPath()), 'předpoklad testu: kotva tu ještě je')
+  assert.ok(fs.existsSync(guardPath()), 'precondition: the anchor is still here')
 
   const from = await migrateLegacyProfile(['putty-ui'])
-  assert.equal(from, legacyDir, 'přenos musí proběhnout')
-  assert.ok(!fs.existsSync(guardPath()), 'cizí kotva nesmí přenos přežít')
+  assert.equal(from, legacyDir, 'the migration must have happened')
+  assert.ok(!fs.existsSync(guardPath()), 'a foreign anchor must not survive the migration')
 
   await vault.unlock(PASSWORD)
-  assert.deepEqual(vault.rollback, { kind: 'unknown' }, 'přenesený trezor nesmí být obviněn')
+  assert.deepEqual(vault.rollback, { kind: 'unknown' }, 'a migrated vault must not be accused')
 })
 
 test('a failed reseal during recovery does not leave the vault open', async () => {
@@ -1857,7 +1857,7 @@ test('a failed reseal during recovery does not leave the vault open', async () =
   assert.equal(vault.isUnlocked(), true, 'the one chance at recovery was burned')
 })
 
-test('obnova vrací nový klíč, protože ten použitý rotací přestal platit', async () => {
+test('recovery hands back a new key, because the rotation retires the one just used', async () => {
   // Recovery rotates the DEK, so the key just used stops working: a caller that
   // does not show what comes back leaves the user with no way in.
   fresh()
@@ -1865,15 +1865,15 @@ test('obnova vrací nový klíč, protože ten použitý rotací přestal platit
   vault.lock()
 
   const second = await vault.unlockWithRecovery(first, OTHER_PASSWORD)
-  assert.notEqual(second, first, 'obnova musí vrátit jiný klíč než ten použitý')
-  assert.match(second, /^[0-9A-Z]{5}(-[0-9A-Z]{5}){5}$/, 'a použitelný, ne prázdný řetězec')
+  assert.notEqual(second, first, 'recovery must return a key other than the one just used')
+  assert.match(second, /^[0-9A-Z]{5}(-[0-9A-Z]{5}){5}$/, 'and a usable one, not an empty string')
 
   vault.lock()
   await assert.rejects(
     () => vault.unlockWithRecovery(first, THIRD_PASSWORD),
-    'starý klíč musí po rotaci přestat platit'
+    'the old key must stop working after the rotation'
   )
   vault.lock()
   await vault.unlockWithRecovery(second, THIRD_PASSWORD)
-  assert.equal(vault.isUnlocked(), true, 'nový klíč musí fungovat')
+  assert.equal(vault.isUnlocked(), true, 'the new key must work')
 })
