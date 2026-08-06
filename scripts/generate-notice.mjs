@@ -15,11 +15,28 @@
  * nobody regenerates is worse than none — it is a specific, checkable claim
  * about what is inside, and it would be wrong.
  *
- *   node scripts/generate-notice.mjs           # write NOTICE
- *   node scripts/generate-notice.mjs --check   # fail if NOTICE is out of date
+ *   node scripts/generate-notice.mjs           # write the checked-in NOTICE
+ *   node scripts/generate-notice.mjs --check   # fail if that file is out of date
+ *   node scripts/generate-notice.mjs --dist    # write what THIS machine ships
  *
  * The --check form is what CI runs, so a forgotten regeneration is a red build
  * rather than a licensing problem discovered by someone else.
+ *
+ * Why there are two forms. Three production packages are `optional` in the lock
+ * file — `cpu-features`, `buildcheck` and `nan` — and whether they install at
+ * all depends on the machine: ssh2 asks for `cpu-features`, which needs a
+ * compiler. So a developer laptop resolves 104 packages and a Windows CI runner
+ * with MSVC resolves 106, from identical sources. A `--check` that read the
+ * installed tree therefore compared two different questions and failed on every
+ * runner that could build more than the committer's machine could, which is
+ * what it did: CI has been red since the gate started running there.
+ *
+ * The checked-in file is built from the lock file alone, skipping everything
+ * marked optional, so it is byte-identical everywhere and can be checked. The
+ * shipped file is built with --dist from what is actually on disk, on the
+ * machine that produces the installer, so it reproduces the terms of everything
+ * that really goes out. Those are genuinely two different files and conflating
+ * them is what broke.
  */
 
 import fs from 'node:fs'
@@ -51,15 +68,22 @@ const LICENCE_FILES = [
  * shell — and routing arguments through a shell in a script CI runs is not a
  * trade worth making for a file read.
  *
- * `dev` is what decides. `optional` is kept, because an optional dependency
- * that IS installed is distributed like any other.
+ * `dev` is what decides what is production at all. `optional` decides only
+ * whether a package can be counted on to be here: an optional dependency that
+ * IS installed is distributed like any other, so --dist keeps it, but the
+ * checked-in file cannot contain it and still be reproducible off this machine.
  */
-function productionPackages() {
+function productionPackages({ includeOptional }) {
   const lock = JSON.parse(fs.readFileSync(path.join(root, 'package-lock.json'), 'utf8'))
   const found = new Map()
+  const skipped = new Set()
 
   for (const [key, info] of Object.entries(lock.packages ?? {})) {
     if (!key.startsWith('node_modules/') || info.dev) continue
+    if (info.optional && !includeOptional) {
+      skipped.add(key.slice(key.lastIndexOf('node_modules/') + 'node_modules/'.length))
+      continue
+    }
     // Nested installs appear as `node_modules/a/node_modules/b`; the package is
     // whatever follows the last `node_modules/`.
     const name = key.slice(key.lastIndexOf('node_modules/') + 'node_modules/'.length)
@@ -75,9 +99,10 @@ function productionPackages() {
     const id = `${name}@${version ?? '?'}`
     if (!found.has(id)) found.set(id, { name, version, dir: key })
   }
-  return [...found.values()].sort((a, b) =>
+  const packages = [...found.values()].sort((a, b) =>
     a.name === b.name ? (a.version < b.version ? -1 : 1) : a.name < b.name ? -1 : 1
   )
+  return { packages, skipped: [...skipped].sort() }
 }
 
 function readPackage(installPath) {
@@ -104,8 +129,8 @@ function licenceId(meta) {
   return 'UNKNOWN'
 }
 
-function build() {
-  const packages = productionPackages()
+function build({ includeOptional }) {
+  const { packages, skipped } = productionPackages({ includeOptional })
   const sections = []
   const missing = []
   const counts = new Map()
@@ -151,6 +176,24 @@ function build() {
     .map(([id, n]) => `  ${String(n).padStart(3)}  ${id}`)
     .join('\n')
 
+  /*
+    Named, not silently dropped. The whole value of this file is that it is a
+    checkable claim about what is inside, so the one category it deliberately
+    does not cover has to be visible in it — otherwise the omission is
+    indistinguishable from a bug, which is how it would eventually be treated.
+  */
+  const optionalNote = skipped.length
+    ? [
+        '',
+        'Conditionally installed packages are NOT listed above: they build only',
+        'where a toolchain is present, so a file that included them would depend',
+        'on the machine that generated it and could not be checked. The installer',
+        'ships a NOTICE regenerated with --dist on the build machine, which does',
+        'reproduce the terms of whichever of these it actually installed:',
+        ...skipped.map((name) => `  ${name}`)
+      ]
+    : []
+
   const header = [
     'THIRD-PARTY NOTICES',
     '',
@@ -167,6 +210,7 @@ function build() {
     `Packages: ${packages.length - absent.length}`,
     '',
     summary,
+    ...optionalNote,
     '',
     'Electron, Chromium and Node.js are not reproduced here. electron-builder',
     'already places their terms beside the executable, as LICENSE.electron.txt',
@@ -183,8 +227,17 @@ function build() {
   }
 }
 
-const { text, missing, absent, count } = build()
 const check = process.argv.includes('--check')
+/*
+  --dist is the only form that reads optional packages off disk, and it is only
+  ever run on the machine that produces the installer. Everything else — the
+  checked-in file and the gate that guards it — is a pure function of the lock
+  file, so it gives the same answer on a laptop and on a runner with a compiler.
+  --check never accepts --dist: a gate whose expected value depends on the
+  machine running it is not a gate.
+*/
+const dist = process.argv.includes('--dist') && !check
+const { text, missing, absent, count } = build({ includeOptional: dist })
 
 if (check) {
   const current = fs.existsSync(noticePath) ? fs.readFileSync(noticePath, 'utf8') : ''
@@ -207,9 +260,8 @@ if (absent.length) {
   console.log('\nDeclared in the tree but not installed here, so not distributed:')
   for (const name of absent) console.log(`  ${name}`)
   console.log(
-    '\nOptional native dependencies land here. A machine that can build them\n' +
-      'ships them, so the release build has to regenerate this file rather than\n' +
-      'reuse one produced elsewhere.'
+    '\nOnly --dist reads the installed tree, so this list is what THIS machine\n' +
+      'would have shipped and did not. The checked-in NOTICE is unaffected.'
   )
 }
 
