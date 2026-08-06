@@ -240,6 +240,173 @@ describe('findSecrets: detects the patterns it advertises', () => {
 })
 
 // --------------------------------------------------------------------------
+// Credential file formats
+//
+// Each of these scanned as `medium` at worst before, which is the severity
+// `outputNeedsReview` in mcp.ts does NOT force the review dialog for. So a
+// model that asked to run `cat` on any of them, with the auto-share box
+// ticked, had the contents forwarded with no human ever seeing them. The
+// severity is the assertion that matters here, not the label.
+// --------------------------------------------------------------------------
+
+describe('findSecrets: credential file formats reach high severity', () => {
+  test('an armoured PGP secret key is flagged high, suffix label and all', () => {
+    // `-----BEGIN PGP PRIVATE KEY BLOCK-----` puts a word AFTER "PRIVATE KEY",
+    // which the pattern's leading `[ A-Z]*` alone could never match. The whole
+    // of GnuPG's secret keyring reads as `secret.randomString` without this.
+    const block = [
+      '-----BEGIN PGP PRIVATE KEY BLOCK-----',
+      '',
+      'lQOYBGYxAAABCADQ3Fh1Qm0oV0mQmZ4Nn0pQ0Xr8ZzY7cB2vK9tJ6dW3sL4pR1nT5uH',
+      'y3Fh1Qm0oV0mQmZ4Nn0pQ0Xr8ZzY7cB2vK9tJ6dW3sL4pR1nT5uHy3Fh1Qm0oV0mQm',
+      '-----END PGP PRIVATE KEY BLOCK-----'
+    ].join('\n')
+    expectHit('gpg --export-secret-keys --armor\n' + block, 'secret.privateKey', 'high', block)
+  })
+
+  test('the other armoured labels did not regress', () => {
+    for (const label of ['RSA', 'OPENSSH', 'EC', 'ENCRYPTED', '']) {
+      const header = `-----BEGIN ${label} PRIVATE KEY-----`.replace('  ', ' ')
+      const hit = findSecrets(header)[0]
+      assert.equal(hit?.severity, 'high', `${header} stopped being flagged`)
+    }
+  })
+
+  test('a PuTTY .ppk is flagged high as secret.puttyKey', () => {
+    // This application replaces PuTTY, so its users are the people with these.
+    const ppk = [
+      'PuTTY-User-Key-File-3: ssh-ed25519',
+      'Encryption: none',
+      'Comment: deploy@web01',
+      'Public-Lines: 2',
+      'AAAAC3NzaC1lZDI1NTE5AAAAIK7hTn2vQ9wXsL4pR1nT5uHy3Fh1Qm0oV0mQmZ4Nn0pQ',
+      'Private-Lines: 1',
+      'AAAAIB2vK9tJ6dW3sL4pR1nT5uHy3Fh1Qm0oV0mQmZ4Nn0pQ0Xr8'
+    ].join('\n')
+    const matches = findSecrets(ppk)
+    assert.ok(
+      matches.some((m) => m.label === 'secret.puttyKey' && m.severity === 'high'),
+      `a .ppk scanned as ${describeMatches(ppk, matches)}`
+    )
+  })
+
+  test('a kubeconfig client key is flagged high as secret.kubeClientKey', () => {
+    const text = [
+      'users:',
+      '- name: cluster-admin',
+      '  user:',
+      '    client-key-data: LS0tLS1CRUdJTiBSU0EgUFJJVkFURSBLRVktLS0tLQo3RmgxUW0wb1Yw'
+    ].join('\n')
+    const matches = findSecrets(text)
+    assert.ok(
+      matches.some((m) => m.label === 'secret.kubeClientKey' && m.severity === 'high'),
+      `a kubeconfig scanned as ${describeMatches(text, matches)}`
+    )
+  })
+
+  test('a docker config registry auth is flagged high as secret.dockerAuth', () => {
+    const text = '{"auths":{"registry.example.net":{"auth":"c3RhbjpodW50ZXIy"}}}'
+    const matches = findSecrets(text)
+    assert.ok(
+      matches.some((m) => m.label === 'secret.dockerAuth' && m.severity === 'high'),
+      `~/.docker/config.json scanned as ${describeMatches(text, matches)}`
+    )
+  })
+
+  test('a .netrc password is flagged high as secret.netrc', () => {
+    // Whitespace-separated, so `secret.assignment` never sees a `=` or `:`.
+    const text = 'machine api.example.net login deploy password hunter2'
+    const matches = findSecrets(text)
+    assert.ok(
+      matches.some((m) => m.label === 'secret.netrc' && m.severity === 'high'),
+      `a .netrc line scanned as ${describeMatches(text, matches)}`
+    )
+  })
+
+  test('a .pgpass line is flagged high as secret.pgpass', () => {
+    const text = 'db01.example.net:5432:production:postgres:s3cr3t-p4ss'
+    const matches = findSecrets(text)
+    assert.ok(
+      matches.some((m) => m.label === 'secret.pgpass' && m.severity === 'high'),
+      `a .pgpass line scanned as ${describeMatches(text, matches)}`
+    )
+  })
+
+  test('a JSON-quoted secret key is flagged, not just a bare one', () => {
+    // The quote closing the key name sits between the keyword and the colon,
+    // which used to end the match before it started.
+    const text = '{"api_key": "sk-live-not-a-real-key-000", "name": "prod"}'
+    const matches = findSecrets(text)
+    assert.ok(
+      matches.some((m) => m.label === 'secret.assignment' && m.severity === 'high'),
+      `a JSON config scanned as ${describeMatches(text, matches)}`
+    )
+  })
+})
+
+describe('findSecrets: the new file-format patterns stay off ordinary output', () => {
+  test('/etc/passwd is not mistaken for .pgpass', () => {
+    // Seven fields, so the five-field shape can only match if its last field
+    // swallows colons — which is exactly what it is written to refuse.
+    const text = [
+      'root:x:0:0:root:/root:/bin/bash',
+      'daemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin',
+      'stan:x:1000:1000:Stanislav:/home/stan:/bin/bash'
+    ].join('\n')
+    assert.equal(
+      findSecrets(text).filter((m) => m.label === 'secret.pgpass').length,
+      0,
+      '/etc/passwd would light up as a password file on every `cat`'
+    )
+  })
+
+  test('an IPv6 address and a timestamp are not mistaken for .pgpass', () => {
+    const text = 'fe80::1:2:3:4  up 12:34:56'
+    assert.equal(
+      findSecrets(text).filter((m) => m.label === 'secret.pgpass').length,
+      0,
+      'colon-separated output that is not a credential was flagged'
+    )
+  })
+
+  test('prose about passwords is not mistaken for a .netrc', () => {
+    const text = [
+      'usage: login to the machine first, then set a password for the account',
+      'The machine will ask for your password interactively.'
+    ].join('\n')
+    assert.equal(
+      findSecrets(text).filter((m) => m.label === 'secret.netrc').length,
+      0,
+      'documentation mentioning both words was flagged as a credential file'
+    )
+  })
+
+  test('ordinary listings pick up no NEW highlights', () => {
+    // A new pattern that lights up `ls` costs more than it buys. Asserted per
+    // label rather than with expectQuiet, because GIT_LOG is not quiet for
+    // reasons that predate these patterns — see the randomString known gap.
+    const added = [
+      'secret.puttyKey',
+      'secret.kubeClientKey',
+      'secret.dockerAuth',
+      'secret.netrc',
+      'secret.pgpass'
+    ]
+    for (const [name, text] of [
+      ['ls -la', LS_LA],
+      ['git log', GIT_LOG],
+      ['npm outdated', PACKAGE_VERSIONS]
+    ] as const) {
+      const noisy = findSecrets(text).filter((m) => added.includes(m.label))
+      assert.deepEqual(noisy, [], `${name} gained highlights it did not have before`)
+    }
+    // The two that were already quiet must have stayed exactly that way.
+    expectQuiet('ls -la', LS_LA)
+    expectQuiet('npm outdated', PACKAGE_VERSIONS)
+  })
+})
+
+// --------------------------------------------------------------------------
 // Negatives — the half that decides whether anyone still reads the highlights
 // --------------------------------------------------------------------------
 

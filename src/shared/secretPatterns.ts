@@ -79,13 +79,51 @@ const PATTERNS: PatternSpec[] = [
      * start marker rather than a complete block. 8192 is around 2.5x the body of
      * a 4096-bit RSA key, which is the largest thing realistically pasted here.
      */
-    re: /-----BEGIN[ A-Z]*PRIVATE KEY-----[\s\S]{0,8192}?-----END[ A-Z]*PRIVATE KEY-----/g,
+    /*
+     * The trailing `[ A-Z]*` is not symmetry for its own sake. PEM labels can
+     * carry words on *both* sides of "PRIVATE KEY", and exactly one format in
+     * common use does: `-----BEGIN PGP PRIVATE KEY BLOCK-----`. Without it the
+     * suffix ` BLOCK` sat between the label and the closing dashes and the
+     * pattern could not match, so an armoured GnuPG secret key — the one thing
+     * in this list nobody would ever want to hand a model — scanned as nothing
+     * worse than `secret.randomString`, i.e. `medium`, i.e. not enough to force
+     * the review dialog open. RSA/OPENSSH/EC/ENCRYPTED all matched, which is
+     * why it went unnoticed.
+     */
+    re: /-----BEGIN[ A-Z]*PRIVATE KEY[ A-Z]*-----[\s\S]{0,8192}?-----END[ A-Z]*PRIVATE KEY[ A-Z]*-----/g,
     label: 'secret.privateKey',
     severity: 'high'
   },
   {
-    re: /-----BEGIN[ A-Z]*PRIVATE KEY-----/g,
+    re: /-----BEGIN[ A-Z]*PRIVATE KEY[ A-Z]*-----/g,
     label: 'secret.privateKeyStart',
+    severity: 'high'
+  },
+  {
+    /*
+     * PuTTY's own key format. This application is a PuTTY replacement, so its
+     * users are precisely the population with `.ppk` files on disk — and a
+     * `.ppk` is PEM-shaped in spirit but shares none of the BEGIN/END text the
+     * pattern above keys on. Both markers are matched: the header names the
+     * file, and `Private-Lines:` still identifies it when only the tail of a
+     * `type`/`cat` scrolled past.
+     */
+    re: /\b(?:PuTTY-User-Key-File-\d{1,2}|Private-Lines)\s*:/g,
+    label: 'secret.puttyKey',
+    severity: 'high'
+  },
+  {
+    // kubeconfig: the embedded client certificate key, base64 in one field.
+    // A cluster-admin credential that reads as a long random string otherwise.
+    re: /\bclient-key-data\s*:\s*\S{16,}/g,
+    label: 'secret.kubeClientKey',
+    severity: 'high'
+  },
+  {
+    // ~/.docker/config.json — base64 of `user:password` for a registry.
+    // "auth" is not in the keyword list below and would slip through it.
+    re: /"auth"\s*:\s*"[A-Za-z0-9+/=]{8,}"/g,
+    label: 'secret.dockerAuth',
     severity: 'high'
   },
   {
@@ -123,9 +161,41 @@ const PATTERNS: PatternSpec[] = [
      * heslo=…, password: …, ale i DB_PASSWORD=…, MYSQL_ROOT_PASSWORD=…, apiKey: …
      * Klíčové slovo smí být uprostřed identifikátoru – proto se okolo něj
      * povolují další znaky místo prostého \b, které se mezi „_" a „P" nechytí.
+     *
+     * The optional `["']` before the separator is what makes this work on JSON
+     * and quoted YAML. A key is written `"password": "…"` there, and the quote
+     * that closes the key is not in the identifier class, so the pattern used to
+     * run out of characters before reaching the colon and matched nothing at
+     * all — every secret in every JSON config the user happened to `cat` read
+     * as clean. That covers `~/.docker/config.json`'s `identitytoken` too.
      */
-    re: /(?<![A-Za-z0-9_])[A-Za-z0-9_.-]{0,40}(?:password|passwd|pwd|heslo|secret|api[_-]?key|apikey|token|access[_-]?key|private[_-]?key|credential)[A-Za-z0-9_.-]{0,40}\s*[=:]\s*("[^"\n]+"|'[^'\n]+'|\S+)/gi,
+    re: /(?<![A-Za-z0-9_])[A-Za-z0-9_.-]{0,40}(?:password|passwd|pwd|heslo|secret|api[_-]?key|apikey|token|access[_-]?key|private[_-]?key|credential)[A-Za-z0-9_.-]{0,40}["']?\s*[=:]\s*("[^"\n]+"|'[^'\n]+'|\S+)/gi,
     label: 'secret.assignment',
+    severity: 'high'
+  },
+  {
+    /*
+     * ~/.netrc — `machine host login user password secret`.
+     *
+     * Whitespace-separated, so the assignment pattern above never sees the
+     * `=`/`:` it needs. Anchored on `machine`/`default` and bounded to 200
+     * characters of the same line, which keeps it off prose that merely uses
+     * the word "password" and keeps the scan linear.
+     */
+    re: /^[^\S\n]*(?:machine|default)\b[^\n]{0,200}?\bpassword[^\S\n]+\S+/gim,
+    label: 'secret.netrc',
+    severity: 'high'
+  },
+  {
+    /*
+     * ~/.pgpass — `host:port:database:user:password`, five fields exactly.
+     *
+     * The port field is restricted to digits and `*` and the last field forbids
+     * a colon, which is what keeps this off /etc/passwd (seven fields, so the
+     * tail would have to contain colons) and off IPv6 addresses and timestamps.
+     */
+    re: /^[^\s:]{1,253}:[0-9*]{1,5}:[^\s:]{0,64}:[^\s:]{1,64}:[^\s:]+$/gm,
+    label: 'secret.pgpass',
     severity: 'high'
   },
   {
