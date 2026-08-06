@@ -58,8 +58,19 @@ jobs:
       # verbatim. A stale one ships a precise, checkable and wrong claim about
       # what the user just installed — and unlike in CI, nobody can amend it
       # afterwards without cutting a new tag.
-      - name: Third-party notices are current
-        run: npm run check:notice
+      #
+      # Regenerated here, NOT checked, and the difference is the whole point.
+      # `cpu-features` and `buildcheck` are optional native dependencies: they
+      # install only where a compiler is present, so the committed NOTICE —
+      # written on a machine without one — legitimately omits them while this
+      # runner legitimately ships them. `--check` fails on exactly that, and
+      # the first tagged release failed on it. Generating is still a gate: the
+      # script exits non-zero when an INSTALLED package's terms cannot be
+      # reproduced, which is the failure that actually matters here.
+      #
+      # Before the build below, so what ships is what this machine installed.
+      - name: Third-party notices for what this machine ships
+        run: npm run notice
 
       - name: Icon is present and parses as an ICO
         shell: bash
