@@ -191,16 +191,7 @@ jobs:
           case-insensitively):
 
           ```
-          Get-FileHash '.\ConsoleWard Setup @VERSION@.exe' -Algorithm SHA256
-          ```
-
-          ### Provenance
-
-          Every asset above is attested to the workflow run that built it. With
-          the GitHub CLI:
-
-          ```
-          gh attestation verify '.\ConsoleWard Setup @VERSION@.exe' --repo ${{ github.repository }}
+          Get-FileHash .\ConsoleWard-Setup-@VERSION@.exe -Algorithm SHA256
           ```
           TAIL
           sed -i "s/@VERSION@/${GITHUB_REF_NAME#v}/g" NOTES.md
@@ -209,10 +200,40 @@ jobs:
       # which is the closest thing to a signature an unsigned installer gets.
       # Before the draft step: if provenance cannot be recorded, nothing should
       # reach the release page.
+      #
+      # Skipped while the repository is private, because GitHub does not offer
+      # the feature there on this plan — the API answers "upgrade the billing
+      # plan, or make this repository public". That is a fact about the account,
+      # not a fault in the build, and failing the release over it would leave no
+      # way to cut one at all. A private repository has no public artifact for
+      # anyone to verify, so nothing is lost until it goes public; the step then
+      # starts working on its own, with no edit here.
       - name: Build provenance
+        id: provenance
+        if: ${{ github.event.repository.private == false }}
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: dist/*
+
+      # The paragraph is appended only when the attestation above actually ran.
+      # Telling people to run `gh attestation verify` against a release that
+      # carries no attestation is the same failure as the checksum instruction
+      # that shipped with nothing to check.
+      - name: Note the provenance
+        if: ${{ steps.provenance.outcome == 'success' }}
+        run: |
+          cat >> NOTES.md <<'TAIL'
+
+          ### Provenance
+
+          Every asset above is attested to the workflow run that built it. With
+          the GitHub CLI:
+
+          ```
+          gh attestation verify .\ConsoleWard-Setup-@VERSION@.exe --repo @REPO@
+          ```
+          TAIL
+          sed -i "s/@VERSION@/${GITHUB_REF_NAME#v}/g;s|@REPO@|${{ github.repository }}|g" NOTES.md
 
       # Draft, not published. A human reads the notes, checks the installer and
       # presses the button — the same principle the product itself is built on.
