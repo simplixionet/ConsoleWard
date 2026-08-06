@@ -318,6 +318,8 @@
   "error.commandRunning": "In deze sessie loopt al een commando.",
   "error.shellFailed": "Kon geen shell openen: {{message}}",
   "error.authFailed": "Aanmelden mislukt — verkeerd wachtwoord, verkeerde sleutel of gebruiker.",
+  "error.sshReported": "De verbinding meldt: {{message}}",
+  "error.noDetail": "geen details",
   "error.sessionEnded": "Sessie beëindigd.",
   "error.mcpVaultLocked": "De kluis moet ontgrendeld zijn.",
   "error.mcpBridgeMissing": "De MCP-brug is niet verbonden.",

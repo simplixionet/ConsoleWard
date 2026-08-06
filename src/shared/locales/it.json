@@ -318,6 +318,8 @@
   "error.commandRunning": "In questa sessione è già in esecuzione un comando.",
   "error.shellFailed": "Impossibile aprire una shell: {{message}}",
   "error.authFailed": "Autenticazione fallita: password, chiave o utente errati.",
+  "error.sshReported": "La connessione segnala: {{message}}",
+  "error.noDetail": "nessun dettaglio",
   "error.sessionEnded": "Sessione terminata.",
   "error.mcpVaultLocked": "La cassaforte deve essere sbloccata.",
   "error.mcpBridgeMissing": "Il ponte MCP non è connesso.",

@@ -318,6 +318,8 @@
   "error.commandRunning": "In dieser Sitzung läuft bereits ein Befehl.",
   "error.shellFailed": "Shell konnte nicht geöffnet werden: {{message}}",
   "error.authFailed": "Authentifizierung fehlgeschlagen — falsches Passwort, falscher Schlüssel oder Benutzer.",
+  "error.sshReported": "Die Verbindung meldet: {{message}}",
+  "error.noDetail": "keine Details",
   "error.sessionEnded": "Sitzung beendet.",
   "error.mcpVaultLocked": "Der Tresor muss entsperrt sein.",
   "error.mcpBridgeMissing": "Die MCP-Brücke ist nicht verbunden.",

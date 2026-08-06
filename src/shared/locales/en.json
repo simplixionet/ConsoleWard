@@ -318,6 +318,8 @@
   "error.commandRunning": "A command is already running in this session.",
   "error.shellFailed": "Could not open a shell: {{message}}",
   "error.authFailed": "Authentication failed — wrong password, key or user.",
+  "error.sshReported": "The connection reported: {{message}}",
+  "error.noDetail": "no details",
   "error.sessionEnded": "Session ended.",
   "error.mcpVaultLocked": "The vault has to be unlocked.",
   "error.mcpBridgeMissing": "The MCP bridge is not connected.",

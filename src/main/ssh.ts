@@ -46,6 +46,42 @@ const RUN_TIMEOUT_MS = 30_000
  */
 const EXIT_GRACE_MS = 250
 
+/**
+ * Kolik znaků cizího chybového textu se ještě zobrazí.
+ *
+ * Long enough for any real diagnostic, short enough that the string cannot run
+ * away with the status bar.
+ */
+const SERVER_MESSAGE_CHARS = 200
+
+/**
+ * Text, který zvolil protějšek, na cestě do našeho vlastního chybového UI.
+ *
+ * `err.message` from ssh2 is not our text. The description in an
+ * SSH_MSG_DISCONNECT is an arbitrary string chosen by the peer, and that
+ * message is parsed and emitted *before* key exchange finishes — so an on-path
+ * attacker who merely accepts the TCP connection can put words on screen
+ * without holding any key material. The channel-open failure path carries the
+ * server's description too.
+ *
+ * Everything else in this application that shows the user remote text sends it
+ * through `cleanTerminalText` first; this path was the one that did not, so a
+ * peer could smuggle bidi overrides and zero-width characters into a string
+ * rendered in ConsoleWard's own voice, immediately before the host-key prompt
+ * asks the user to make a trust decision. Clean it, flatten the newlines it
+ * could use to fake structure, and cap it.
+ *
+ * The caller pairs this with `error.sshReported`, which attributes the text so
+ * it does not read as something this application is asserting.
+ */
+export function serverText(raw: string): string {
+  const cleaned = cleanTerminalText(raw).replace(/\s+/g, ' ').trim()
+  if (!cleaned) return t('error.noDetail')
+  return cleaned.length > SERVER_MESSAGE_CHARS
+    ? cleaned.slice(0, SERVER_MESSAGE_CHARS) + '…'
+    : cleaned
+}
+
 export interface RunOptions {
   timeoutMs?: number
   maxBytes?: number
@@ -215,7 +251,11 @@ class SshManager {
       this.setStatus(session, 'authenticating')
       client.shell({ term: 'xterm-256color', cols: 80, rows: 24 }, (err, stream) => {
         if (err) {
-          this.setStatus(session, 'error', t('error.shellFailed', { message: err.message }))
+          this.setStatus(
+            session,
+            'error',
+            t('error.shellFailed', { message: serverText(err.message) })
+          )
           client.end()
           return
         }
@@ -265,7 +305,7 @@ class SshManager {
       const msg =
         err.level === 'client-authentication'
           ? t('error.authFailed')
-          : err.message
+          : t('error.sshReported', { message: serverText(err.message) })
       this.setStatus(session, 'error', msg)
     })
 

@@ -318,6 +318,8 @@
   "error.commandRunning": "Já há um comando em execução nesta sessão.",
   "error.shellFailed": "Não foi possível abrir um shell: {{message}}",
   "error.authFailed": "Falha na autenticação — senha, chave ou usuário incorretos.",
+  "error.sshReported": "A conexão informou: {{message}}",
+  "error.noDetail": "sem detalhes",
   "error.sessionEnded": "Sessão encerrada.",
   "error.mcpVaultLocked": "O cofre precisa estar desbloqueado.",
   "error.mcpBridgeMissing": "A ponte MCP não está conectada.",

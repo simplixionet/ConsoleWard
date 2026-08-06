@@ -318,6 +318,8 @@
   "error.commandRunning": "Une commande est déjà en cours dans cette session.",
   "error.shellFailed": "Impossible d'ouvrir un shell : {{message}}",
   "error.authFailed": "Échec de l'authentification : mot de passe, clé ou utilisateur incorrect.",
+  "error.sshReported": "La connexion signale : {{message}}",
+  "error.noDetail": "aucun détail",
   "error.sessionEnded": "Session terminée.",
   "error.mcpVaultLocked": "Le coffre doit être déverrouillé.",
   "error.mcpBridgeMissing": "Le pont MCP n'est pas connecté.",

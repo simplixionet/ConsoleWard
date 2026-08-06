@@ -322,6 +322,8 @@
   "error.commandRunning": "V této relaci už jeden příkaz běží.",
   "error.shellFailed": "Nepodařilo se otevřít shell: {{message}}",
   "error.authFailed": "Autentizace selhala — špatné heslo, klíč nebo uživatel.",
+  "error.sshReported": "Spojení hlásí: {{message}}",
+  "error.noDetail": "bez podrobností",
   "error.sessionEnded": "Relace ukončena.",
   "error.mcpVaultLocked": "Trezor musí být odemčený.",
   "error.mcpBridgeMissing": "MCP most není připojený.",
