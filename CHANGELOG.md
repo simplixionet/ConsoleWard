@@ -158,6 +158,10 @@ a change from a previous version.
   `Intl.PluralRules` with no i18n dependency.
 - Language chosen from the system on first run, changeable in Settings, and
   stored outside the vault so the unlock screen is already translated.
+- The native file dialogs are translated too. The one string that is not is the
+  placeholder for an unreadable host-key type, which stays `unknown` in every
+  language: it is written into the known-hosts entry as well as shown, and a
+  translated one would leave stored entries disagreeing with each other.
 - A missing translation falls back to English, never to a raw key. Only the
   active locale's dictionary is fetched at runtime.
 
