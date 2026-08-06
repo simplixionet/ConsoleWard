@@ -3,21 +3,13 @@
 
 /**
  * The MCP gate: what can reach the model without a human looking at it.
- *
- * `mcp.ts` reaches Electron transitively (mcp.ts → vault.ts → electron), so
- * `electron` is stubbed before the import. `./ssh` is replaced outright — these
- * tests are about the gate, not about SSH, and a stub is the only way to decide
+ * `electron` and `./ssh` are stubbed before the import, so the tests can decide
  * what the captured output says.
  *
- * The tool bodies are reached through `buildServer()` and `_registeredTools`.
- * That is deliberate: the alternative — standing up the HTTP transport and
- * speaking JSON-RPC — would test the SDK rather than the gate. The shape is
- * asserted rather than assumed, because the SDK has already renamed this field
- * once (`callback` → `handler`) and a silent `undefined` would turn every test
- * below green for the wrong reason.
- *
- * The window raise is NOT asserted here. It left `McpBridge` with B3 and now
- * belongs to the approval queue, which is where its tests live.
+ * Tool bodies are reached through `buildServer()` and `_registeredTools` rather
+ * than over JSON-RPC. `toolHandler` asserts that shape, because the SDK has
+ * renamed the field once already (`callback` → `handler`) and a silent
+ * `undefined` would turn every test below green for the wrong reason.
  */
 
 import { describe, test, mock } from 'node:test'
@@ -34,7 +26,6 @@ interface RunResult {
   truncated: boolean
 }
 
-/** What the stubbed `runOnce` hands back; each test sets it. */
 let run: RunResult = {
   output: '',
   exitCode: 0,
@@ -43,31 +34,26 @@ let run: RunResult = {
   truncated: false
 }
 
-/** The model's view, as `listForModel` builds it. */
 const MODEL_SESSIONS = [
   { id: 's1', name: 'web01', status: 'ready' },
   { id: 's2', name: 'Session 1', status: 'ready' }
 ]
 
 /**
- * The human's view, deliberately carrying what the tool promises to withhold.
- * `list_sessions` reading this instead of `listForModel` has to fail a test
- * rather than quietly ship an address.
+ * The human's view, carrying what the tool promises to withhold: reading this
+ * instead of `listForModel` must fail a test, not quietly ship an address.
  */
 const HUMAN_SESSIONS = [
   { id: 's1', connectionId: 'c1', title: 'web01', status: 'ready' },
   { id: 's2', connectionId: 'c2', title: 'root@10.0.0.5', status: 'ready' }
 ]
 
-/** What the stubbed terminal buffer offers `read_terminal`. */
 const PREVIEW = 'last twenty lines'
 
 /**
- * Every command that actually reached the server, in order.
- *
- * A refusal has to leave this empty. Asserting only on what came back would
- * pass against a build that ran the command and merely declined to report it,
- * and it is the running that the dialog exists to prevent.
+ * Every command that actually reached the server. A refusal must leave this
+ * empty: asserting only on what came back would pass against a build that ran
+ * the command and declined to report it, and the running is what matters.
  */
 let executed: string[] = []
 
@@ -89,8 +75,6 @@ mock.module('../src/main/ssh.ts', {
 
 const { mcp, outputNeedsReview } = await import('../src/main/mcp.ts')
 
-/* ------------------------------------------------------------------ nářadí */
-
 const JWT =
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.' +
   'eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIn0.' +
@@ -111,12 +95,10 @@ interface ToolResult {
 type ShareSeen = { origin: string; text: string; autoShareOverridden?: boolean }
 type Handler = (args: Record<string, string>, extra: unknown) => Promise<ToolResult>
 
-/** A RunResult carrying `output`, everything else at its ordinary value. */
 function ran(output: string, over: Partial<RunResult> = {}): RunResult {
   return { output, exitCode: 0, signal: null, timedOut: false, truncated: false, ...over }
 }
 
-/** The callback the SDK would invoke for `name`, with the shape checked. */
 function toolHandler(name: string): Handler {
   const server = (mcp as unknown as { buildServer(): unknown }).buildServer()
   const registry = (server as { _registeredTools?: Record<string, { handler?: unknown }> })
@@ -128,7 +110,6 @@ function toolHandler(name: string): Handler {
   return tool.handler as Handler
 }
 
-/** Approves a command, lets it "run", and records everything the bridge saw. */
 async function approveAndRun(opts: {
   result: RunResult
   autoShare: boolean
@@ -150,8 +131,6 @@ async function approveAndRun(opts: {
   )
   return { result, shares }
 }
-
-/* --------------------------------------- run_command: the auto-share tick */
 
 describe('run_command: the auto-share tick cannot outrun the detector', () => {
   test('a planted JWT reaches the share dialog even with auto-share ticked', async () => {
@@ -222,8 +201,6 @@ describe('run_command: the auto-share tick cannot outrun the detector', () => {
   })
 })
 
-/* ------------------------------------------------ run_command: the refusal */
-
 describe('run_command: "no" stops the command, not just the answer', () => {
   test('a denied command never runs and nothing comes back from it', async () => {
     executed = []
@@ -263,8 +240,6 @@ describe('run_command: "no" stops the command, not just the answer', () => {
   })
 })
 
-/* ------------------------------------------------------------ list_sessions */
-
 describe('list_sessions withholds what its description promises to withhold', () => {
   test('it publishes exactly id, name and status', async () => {
     const result = await toolHandler('list_sessions')({}, {})
@@ -289,8 +264,6 @@ describe('list_sessions withholds what its description promises to withhold', ()
     assert.match(text, /Session 1/, 'the neutral placeholder never reached the model')
   })
 })
-
-/* ------------------------------------------------------------ read_terminal */
 
 describe('read_terminal is unaffected', () => {
   test('read_terminal still asks, and never claims an override', async () => {
@@ -334,10 +307,8 @@ describe('read_terminal is unaffected', () => {
   })
 
   test('text handed back alongside a refusal is still not sent', async () => {
-    // `answerShare` blanks the text whenever the human says no, so today the
-    // field is empty by the time it arrives. The tool must not lean on that:
-    // what decides is the refusal itself, not whether the other side happened
-    // to clear its buffer first.
+    // `answerShare` blanks the text on a refusal today, but the tool must not
+    // lean on that: the refusal decides, not whether the buffer was cleared.
     mcp.bind({
       askCommand: async () => ({ approved: false, autoShare: false }),
       askShare: async (req) => ({ shared: false, text: req.text })
@@ -352,8 +323,6 @@ describe('read_terminal is unaffected', () => {
     )
   })
 })
-
-/* ------------------------------------------------------- the severity policy */
 
 describe('outputNeedsReview: what revokes the tick', () => {
   test('high severity revokes it', () => {
@@ -372,8 +341,8 @@ describe('outputNeedsReview: what revokes the tick', () => {
   })
 
   test('a secret on stderr counts too', () => {
-    // runExec appends stderr under a label, so the detector sees both streams.
-    // `sudo` failures and Authorization errors land there, not on stdout.
+    // `sudo` failures and Authorization errors land on stderr, which runExec
+    // appends under a label, so the detector has to see both streams.
     assert.equal(
       outputNeedsReview(ran(`ok\n--- stderr ---\ncurl: Authorization: Bearer ${JWT}\n`)),
       true,
@@ -394,16 +363,15 @@ describe('outputNeedsReview: what revokes the tick', () => {
 
   test('output too long to scan is never auto-shared', () => {
     // Unscanned text is not clean text. `ran()` leaves truncated false, so this
-    // is the clip path in scanSecrets, not runExec's byte cap.
+    // is scanSecrets' clip path, not runExec's byte cap.
     const long = 'ls -la\n'.repeat(50_000)
     assert.ok(long.length > MAX_SCAN_CHARS, 'the fixture really does exceed the scan limit')
     assert.equal(outputNeedsReview(ran(long)), true, 'text nobody scanned was auto-shared')
   })
 
   test('a medium pattern hitting its hit cap does not revoke the tick', () => {
-    // `ip -4 route` on a router caps secret.ipAddress at 2000 in ~18 KB.
-    // Forcing on `incomplete` would fire on routing tables and nothing else,
-    // which is the habituation secretPatterns.ts names in its own header.
+    // `ip -4 route` on a router caps secret.ipAddress at 2000 in ~18 KB, so
+    // forcing on `incomplete` would fire on routing tables and little else.
     const routes = Array.from(
       { length: 3000 },
       (_, i) => `10.0.${Math.floor(i / 250)}.${i % 250} dev eth0`
@@ -425,9 +393,8 @@ describe('outputNeedsReview: what revokes the tick', () => {
   })
 
   test('output that hit the byte cap is never auto-shared', () => {
-    // Not a second length limit: runExec already refused to collect more, and
-    // an output that ran into the ceiling is exactly the one the human cannot
-    // have known the shape of when they ticked the box.
+    // Output that hit runExec's byte ceiling is the output whose shape the
+    // human cannot have known when they ticked the box.
     assert.equal(outputNeedsReview(ran(LS_LA, { truncated: true })), true, 'truncated output')
     assert.equal(outputNeedsReview(ran(LS_LA, { truncated: false })), false, 'complete output')
   })

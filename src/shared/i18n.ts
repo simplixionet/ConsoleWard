@@ -2,34 +2,24 @@
 // Copyright (C) 2026 Simplixio — Stanislav Opletal <info@simplixio.net>
 
 /**
- * Překlady bez externí závislosti.
+ * Translations without an external dependency. `Intl.PluralRules` supplies the
+ * plural category, so languages with more than two forms work without tables.
  *
- * U bezpečnostního nástroje je každý balíček navíc kus cizího kódu, který
- * musíš hlídat — a tohle zvládne platforma sama. Množná čísla řeší
- * `Intl.PluralRules`, takže čeština (1 / 2–4 / 5+), ruština i polština
- * fungují správně bez ručních tabulek.
- *
- * Formát klíčů:
- *   "conn.save": "Uložit"                     → t('conn.save')
- *   "term.count_one": "{{count}} relace"      → t('term.count', { count: 1 })
- *   "term.count_few": "{{count}} relace"
- *   "term.count_many": "{{count}} relací"
- *
- * Kategorie (one/two/few/many/other) jsou standardní CLDR. Jazyk, který
- * některou nemá, ji prostě neuvádí.
+ * Plain keys are `"conn.save": "Save"` → `t('conn.save')`. A count-bearing key
+ * is suffixed with the CLDR category — `"term.count_one"`, `"term.count_other"`
+ * → `t('term.count', { count: 1 })` — and a language omits the ones it lacks.
  */
 
 export type Dictionary = Record<string, string>
 
 export interface LocaleInfo {
-  /** BCP 47 kód, např. `pt-BR` */
+  /** BCP 47 code, e.g. `pt-BR` */
   code: string
-  /** Název jazyka v tom jazyce – tak ho uživatel v seznamu pozná */
   nativeName: string
   englishName: string
 }
 
-/** Zdrojový jazyk projektu. Chybějící překlad spadne sem. */
+/** Source language of the project. A missing translation falls back to it. */
 export const SOURCE_LOCALE = 'en'
 
 export const LOCALES: LocaleInfo[] = [
@@ -50,8 +40,8 @@ export type TranslateParams = Record<string, string | number>
 export type Translator = (key: string, params?: TranslateParams) => string
 
 /**
- * Vybere nejbližší podporovaný jazyk – `de-AT` → `de`, `zh-Hans-CN` → `zh-CN`.
- * Vrací `null`, když nic nesedí; volající pak sáhne po zdrojovém jazyce.
+ * Nearest supported locale — `de-AT` → `de`, `zh-Hans-CN` → `zh-CN`.
+ * `null` when nothing matches; the caller then falls back to the source language.
  */
 export function resolveLocale(requested: string | undefined | null): string | null {
   if (!requested) return null
@@ -61,7 +51,7 @@ export function resolveLocale(requested: string | undefined | null): string | nu
   if (exact) return exact
 
   const base = want.split('-')[0].toLowerCase()
-  // Nejdřív holý kód jazyka, teprve pak libovolná regionální varianta.
+  // Bare language code first, only then any regional variant.
   const bare = LOCALE_CODES.find((c) => c.toLowerCase() === base)
   if (bare) return bare
   return LOCALE_CODES.find((c) => c.toLowerCase().startsWith(base + '-')) ?? null
@@ -74,10 +64,7 @@ function interpolate(template: string, params?: TranslateParams): string {
   )
 }
 
-/**
- * Sestaví překladač nad slovníkem daného jazyka.
- * Pořadí hledání: jazyk → zdrojový jazyk → samotný klíč.
- */
+/** Lookup order: the locale's dictionary → the source language → the key itself. */
 export function createTranslator(
   locale: string,
   dictionary: Dictionary,
@@ -91,14 +78,11 @@ export function createTranslator(
   }
 
   /**
-   * Vlastní vlastnost, a jen řetězec.
-   *
-   * `dictionary[key]` sahá i do prototypu, takže klíč jako `toString`,
-   * `constructor` nebo `valueOf` vrátil funkci — ta prošla dál jako „nalezený
-   * překlad" a `interpolate` na ní zavolal `.replace`, což skončilo
-   * `template.replace is not a function`. Klíče sice pocházejí z kódu, ne od
-   * uživatele, ale překladač je poslední vrstva pod bezpečnostními hláškami:
-   * když spadne, člověk neuvidí varování, které měl vidět.
+   * Own property, and a string only. Plain `dictionary[key]` reaches into the
+   * prototype, so a key like `toString` or `valueOf` returns a function that
+   * `interpolate` then calls `.replace` on. The translator is the last layer
+   * under the security messages: if it throws, the human never sees the warning
+   * they were meant to see.
    */
   const own = (dict: Dictionary, key: string): string | undefined => {
     if (!Object.prototype.hasOwnProperty.call(dict, key)) return undefined

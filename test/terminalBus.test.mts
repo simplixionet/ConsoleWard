@@ -33,9 +33,8 @@ describe('registr výběru z terminálu', () => {
 
   /*
    * The share dialog offers "select in the console" only when this returns
-   * something. A source left behind by a closed session would put the button
-   * back and point it at a disposed xterm — so the session teardown path has to
-   * clear this registry, not just the data sinks.
+   * something, so session teardown must clear this registry and not just the
+   * data sinks — otherwise the button comes back pointing at a disposed xterm.
    */
   it('forget zahodí i výběr, ne jen sinky', () => {
     registerSelection('s2', fakeSource('x'))
@@ -45,10 +44,9 @@ describe('registr výběru z terminálu', () => {
   })
 
   /*
-   * React can mount the replacement before running the old component's cleanup.
-   * A naive unregister deletes by key and would drop the terminal that is
-   * actually on screen, silently turning off console selection for a live
-   * session until it is remounted again.
+   * React can mount the replacement before the old component's cleanup runs, so
+   * unregistering by key alone drops the terminal that is actually on screen and
+   * silently kills console selection for a live session.
    */
   it('odhlášení staré instance nesmí smazat novou', () => {
     const older = fakeSource('starý')

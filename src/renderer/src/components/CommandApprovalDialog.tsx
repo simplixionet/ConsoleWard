@@ -12,37 +12,24 @@ interface Props {
 }
 
 /**
- * Schválení příkazu navrženého AI.
- *
- * Záměrně tu není žádné „schválit vše" ani „zapamatovat" – celý smysl brány je,
- * že každý příkaz vidíš zvlášť. Znění se zobrazuje se zviditelněnými řídicími
- * znaky, aby v něm nešel schovat řádek navíc.
+ * Deliberately offers no "approve all" and no "remember this": the whole point
+ * of the gate is that every AI-proposed command is reviewed on its own, with
+ * control characters made visible so no extra line can hide in it.
  */
 export default function CommandApprovalDialog({ request, onAnswer }: Props) {
   const t = useT()
   const armed = useArmedAfterPaint()
   const [autoShare, setAutoShare] = useState(false)
-  // \n still separates commands: the text is handed to the remote shell as a
-  // script. A bare \r no longer becomes Enter — the exec channel has no PTY and
-  // so no ICRNL — but it is still an invisible byte that changes what runs, so
-  // it stays in the warning.
+  // \n still separates commands: the text runs as a script on the remote shell.
+  // A bare \r no longer becomes Enter (the exec channel has no PTY, so no ICRNL)
+  // but is still an invisible byte that changes what runs, so it stays flagged.
   const multiline = /[\n\r]/.test(request.command)
 
-  /*
-    Whether the command is taller than the box that shows it.
-
-    `.command-box` is capped at 220px with `overflow-y: auto`, so a long enough
-    command is simply scrolled out of sight while the Run button stays pinned in
-    the footer. The scrollbar is the only cue, and against the box's dark
-    background it is easy to miss — worst of all when the overflow is slight,
-    because then the thumb is nearly full height and reads as no scrollbar.
-
-    That matters more here than the cap itself does: the gate's whole value is
-    that the human sees the exact bytes that will run, and mcp.injectionWarn
-    tells them to read it even when it looks harmless. Measured rather than
-    guessed from a character count, because the real threshold depends on the
-    font, the DPI and the width of the wrapped lines.
-  */
+  // `.command-box` is capped at 220px with `overflow-y: auto`, so a long command
+  // scrolls out of sight behind an easily missed scrollbar while Run stays in the
+  // footer — and the gate is only worth anything if the human sees every byte.
+  // Measured rather than guessed from a character count: the real threshold
+  // depends on font, DPI and how the lines wrap.
   const boxRef = useRef<HTMLPreElement>(null)
   const [clipped, setClipped] = useState(false)
   useEffect(() => {

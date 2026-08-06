@@ -20,9 +20,8 @@ describe('lastLines', () => {
   })
 
   /*
-   * The whole reason this is not main's tailLines. Terminal output ends with a
-   * newline, so a naive split gives a trailing empty string that eats one of
-   * the N slots and shows up in the review dialog as a blank final line.
+   * Why this is not main's tailLines: terminal output ends with a newline, so a
+   * naive split leaves a trailing empty string that eats one of the N slots.
    */
   it('koncový nový řádek ukončuje poslední řádek, nezakládá nový', () => {
     assert.equal(lastLines('a\nb\nc\n', 3), 'a\nb\nc')
@@ -46,9 +45,9 @@ describe('lastLines', () => {
   })
 
   /*
-   * The dialog disables "continue" on an empty excerpt, so a helper that can
-   * quietly hand back the whole buffer would route around the one rule the
-   * redesign is built on: nothing leaves without someone choosing it.
+   * A helper that quietly handed back more than it was asked for would route
+   * around the one rule the review dialog rests on: nothing leaves without
+   * someone choosing it.
    */
   it('nikdy nevrátí víc, než kolik bylo požádáno', () => {
     const text = Array.from({ length: 500 }, (_, i) => `line ${i}`).join('\n')

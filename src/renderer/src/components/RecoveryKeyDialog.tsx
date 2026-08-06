@@ -7,14 +7,13 @@ import { useT } from '../i18n'
 
 interface Props {
   recoveryKey: string
-  /** true = klíč se zobrazuje hned po založení trezoru */
   isNewVault: boolean
   onDone: () => void
 }
 
 /**
- * Obnovovací klíč se nikam neukládá – tohle je jediná chvíle, kdy ho lze vidět.
- * Proto je potvrzení podmíněné zaškrtnutím.
+ * The recovery key is stored nowhere — this is the only moment it can be seen,
+ * which is why continuing is gated on the checkbox.
  */
 export default function RecoveryKeyDialog({ recoveryKey, isNewVault, onDone }: Props) {
   const t = useT()

@@ -2,18 +2,16 @@
 // Copyright (C) 2026 Simplixio — Stanislav Opletal <info@simplixio.net>
 
 /**
- * Registr slovníků.
+ * Dictionary registry. Adding a language = a JSON file next to this one, a line
+ * in `LOADERS` and an entry in `LOCALES` in `../i18n.ts`.
  *
- * Přidání jazyka = přidat JSON vedle tohohle souboru, doplnit jeden řádek do
- * `LOADERS` a záznam do `LOCALES` v `../i18n.ts`.
+ * English is imported statically because the translator needs it synchronously
+ * as the fallback dictionary; without it bare keys could briefly render. Other
+ * languages load on switch, each in its own chunk.
  *
- * Angličtina se importuje staticky, protože překladač ji potřebuje synchronně
- * jako záložní slovník — bez ní by šlo krátce vykreslit holé klíče. Ostatní
- * jazyky se načtou až při přepnutí, každý ve vlastním chunku.
- *
- * `import()` u JSON vrací namespace modulu, ne samotná data. To `.default`
- * na konci každého loaderu je proto povinné: bez něj TypeScript nic nevytkne,
- * ale za běhu se jazyk tiše propadne do angličtiny.
+ * The `.default` at the end of every loader is mandatory: `import()` of JSON
+ * yields the module namespace, not the data, and without it TypeScript stays
+ * quiet while the language silently falls back to English at runtime.
  */
 
 import type { Dictionary } from '../i18n'
@@ -34,7 +32,7 @@ const LOADERS: Record<string, Loader> = {
   nl: () => import('./nl.json').then((m) => m.default)
 }
 
-/** Slovník jazyka, nebo prázdný objekt – překladač si sáhne do angličtiny. */
+/** The locale's dictionary, or an empty object — the translator falls back to English. */
 export async function dictionaryFor(locale: string): Promise<Dictionary> {
   const load = LOADERS[locale]
   if (!load) return {}

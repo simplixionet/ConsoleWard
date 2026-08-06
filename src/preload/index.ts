@@ -15,7 +15,7 @@ import type {
   SnippetInput
 } from '../shared/types'
 
-/** Odhlašovací funkce pro posluchače událostí. */
+/** Subscribes to an IPC event and returns the unsubscribe function. */
 function on<A extends unknown[]>(channel: string, cb: (...args: A) => void): () => void {
   const listener = (_e: unknown, ...args: unknown[]) => cb(...(args as A))
   ipcRenderer.on(channel, listener)

@@ -2,10 +2,8 @@
 // Copyright (C) 2026 Simplixio — Stanislav Opletal <info@simplixio.net>
 
 /**
- * Rozvod dat z SSH do konkrétních instancí terminálu.
- *
- * Data můžou dorazit dřív, než se komponenta terminálu připojí (connect →
- * ready → data), takže se do té doby drží ve frontě.
+ * Routes SSH data to per-session terminals. Data can arrive before the terminal
+ * registers its sink (connect → ready → data), so it is queued until then.
  */
 
 type Sink = (bytes: Uint8Array) => void
@@ -41,7 +39,7 @@ export function dispatch(sessionId: string, base64: string): void {
   }
   const queue = pending.get(sessionId) ?? []
   queue.push(bytes)
-  // Pojistka proti neomezenému růstu, kdyby se terminál nikdy nepřipojil.
+  // Bounded, so a session whose terminal never attaches cannot grow forever.
   if (queue.length > 500) queue.shift()
   pending.set(sessionId, queue)
 }
@@ -53,7 +51,7 @@ export function forget(sessionId: string): void {
   selections.delete(sessionId)
 }
 
-/* Fokus terminálu – aby po vložení příkazu stačilo stisknout Enter. */
+/* Terminal focus, so Enter is all that's left to press after an insert. */
 
 const focusers = new Map<string, () => void>()
 
@@ -68,15 +66,9 @@ export function focusTerminal(sessionId: string): void {
   focusers.get(sessionId)?.()
 }
 
-/* Označení myší v terminálu – čte ho sdílecí dialog. */
-
 /**
- * Čtení výběru v jednom terminálu.
- *
- * The share dialog needs live access to a terminal it does not own and cannot
- * reach: xterm.js instances live inside TerminalView, one per session, and the
- * dialog is a sibling. Same shape as the sink and focus registries above, for
- * the same reason.
+ * Live access to one terminal's mouse selection, read by the share dialog:
+ * xterm instances live inside TerminalView and the dialog is a sibling.
  */
 export interface SelectionSource {
   read(): string
@@ -93,7 +85,7 @@ export function registerSelection(sessionId: string, source: SelectionSource): (
   }
 }
 
-/** Null, pokud relace nemá živý terminál – dialog pak výběr z konzole nenabídne. */
+/** Null when the session has no live terminal; the dialog then hides the console option. */
 export function terminalSelection(sessionId: string): SelectionSource | null {
   return selections.get(sessionId) ?? null
 }

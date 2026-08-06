@@ -13,16 +13,8 @@ interface Props {
   exists: boolean
   hasRecovery: boolean
   vaultPath: string
-  /** Po založení trezoru dorazí obnovovací klíč k zobrazení. */
   onCreated: (recoveryKey: string) => void
-  /**
-   * Po obnově obnovovacím klíčem dorazí **nový** klíč k zobrazení.
-   *
-   * Obnova rotuje DEK, čímž použitý klíč přestane platit. Kdyby se návratová
-   * hodnota zahodila, uživatel by přišel o jedinou záchranu pro zapomenuté
-   * heslo a nedozvěděl by se to — přesně před tím varuje komentář nad
-   * `unlockWithRecovery` ve `vault.ts`.
-   */
+  /** Receives the **new** key minted by the recovery, not the one that was used. */
   onRecovered: (recoveryKey: string) => void
   onUnlocked: () => void
 }
@@ -65,8 +57,8 @@ export default function UnlockScreen({
     setBusy(true)
     try {
       if (mode === 'recovery') {
-        // Návratovou hodnotu NELZE zahodit: obnova rotuje DEK, takže právě
-        // použitý klíč přestal platit a tenhle je jediný, který zbyl.
+        // The return value must not be discarded: recovery rotates the DEK, so
+        // the key just used is dead and this one is all that is left.
         const freshKey = unwrap(await api.vault.unlockWithRecovery(recoveryKey, password))
         reset()
         onRecovered(freshKey)
@@ -153,13 +145,9 @@ export default function UnlockScreen({
           />
         </label>
 
-        {/*
-          Only where a password is being CHOSEN. On the ordinary unlock screen
-          the password already exists, and rating it there would be telling the
-          user their vault is weak at the one moment they can do nothing about
-          it — while painting a live gauge of a secret that is merely being
-          re-typed.
-        */}
+        {/* Only where a password is being CHOSEN. On the ordinary unlock screen
+            the password already exists, so a meter there would just paint a live
+            gauge of a secret that is merely being re-typed. */}
         {(mode === 'recovery' || !exists) && password.length > 0 && (
           <div className={`pw-meter pw-${strength.verdict}`}>
             <div className="pw-bar">

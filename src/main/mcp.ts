@@ -2,20 +2,11 @@
 // Copyright (C) 2026 Simplixio — Stanislav Opletal <info@simplixio.net>
 
 /**
- * Lokální MCP server.
- *
- * Umožní AI klientovi (Claude Code apod.) vidět názvy relací, navrhovat příkazy
- * a číst výstup – ale vždy jen přes bránu, kterou drží člověk:
- *
- *   run_command   → dialog se schválením doslovného znění příkazu
- *   read_terminal → dialog, kde vybereš/upravíš, co přesně se pošle
- *   list_sessions → jen názvy a stavy; adresy, uživatele ani hesla nikdy
- *
- * Zásady:
- *  - posloucháme výhradně na 127.0.0.1, nikdy na 0.0.0.0
- *  - povinný bearer token + ochrana proti DNS rebindingu (kontrola Host/Origin)
- *  - ve výchozím stavu vypnuto, funguje jen při odemčeném trezoru
- *  - žádné „schválit vše" – každý příkaz zvlášť
+ * Local MCP server: an AI client sees session names, proposes commands and reads
+ * output only through a gate a human holds. Invariants — 127.0.0.1 only, never
+ * 0.0.0.0; bearer token plus Host/Origin DNS-rebinding protection; off unless
+ * enabled and unlocked; no "approve all"; addresses, usernames and passwords
+ * never reach the model.
  */
 
 import {
@@ -40,50 +31,31 @@ import { appError, t, type AppError } from './i18n'
 
 export interface McpBridge {
   /**
-   * Zobrazí dialog se schválením příkazu.
-   *
-   * Rejects with an ApprovalQueueFullError when the human already has the
-   * maximum number of approvals waiting — see `isQueueFull`. That is the only
-   * rejection; a human decision always resolves.
+   * Rejects only with ApprovalQueueFullError, when the queue is full — see
+   * `isQueueFull`. A human decision always resolves, never rejects.
    */
   askCommand: (req: CommandApproval) => Promise<{ approved: boolean; autoShare: boolean }>
-  /** Zobrazí dialog pro výběr části výstupu. Rejects like `askCommand`. */
+  /** Rejects like `askCommand`. */
   askShare: (req: ShareRequest) => Promise<{ shared: boolean; text: string }>
 }
 
 const DEFAULT_PORT = 7345
 
-/**
- * English on purpose — everything the model reads is a machine interface, not
- * text for a person. It names the limit so a well-behaved client can throttle
- * itself, and it says nothing was queued so the model does not wait for a
- * dialog that will never appear.
- */
+/** English and never translated: everything the model reads is a machine interface. */
 const QUEUE_FULL_MESSAGE =
   `The human already has ${MAX_PENDING_APPROVALS} approvals waiting, so this request ` +
   'was not shown to them and nothing was queued. Wait for the pending ones to be ' +
   'answered before sending another; retrying immediately will get the same answer.'
 
 /**
- * How many requests may be in flight at once.
- *
- * Not a rate limit — the point is memory. Every request buffers its body, up to
- * the limit `readJsonBody` allows, and one that reaches a dialog holds an
- * McpServer and a transport for as long as the human takes, which
- * APPROVAL_TIMEOUT_MS bounds at five minutes. Node bounds none of this on its
- * own: maxConnections is unset and maxRequestsPerSocket is 0. The approval
- * queue caps the human's side at three, so eight leaves room for an initialize
- * and a tools/list alongside three blocked dialogs.
+ * A memory bound, not a rate limit: each request buffers a body, and one waiting
+ * on a dialog pins an McpServer and a transport for up to APPROVAL_TIMEOUT_MS.
+ * Node bounds none of this itself. Eight leaves room for an initialize and a
+ * tools/list alongside the three dialogs MAX_PENDING_APPROVALS allows.
  */
 export const MAX_INFLIGHT_REQUESTS = 8
 
-/**
- * How much of a request body is buffered before it is refused.
- *
- * A JSON-RPC call from an MCP client is kilobytes. Four megabytes is far more
- * than any of them needs and small enough that `MAX_INFLIGHT_REQUESTS` of them
- * cannot exhaust memory.
- */
+/** Small enough that MAX_INFLIGHT_REQUESTS bodies cannot exhaust memory. */
 export const MAX_BODY_BYTES = 4 * 1024 * 1024
 
 const BUSY_MESSAGE =
@@ -113,7 +85,6 @@ class McpService {
     }
   }
 
-  /** Token se generuje při prvním zapnutí a žije v trezoru. */
   async ensureToken(): Promise<string> {
     const existing = vault.read().mcpToken
     if (existing) return existing
@@ -147,37 +118,24 @@ class McpService {
     this.lastError = null
 
     const allowedHosts = [`127.0.0.1:${this.port}`, `localhost:${this.port}`]
-    // Běžný MCP klient hlavičku Origin neposílá; pokud ji někdo pošle, musí sedět.
-    // Brání tomu, aby na server zaútočila webová stránka otevřená v prohlížeči.
+    // An ordinary MCP client sends no Origin; when one is sent it must match.
+    // Stops a page open in a browser from attacking the server.
     const allowedOrigins = [`http://127.0.0.1:${this.port}`, `http://localhost:${this.port}`]
 
     const server = createServer((req, res) => {
       void (async () => {
-        // Bezstavový režim: server i transport vznikají pro každý požadavek zvlášť.
-        //
-        // Not because a shared McpServer is unusable — close() then connect()
-        // again works and the registered tools survive it. Because neither half
-        // can serve two requests AT ONCE: the stateless transport refuses its
-        // second request outright, and a Protocol holds exactly one transport
-        // and throws on a second connect. Sharing would therefore mean
-        // serialising every request, and a run_command holds its request for up
-        // to five minutes waiting on a human — the whole server would sit behind
-        // one dialog. Closing to admit the next request is no better: close()
-        // aborts the in-flight handler, which is the one that is waiting.
+        // Stateless: fresh server and transport per request. Neither half can
+        // serve two requests AT ONCE, so sharing would serialise every request
+        // behind a run_command waiting up to five minutes on a human, and closing
+        // one to admit the next aborts the handler that is doing the waiting.
         let mcpServer: McpServer | null = null
         let transport: StreamableHTTPServerTransport | null = null
         let slot = false
         try {
-          // The name first, the credentials second, and both every time.
-          //
-          // A page in a browser can only ever put its own name in Host — that is
-          // the whole of DNS rebinding — so the name is what tells a client apart
-          // from an attack. Checking the token first meant a foreign Host never
-          // reached the rebinding guard at all and got a 401 instead of a 403,
-          // and the difference between the two answers is the page learning that
-          // ConsoleWard is listening on this port. Neither check may
-          // short-circuit the other, or the time to the rejection says which one
-          // failed; `&&` here would put the oracle straight back.
+          // Name first, credentials second, both every time, one answer for
+          // either failure: a browser page can only put its own name in Host, and
+          // a distinct status for a bad name tells a guessing page we are here.
+          // Neither may short-circuit the other — `&&` reinstates a timing oracle.
           const named = hostAllowed(req.headers, allowedHosts, allowedOrigins)
           const authed = this.checkAuth(req.headers.authorization, token)
           if (!named || !authed) {
@@ -191,18 +149,10 @@ class McpService {
             return
           }
 
-          // POST only. The cap exists for the memory a call can pin: a buffered
-          // body, plus an McpServer and a transport parked for however long a
-          // human takes to answer a dialog. A GET is the notification stream —
-          // the SDK client opens one right after the handshake and holds it for
-          // the whole session, deliberately. Counting those meant an ordinary
-          // client spent a slot just by connecting, and eight of them wedged the
-          // gateway into a permanent 503 with nothing wrong.
-          //
-          // Streams are still bounded, just not here: nothing reaches this line
-          // without the Host gate and a valid bearer token, and the thing the
-          // cap really protects — the human's attention — is bounded by
-          // MAX_PENDING_APPROVALS in approvals.ts.
+          // POST only, and it must stay that way: a GET is the notification
+          // stream the SDK client holds for its whole session, so counting those
+          // spends a slot on merely connecting and wedges the gateway at 503.
+          // Streams stay bounded by the Host gate, the token and the approval cap.
           if (takesSlot(req.method)) {
             if (this.inFlight >= MAX_INFLIGHT_REQUESTS) {
               sendJson(res, 503, BUSY_MESSAGE, 'busy')
@@ -225,10 +175,8 @@ class McpService {
           await transport.handleRequest(req, res, body)
         } catch (err) {
           if (!res.headersSent) {
-            // `String(err)` used to land here. It shipped `AppError: Požadavek je
-            // příliš velký.` to an English-speaking client, and it echoed the
-            // caller's own bytes back inside a SyntaxError. Both go through the
-            // same keyed map the tools use.
+            // Never `String(err)`: it ships the human's translated message to the
+            // client and echoes the caller's own bytes back inside a SyntaxError.
             const tooLarge = (err as { key?: unknown } | null)?.key === 'error.requestTooLarge'
             sendJson(
               res,
@@ -241,13 +189,9 @@ class McpService {
           }
         } finally {
           if (slot) this.inFlight--
-          // Úklid až po odeslání odpovědi, jinak bychom uřízli běžící stream.
-          //
-          // `onceClosed` and not `res.on` because a client that gave up has
-          // closed the response ALREADY, and a listener added to a closed stream
-          // is never called — the transport and the server were then never
-          // closed at all. Measured: on an aborted request `res.closed` is true
-          // by the time this runs.
+          // Cleanup only once the response is done, or a live stream is cut short.
+          // `onceClosed` and not `res.on`: a client that gave up has already closed
+          // the response, and a listener added then never fires — nothing closed.
           onceClosed(res, () => {
             void transport?.close()
             void mcpServer?.close()
@@ -262,7 +206,7 @@ class McpService {
         this.lastError = failure.message
         reject(failure)
       })
-      // Výhradně smyčka zpět – server nesmí být vidět ze sítě.
+      // Loopback only — the server must not be reachable from the network.
       server.listen(this.port, '127.0.0.1', resolve)
     })
 
@@ -270,20 +214,11 @@ class McpService {
   }
 
   /**
-   * Stops listening and drops every connection.
-   *
-   * `server.close()` alone does not do that. It stops accepting new sockets and
-   * then waits for the open ones to end — and the MCP notification stream is an
-   * open socket the client holds for its whole session, deliberately. So a
-   * client that was merely connected made this never resolve, and with it
-   * `restart()`, which meant turning the gateway off, changing its port and
-   * regenerating the token all hung with the old server still serving.
-   *
-   * `closeAllConnections()` is what actually ends them. It is the right call
-   * rather than a blunt one: this runs when the vault locks or the user turns
-   * the gateway off, and both mean the server has no business answering
-   * anything, mid-request or not. A client sees its stream drop and reconnects,
-   * which is the behaviour it already has to handle for an app that quit.
+   * `closeAllConnections()` is required, not belt-and-braces: `server.close()`
+   * waits for open sockets, and the MCP notification stream is one the client
+   * holds for its whole session — without it this never resolves and neither
+   * does `restart()`. Dropping mid-request is intended; the vault has locked or
+   * the gateway is off, so there is nothing left to answer.
    */
   async stop(): Promise<void> {
     const server = this.http
@@ -300,19 +235,14 @@ class McpService {
     await this.start()
   }
 
-  /** Volá se při zamčení trezoru – bez klíčů nemá server co nabízet. */
   async stopOnLock(): Promise<void> {
     await this.stop()
   }
 
   /**
-   * Constant-time for any input, including the wrong length.
-   *
-   * `timingSafeEqual` throws on unequal lengths, so the obvious code returns
-   * early on a length mismatch — and that early return leaks the token's
-   * length. Hashing both sides first makes every comparison 32 bytes against
-   * 32 bytes, so a wrong token costs the same as a right one and the same as
-   * no token at all.
+   * Constant-time for any input, including the wrong length. Hashing both sides
+   * first is what buys that: `timingSafeEqual` throws on unequal lengths, and
+   * the early return that avoids the throw leaks the token's length.
    */
   private checkAuth(header: string | undefined, token: string): boolean {
     const prefix = 'Bearer '
@@ -348,9 +278,8 @@ class McpService {
         annotations: { readOnlyHint: true }
       },
       async () => {
-        // `listForModel`, never `ssh.list()`: that returns the human's SessionInfo,
-        // whose `title` falls back to `username@host` — the address this tool's own
-        // description promises to withhold.
+        // `listForModel`, never `ssh.list()`: the latter returns SessionInfo, whose
+        // `title` falls back to `username@host` — the address this tool withholds.
         const sessions = ssh.listForModel()
         return {
           content: [{ type: 'text' as const, text: JSON.stringify({ sessions }, null, 2) }]
@@ -453,21 +382,17 @@ class McpService {
           return toolError(modelErrorFor(err))
         }
 
-        // The tick was given while reading the COMMAND, before a single byte of
-        // output existed, so it cannot be a promise about text nobody has seen.
-        // It is revoked whenever the captured output looks like it carries a
-        // credential — see outputNeedsReview for why only `high` counts.
+        // The tick was given while reading the COMMAND, before any output existed,
+        // so it is revoked when the output looks like it carries a credential.
         const overridden = approval.autoShare && outputNeedsReview(result)
         if (approval.autoShare && !overridden) {
           return sharedResult(result.output, result)
         }
 
-        // No queue-full guard: `origin: 'command_output'` is the cap exemption
-        // in approvals.ts, because the human already approved the command that
-        // produced this output. Change the origin and this call can reject.
-        // `autoShareOverridden` is also the queue's force-raise flag: on this
-        // path the human was told they would not be asked, so a dialog left
-        // behind the terminal would be denied on their behalf by the timer.
+        // No queue-full guard: `origin: 'command_output'` is the cap exemption in
+        // approvals.ts, so changing it makes this call able to reject.
+        // `autoShareOverridden` is also the queue's force-raise flag — the human
+        // was promised no dialog, so a hidden one would time out into a denial.
         const answer = await bridge.askShare({
           id: randomUUID(),
           sessionId: session_id,
@@ -497,10 +422,7 @@ class McpService {
 
 }
 
-/**
- * Model musí vědět, že vidí výřez – jinak by z neúplného výstupu tiše
- * vyvozoval závěry, jako by viděl všechno.
- */
+/** The model must be told it sees an excerpt, or it reasons as if it saw all. */
 function sharedResult(text: string, run?: RunResult): {
   content: { type: 'text'; text: string }[]
 } {
@@ -514,19 +436,13 @@ function sharedResult(text: string, run?: RunResult): {
   }
 }
 
-/** Bez terminálu se sudo a spol. neptají, ale spadnou — model musí vědět proč. */
+/** With no terminal, sudo and friends fail instead of prompting; say why. */
 const NEEDS_TTY = /a terminal is required|no tty present|must be run from a terminal|not a tty/i
 
 /**
- * Describes the run for the model. A machine interface, so always English.
- *
- * The exit status is the whole point of the exec channel: the old capture ended
- * on silence and could never say whether the command worked.
- *
- * The TTY hint is derived from `shared` — the text actually being sent — and
- * never from the raw capture. Reading the raw output would turn this note into
- * a one-bit oracle over a line the human had just chosen to redact, which is
- * exactly the leak the share dialog exists to prevent.
+ * Describes the run for the model, so always English. The TTY hint must come
+ * from `shared` — the text actually being sent — and never from the raw
+ * capture, or the note becomes a one-bit oracle over a redacted line.
  */
 function describeRun(run: RunResult, shared: string): string {
   const parts: string[] = []
@@ -555,20 +471,9 @@ function describeRun(run: RunResult, shared: string): string {
 }
 
 /**
- * Errors for the model, in English and keyed rather than translated.
- *
- * Everything below throws an AppError whose message has already been through
- * `t()` for the human. Passing that on means a Czech user ships Czech
- * diagnostics to an English-speaking tool, and the text changes whenever they
- * change language. The key does not. A Map rather than an object literal so a
- * key like `constructor` cannot reach Object.prototype.
- *
- * The list is the complete set that can arrive: `error.mcpBridgeMissing` from
- * the bridge check, `error.sessionNotFound` from `ssh.readText`,
- * `error.sessionNotReady`, `error.commandRunning` and `error.execFailed` from
- * `ssh.runOnce`, and `error.requestTooLarge` from `readJsonBody`. Nothing else
- * in the app sits on a path the model can reach — the tools never touch the
- * vault, `ssh.connect` or `ssh.write`.
+ * Errors for the model: keyed, never the translated AppError message, which
+ * carries the human's language and changes when they switch it. A Map, not an
+ * object literal, so a key like `constructor` cannot reach Object.prototype.
  */
 export const MODEL_ERRORS = new Map<string, string>([
   ['error.mcpBridgeMissing', 'ConsoleWard cannot show approval dialogs right now.'],
@@ -584,12 +489,8 @@ export const MODEL_ERRORS = new Map<string, string>([
 ])
 
 /**
- * The fallback names nothing on purpose.
- *
- * An unmapped error is a path nobody traced, so its message may carry a path
- * from this machine, a sentence in the human's language, or a server's own
- * words. `err` is typed unknown and read defensively because it also receives
- * plain JS errors — a `SyntaxError` from `JSON.parse` has no `key` at all.
+ * The fallback names nothing: an unmapped error may carry a local path or a
+ * server's own words. Read defensively — a `SyntaxError` has no `key` at all.
  */
 export function modelErrorFor(err: unknown): string {
   const key = (err as { key?: unknown } | null | undefined)?.key
@@ -598,36 +499,14 @@ export function modelErrorFor(err: unknown): string {
 }
 
 /**
- * Must this output be shown to the human even though they ticked auto-share?
+ * Must this output be shown despite the auto-share tick? The tick was a promise
+ * about text nobody had seen, revoked when the text looks like a credential.
  *
- * The tick is given while reading the *command*, before a single byte of output
- * exists. It is therefore a promise about text nobody has seen, and it is revoked
- * here the moment the text turns out to look like a credential.
- *
- * `truncated` rather than a second length cap: runExec already refuses to collect
- * more than RUN_OUTPUT_BYTES, and an output that hit that ceiling is exactly the
- * case where the human cannot have known what they agreed to. It also bounds how
- * much attacker-controlled text the regexes below see on the main process event
- * loop, where a pathological input would freeze every session at once.
- *
- * Only `high` forces the dialog. `medium` covers dotted quads and any 40-character
- * base64-ish run, which every `ip a`, `git log` and `sha256sum` produces; forcing
- * on those would mean the checkbox never applies, and a control that silently does
- * nothing is worse than no control — it is the habituation `secretPatterns.ts`
- * names in its own header as the failure mode.
- *
- * `clipped` for the same reason as `truncated`: scanSecrets stops at
- * MAX_SCAN_CHARS and everything past it is unread, so a credential down there
- * would pass this check by never having been looked at. RUN_OUTPUT_BYTES is
- * half MAX_SCAN_CHARS, so today this cannot fire — the check is here so that
- * raising one of the two constants cannot silently open the hole.
- *
- * `incomplete` deliberately does NOT force the dialog. The hit cap is per
- * pattern, so a capped pattern never stops another one from scanning the whole
- * text, and a high-severity pattern that reaches its cap has already produced
- * two thousand high matches — the branch below is already true. The cap can
- * therefore only ever hide `medium` findings, and forcing on those would fire
- * on every routing table, which is the habituation this file's header names.
+ * `truncated` and `clipped` mean part of it went unread — by RUN_OUTPUT_BYTES or
+ * MAX_SCAN_CHARS — so a credential could sit there. `clipped` cannot fire while
+ * RUN_OUTPUT_BYTES is half MAX_SCAN_CHARS; it guards a later change to either.
+ * Only `high` forces the dialog: `medium` fires on every `ip a` and `sha256sum`,
+ * and a checkbox that never applies is the habituation `secretPatterns.ts` names.
  */
 export function outputNeedsReview(run: RunResult): boolean {
   if (run.truncated) return true
@@ -645,20 +524,12 @@ function toolError(message: string): {
 
 /**
  * The transport's Host/Origin rule, run before anything else touches the request.
- *
- * Mirrors `validateRequestHeaders` in the SDK exactly — the same two arrays, an
- * exact string match, and an Origin rejected only when it is present and wrong,
- * because an ordinary MCP client sends none. Exactly, and not approximately: a
- * looser check lets a request through to the transport and get a *different*
- * answer, which is the oracle this exists to remove, and a stricter one refuses
- * a client the transport would have taken.
- *
- * The exact match is what handles the interesting names without a single line
- * about any of them. `[::1]:7345`, `127.0.0.2:7345`, `LOCALHOST:7345`,
- * `127.0.0.1` without a port and `localhost.evil.com:7345` are simply not in
- * the list. A rebound name is refused because a browser puts the NAME in Host,
- * never the address it resolved to — which is the only reason this defence
- * works at all.
+ * Must mirror `validateRequestHeaders` in the SDK exactly — same arrays, exact
+ * string match, Origin rejected only when present and wrong. Looser and the
+ * request reaches the transport and gets a *different* answer, the oracle this
+ * removes; stricter and it refuses a client the transport accepts. The exact
+ * match is what rejects `[::1]:7345`, `LOCALHOST:7345`, `localhost.evil.com` and
+ * a rebound name, since a browser puts the NAME in Host, not the address.
  */
 export function hostAllowed(
   headers: IncomingHttpHeaders,
@@ -673,12 +544,8 @@ export function hostAllowed(
 }
 
 /**
- * One answer for a wrong token and for a wrong name alike.
- *
- * It names both causes and says which applied to neither. That is enough for
- * the operator of a real client — those are the only two things they can have
- * got wrong — and nothing at all for a page that is guessing whether anything
- * is listening on this port.
+ * One answer for a wrong token and a wrong name alike: enough for the operator
+ * of a real client, nothing for a page guessing whether we are listening here.
  */
 const REJECTED =
   'Rejected. ConsoleWard needs the bearer token from its settings, and it must be reached at ' +
@@ -686,12 +553,9 @@ const REJECTED =
   'whatever token it carries.'
 
 /**
- * A JSON-RPC error response, in fixed English.
- *
- * Fixed length as well as fixed text: the SDK echoes the offending Host back,
- * so its content-length alone told `[::1]` apart from `127.0.0.2`. `reason` is
- * for the causes a client may legitimately distinguish, and the rejection above
- * deliberately carries none.
+ * Fixed length as well as fixed text: the SDK echoes the offending Host back, so
+ * content-length alone tells `[::1]` apart from `127.0.0.2`. `reason` is only
+ * for causes a client may legitimately distinguish; the rejection carries none.
  */
 function sendJson(res: ServerResponse, status: number, message: string, reason?: string): void {
   const error = reason ? { code: -32000, message, data: { reason } } : { code: -32000, message }
@@ -703,32 +567,18 @@ function sendJson(res: ServerResponse, status: number, message: string, reason?:
   res.end(body)
 }
 
-/**
- * Runs `cleanup` when the response is finished with — including when it is
- * finished with already.
- *
- * A client that gives up mid-request (a cancelled tool call, a timeout, a
- * process that exits) closes the socket while the handler is still waiting on a
- * human. By the time the handler returns, `res` has already emitted `close`,
- * and `res.on('close', ...)` on a closed stream is never called: the transport
- * and the server would be left open for good.
- *
- * Deliberately not eager — this does not close anything AT the abort. The
- * transport's own close() does not resolve the promise `handleRequest` is
- * waiting on, so tearing down early would strand the handler for ever instead
- * of for at most one approval timeout.
- */
-/**
- * Does this request count against `MAX_INFLIGHT_REQUESTS`?
- *
- * Only a POST, and exported rather than inlined so a test can ask the real
- * predicate. A test that restates the rule beside the code passes against a
- * build where the rule was deleted, which is worse than no test.
- */
+/** Only a POST counts against `MAX_INFLIGHT_REQUESTS`. Exported for the tests. */
 export function takesSlot(method: string | undefined): boolean {
   return method === 'POST'
 }
 
+/**
+ * Runs `cleanup` when the response is done — including when it is done already,
+ * which is the case whenever a client gave up while the handler waited on a
+ * human: a listener added then never fires and leaks server and transport.
+ * Deliberately not eager, since the transport's close() does not resolve the
+ * promise `handleRequest` awaits and would strand the handler for ever.
+ */
 export function onceClosed(
   res: { closed: boolean; once: (event: 'close', listener: () => void) => unknown },
   cleanup: () => void
@@ -744,36 +594,23 @@ function clampPort(port: number): number {
 }
 
 /**
- * Why the server would not listen, as an AppError.
- *
- * An `AppError` and not a bare `Error`, because `fail()` in index.ts now only
- * forwards a message to the renderer when the error carries a translation key —
- * anything else becomes a generic sentence so that node's own text, with its
- * absolute paths, never reaches the UI. That guard turned the one message the
- * user can actually act on ("port 7345 is already in use, pick another") into
- * "something went wrong", which is the opposite of the intent.
+ * Must carry a translation key: `fail()` in index.ts forwards a message to the
+ * renderer only when it has one, so a bare `Error` turns "port 7345 is already
+ * in use" — the one message the user can act on — into a generic sentence.
  */
 function listenError(err: unknown, port: number): AppError {
   const code = (err as NodeJS.ErrnoException)?.code
   if (code === 'EADDRINUSE') return appError('error.portInUse', { port })
   if (code === 'EACCES') return appError('error.portNotAllowed', { port })
-  // The raw text is deliberate here and only here: an unrecognised listen
-  // failure is not actionable without it, and it is a socket error rather than
-  // anything carrying a filesystem path.
+  // The raw text is deliberate here and only here: an unrecognised listen failure
+  // is not actionable without it, and a socket error carries no path.
   return appError('error.serverStartFailed', { message: String(err) })
 }
 
-/** Načte tělo požadavku; transport ho chce jako už rozparsovaný JSON. */
 /**
- * Reads the JSON-RPC body, refusing anything that is not a bounded POST.
- *
- * Exported for the same reason `hostAllowed` and `onceClosed` are: the request
- * handler cannot be reached from a test — it closes over the listening server —
- * so the parts of it that decide anything are lifted out and checked directly.
- *
- * The size guard counts as it goes rather than after, because the point is to
- * stop buffering a body that is already too large, not to notice afterwards
- * that it was.
+ * Reads the JSON-RPC body — the transport wants it already parsed. The size
+ * guard counts as it goes, so an oversized body stops being buffered rather
+ * than being noticed afterwards.
  */
 export async function readJsonBody(req: IncomingMessage): Promise<unknown> {
   if (req.method !== 'POST') return undefined

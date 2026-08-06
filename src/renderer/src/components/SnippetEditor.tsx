@@ -7,7 +7,7 @@ import { api, errorMessage, unwrap } from '../api'
 import { useT } from '../i18n'
 
 interface Props {
-  /** null = nová položka */
+  /** null = new snippet */
   snippet: Snippet | null
   onSaved: (saved: Snippet) => void
   onCancel: () => void

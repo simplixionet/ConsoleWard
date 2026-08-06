@@ -2,31 +2,17 @@
 // Copyright (C) 2026 Simplixio — Stanislav Opletal <info@simplixio.net>
 
 /**
- * Renders build/icon.svg to build/icon.ico using the Electron already in the
- * dependency tree — no image library, no native binary, no ImageMagick.
+ * Renders build/icon.svg to build/icon.ico with the Electron already in the
+ * dependency tree — no image library, no native binary.
  *
- * There is deliberately no `convert` call anywhere in here. On Windows
- * `convert` resolves to the system FAT-to-NTFS filesystem utility, not
- * ImageMagick, and a build script that shells out to it is pointed at a disk
- * tool while it thinks it is resizing a picture.
+ * Never shell out to `convert`: on Windows that name resolves to the system
+ * FAT-to-NTFS filesystem utility, not ImageMagick.
  *
- * How it works: one offscreen BrowserWindow loads a small HTML wrapper around
- * the SVG at the largest size. The frame arrives through the webContents
- * `paint` event as a NativeImage — offscreen rendering is the reliable path
- * here, because capturePage() on a window that was never shown returns an
- * empty bitmap. The smaller sizes come from NativeImage.resize().
- *
- * The ICO container is then assembled by hand: a 6-byte header, one 16-byte
- * directory entry per image, and the payloads. PNG payloads are legal inside
- * ICO from Vista onward, so the frames are embedded with no re-encoding.
- *
- * One window, one load — deliberately. Creating and destroying an offscreen
- * window per size fails: the first renders, the second reliably rejects its
- * load with ERR_FAILED. Rendering each size from the vector would be sharper
- * in principle, but a mark this simple survives the resample, and a build step
- * that works beats one that is theoretically crisper. If the 16px frame ever
- * stops reading, render that one size in its own process rather than
- * reintroducing the churn.
+ * One offscreen BrowserWindow loads both SVGs at the largest size; the frame
+ * arrives through the webContents `paint` event, because capturePage() on a
+ * window that was never shown returns an empty bitmap. One window and one load
+ * is deliberate — an offscreen window per size makes the second load reject
+ * with ERR_FAILED. Smaller sizes come from NativeImage.resize().
  *
  * Run: npm run build:icon
  */
@@ -40,13 +26,9 @@ const SVG_FULL = path.join(ROOT, 'build', 'icon.svg')
 const SVG_SMALL = path.join(ROOT, 'build', 'icon-small.svg')
 const OUT = path.join(ROOT, 'build', 'icon.ico')
 
-// 16 and 32 are what Windows actually shows in the taskbar and Explorer.
-// 256 is the installer and the high-DPI Alt-Tab view. The rest fill the gaps
-// so Windows never has to scale one of ours badly.
-//
-// Below 48px the full mark's interior collapses — verified by eye on the
-// generated frames, not assumed — so those sizes come from the small variant
-// with the prompt enlarged. Per-size artwork is what ICO is for.
+// Below 48px the full mark's interior collapses, so those sizes come from the
+// small variant with the prompt enlarged. The in-between sizes exist so Windows
+// never has to scale one of ours.
 const SIZES = [
   { px: 16, variant: 'small' },
   { px: 24, variant: 'small' },
@@ -61,16 +43,11 @@ const MASTER = 256
 
 const PAINT_TIMEOUT_MS = 8000
 
-/** Comments are for the reader of the SVG, not for the renderer. */
 function minify(svg) {
   return svg.replace(/<!--[\s\S]*?-->/g, '').replace(/\s+/g, ' ').trim()
 }
 
-/**
- * Both variants on one page, side by side, so a single render produces both
- * masters. Two sequential windows do not work — see the header note — and one
- * page plus two crops sidesteps the problem entirely.
- */
+/** Both variants side by side, so one render plus two crops produces both masters. */
 function writePage(tmpDir, fullSvg, smallSvg) {
   const file = path.join(tmpDir, 'icon.html')
   const enc = (s) => Buffer.from(s, 'utf8').toString('base64')
@@ -91,11 +68,7 @@ function writePage(tmpDir, fullSvg, smallSvg) {
   return file
 }
 
-/**
- * Resolve on the first painted frame. Offscreen windows emit `paint` with a
- * NativeImage; a frame whose bitmap is entirely transparent is not a frame we
- * want, so keep waiting for one with content.
- */
+/** Resolve on the first painted frame that actually has content in it. */
 function renderSheet(file, width, height) {
   return new Promise((resolve, reject) => {
     const win = new BrowserWindow({
@@ -124,7 +97,7 @@ function renderSheet(file, width, height) {
 
     win.webContents.on('paint', (_event, _dirty, image) => {
       if (image.isEmpty()) return
-      // A fully transparent frame encodes to a handful of bytes. The marks
+      // A fully transparent frame encodes to a handful of bytes; the marks
       // cover most of the sheet, so anything that small is a blank paint.
       if (image.toPNG().length < 400) return
       finish(null, image)
@@ -138,10 +111,7 @@ function renderSheet(file, width, height) {
   })
 }
 
-/**
- * ICO container. Width and height are one byte each, so 256 is encoded as 0 —
- * the format's way of saying "not 1..255".
- */
+/** ICO container. Width and height are one byte each, so 256 is encoded as 0. */
 function buildIco(images) {
   const header = Buffer.alloc(6)
   header.writeUInt16LE(0, 0) // reserved

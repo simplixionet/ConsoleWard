@@ -34,7 +34,6 @@ export default function SettingsDialog({
   const [oldPw, setOldPw] = useState('')
   const [newPw, setNewPw] = useState('')
   const [newPw2, setNewPw2] = useState('')
-  // Which recovery-key operation is waiting for the master password, if any.
   const [recoveryAction, setRecoveryAction] = useState<'regenerate' | 'remove' | null>(null)
   const [recoveryPw, setRecoveryPw] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -53,13 +52,9 @@ export default function SettingsDialog({
   }, [])
 
   /**
-   * Shows a notice for `ms`, cancelling whatever was showing before.
-   *
-   * The timer used to be fired and forgotten, so an earlier short notice could
-   * clear a later long one. Copying the MCP command (3 s) and then the bare
-   * token (6 s) did exactly that: the token's warning — the one saying a secret
-   * is now on a clipboard every program can read — vanished after the leftover
-   * three seconds instead of six.
+   * Cancelling the pending timer is required: otherwise an earlier short notice
+   * clips a later long one — the 3 s "command copied" would cut the 6 s token
+   * warning short.
    */
   function flash(message: string, ms = 2500): void {
     if (noticeTimer.current !== null) window.clearTimeout(noticeTimer.current)
@@ -104,10 +99,9 @@ export default function SettingsDialog({
       return
     }
     try {
-      // Changing the password rotates the data key, so the old recovery key
-      // stops working and a new one comes back. Showing it is not optional —
-      // dropping it would silently leave the user with no way back into the
-      // vault if they forget the password they just set.
+      // Changing the password rotates the data key, so the old recovery key stops
+      // working and a new one comes back. Showing it is not optional — dropping it
+      // leaves the user with no way back into the vault.
       const freshRecoveryKey = unwrap(await api.vault.changePassword(oldPw, newPw))
       setOldPw('')
       setNewPw('')
@@ -187,15 +181,10 @@ export default function SettingsDialog({
   }
 
   /**
-   * Copying a secret has to say so.
-   *
-   * The clipboard is a machine-wide surface any process in this session can read,
-   * and on Windows the token also lands in Clipboard History (Win+V) and, for a
-   * synced account, in Cloud Clipboard on the user's other machines. Electron
-   * exposes no way to mark content transient — `clipboard.write*` has no
-   * sensitivity flag — and clearing the clipboard later would not touch either
-   * history, so the app does not pretend to. The notice exists so the user knows
-   * to regenerate afterwards, which is the only revocation there is.
+   * The clipboard is readable by every process in the session, and on Windows the
+   * token also lands in Clipboard History and Cloud Clipboard. Electron cannot
+   * mark content transient, so the warning notice is the whole mitigation: it
+   * tells the user to regenerate, the only revocation there is. Do not drop it.
    */
   async function copyToken(): Promise<void> {
     await api.clipboard.write(mcpToken ?? '')
@@ -339,11 +328,9 @@ export default function SettingsDialog({
               {hasRecovery && <p className="hint">{t('settings.recoveryWarn')}</p>}
 
               {/*
-                Both operations now demand the master password. It is not
-                ceremony: each one rotates the vault's data key, which cannot be
-                done without the password, and until that rotation existed an
-                unlocked session was enough to mint a key that opened the vault
-                forever — or to "remove" one that kept working from the backup.
+                Both operations demand the master password: each rotates the
+                vault's data key. An unlocked session alone must never be enough
+                to mint or void a recovery key.
               */}
               {recoveryAction && (
                 <div className="recovery-confirm">

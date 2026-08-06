@@ -3,27 +3,18 @@
 
 /**
  * Drives the built app over the Chrome DevTools Protocol and proves every
- * locale the language picker offers actually renders its own dictionary.
+ * locale the picker offers actually renders its own dictionary. Typecheck
+ * cannot catch the likeliest bug here: a dynamic `import('./xx.json')` that
+ * forgets `.default` is type-correct and fails at runtime as a silent fallback
+ * to English, which only a gate reading the real DOM can see.
  *
- * `npm run typecheck` cannot catch this phase's most likely bug: a dynamic
- * `import('./xx.json')` that forgets to unwrap `.default` is type-correct
- * and fails only at runtime, as a silent fallback to English with no error
- * and no console warning. This script is the only gate that observes that
- * failure mode — it drives the real built app and reads the DOM.
+ *   C1 — one JS chunk per non-English locale, none inlined into the entry asset.
+ *   C2 — the language picker offers exactly 8 options.
+ *   C3 — every option offered renders that locale's dictionary, not English.
+ *   C4 — a locale in prefs.json renders on the unlock screen's first paint.
  *
- * Four checks:
- *   C1 — build output: one JS chunk per non-English locale, none inlined
- *        into the entry asset (SC-6).
- *   C2 — the language picker offers exactly 8 options (SC-1, observed
- *        through the UI).
- *   C3 — every option the picker actually offers renders that locale's own
- *        dictionary, not English (SC-2, SC-5).
- *   C4 — a non-English locale set in prefs.json renders on the unlock
- *        screen's first paint, before any password is entered (D-05).
- *
- * Optional `--only=<comma-separated codes>` restricts C1 and C3 to those
- * codes and skips C2 and C4 entirely — they only make sense over the full
- * shipping set. With no argument every check runs.
+ * `--only=<codes>` restricts C1 and C3 and skips C2 and C4, which only make
+ * sense over the full shipping set.
  */
 import { spawn } from 'node:child_process'
 import { setTimeout as sleep } from 'node:timers/promises'

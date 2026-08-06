@@ -2,52 +2,38 @@
 // Copyright (C) 2026 Simplixio — Stanislav Opletal <info@simplixio.net>
 
 /**
- * Kotva proti vrácení staré `vault.enc`.
+ * Rollback anchor for `vault.enc`. The v3 header's AAD-covered `counter` cannot
+ * be forged, but says nothing about a whole older file being swapped in — its
+ * counter is valid too, just smaller. The last seen value therefore lives
+ * outside the vault, in `vault.guard`.
  *
- * Hlavička v3 nese `counter`, který roste s každým zápisem a chrání ho AAD,
- * takže ho nejde zfalšovat. Jenže číslo chráněné uvnitř souboru neřekne nic
- * o tom, že někdo podstrčil **celý starší soubor** — ten má svůj čítač taky
- * platný, jen menší. Poslední viděnou hodnotu je proto potřeba držet jinde:
- * v `vault.guard` vedle trezoru.
+ * Scope, which SECURITY.md must keep stating: sealing via `safeStorage` stops
+ * whoever can only *write files* (sync client, restored backup, share with bad
+ * permissions), and nothing that runs as this user — such code can seal anything
+ * itself, or just delete `vault.guard`.
  *
- * **Co to umí a co ne.** Zapečetění přes `safeStorage` brání tomu, aby někdo,
- * kdo umí jen *zapisovat soubory* — synchronizační klient, obnovená záloha,
- * sdílená složka s rozbitými právy, offline obraz disku — kotvu podvrhl. Proti
- * kódu běžícímu pod tímtéž uživatelem nezmůže nic: DPAPI i Keychain mu rády
- * zašifrují cokoliv, a hlavně může `vault.guard` prostě smazat. Detekce tedy
- * chytá **nehody a nedbalé útočníky**, ne cílený útok z téhož účtu. Musí to tak
- * být napsané i v SECURITY.md — kotva, která slibuje víc, než umí, je horší než
- * žádná.
- *
- * Modul je **bez závislosti na Electronu**: pečetidlo se předává zvenčí. Jinak
- * by `safeStorage` v importu shodilo testovací soubory, které stubují jen `app`
- * — a shodilo by je při importu, ne v jednom testu.
+ * The sealer is injected rather than imported: `safeStorage` at import time
+ * would break the test files that stub only `app`.
  */
 
 import { constants as fsConstants } from 'node:fs'
 import fsp from 'node:fs/promises'
 
-/** Verze formátu `vault.guard`. Neznámou verzi nečteme, ale ani nepřepisujeme naslepo. */
 export const GUARD_VERSION = 1 as const
 
 /**
- * Strop pro čtení kotvy.
- *
- * Kotva má pár set bajtů. Limit je tu proto, že soubor leží v adresáři, do
- * kterého může psát i něco jiného, a načíst odtud gigabajt při odemykání by byl
- * laciný způsob, jak aplikaci položit.
+ * Read cap. The anchor is a few hundred bytes; its directory is writable by
+ * other things, and an unbounded read would be a cheap way to hang unlocking.
  */
 export const GUARD_MAX_BYTES = 64 * 1024
 
-// Windows nemá O_NONBLOCK a přímý odkaz by z celého příznakového slova udělal
-// NaN. Stejný důvod jako v textFile.ts.
+// Windows has no O_NONBLOCK, and referencing it directly would turn the whole
+// flag word into NaN. Same reason as in textFile.ts.
 const O_NONBLOCK = (fsConstants as { O_NONBLOCK?: number }).O_NONBLOCK ?? 0
 
 /**
- * Zapečetění kotvy platformním trezorem hesel.
- *
- * `available()` je false na Linuxu bez keyringu (a u backendu `basic_text`,
- * který jen předstírá, že šifruje).
+ * `available()` is false on Linux without a keyring, and for the `basic_text`
+ * backend that only pretends to encrypt.
  */
 export interface GuardSealer {
   available(): boolean
@@ -56,37 +42,27 @@ export interface GuardSealer {
 }
 
 export interface Anchor {
-  /** Poslední čítač, který jsme u tohoto trezoru viděli. */
   counter: number
-  /** Kdy se kotva zapsala (ms od epochy) – jde do textu varování. */
+  /** When the anchor was written (ms since epoch); shown in the warning. */
   at: number
-  /** Byla kotva zapečetěná, nebo je to jen prostý text bez keyringu? */
   protected: boolean
 }
 
 export type GuardRead =
   | { kind: 'ok'; anchor: Anchor }
-  /** Kotva ještě neexistuje – první spuštění, nebo ji někdo smazal. */
   | { kind: 'absent' }
-  /** Kotva existuje, ale nedá se přečíst. Nikdy to netiš jako 'absent'. */
   | { kind: 'unreadable'; reason: string }
 
 export type GuardVerdict =
-  /** Soubor je stejně starý nebo novější než kotva. */
   | { kind: 'ok' }
-  /** Není s čím porovnávat. */
   | { kind: 'unknown' }
-  /** Soubor na disku je STARŠÍ než ten, který jsme naposledy viděli. */
   | { kind: 'rollback'; expected: number; found: number; at: number }
 
 /**
- * Porovná čítač z hlavičky s kotvou.
- *
- * Pravidlo je jednosměrné schválně. `found > expected` **není** poplach: kotva
- * se zapisuje až po úspěšném zápisu trezoru, takže pád mezi těmi dvěma kroky
- * nechá kotvu o jedno pozadu, a to je normální stav, ne útok. Kdyby se pořadí
- * obrátilo, tenhle běžný pád by hlásil vrácení souboru pokaždé — a varování,
- * které křičí na nevinné, se za týden odklikává poslepu.
+ * One-directional on purpose: `found > expected` is **not** an alarm. The anchor
+ * is written only after a successful vault write, so a crash between the two
+ * leaves it one behind — normal, not an attack. Alarming on that would fire
+ * after every unclean shutdown, until the warning gets clicked away unread.
  */
 export function verdict(anchor: Anchor | null, fileCounter: number): GuardVerdict {
   if (anchor === null) return { kind: 'unknown' }
@@ -95,7 +71,6 @@ export function verdict(anchor: Anchor | null, fileCounter: number): GuardVerdic
   return { kind: 'rollback', expected: anchor.counter, found: fileCounter, at: anchor.at }
 }
 
-/** Serializuje kotvu do obsahu `vault.guard`. */
 export function serializeGuard(counter: number, at: number, sealer: GuardSealer): string {
   if (!Number.isSafeInteger(counter) || counter < 0) {
     throw new Error('vaultGuard: counter must be a non-negative safe integer')
@@ -107,10 +82,9 @@ export function serializeGuard(counter: number, at: number, sealer: GuardSealer)
   const body = JSON.stringify({ counter, at })
   const isProtected = sealer.available()
   /*
-   * Bez keyringu se kotva zapíše jako prostý text, ne že se nezapíše.
-   * Odmítnout ji znamená vypnout detekci celé jedné platformě, a i nechráněná
-   * kotva chytí každé nechtěné vrácení souboru. Nesmí se ale tvářit jako
-   * ochrana — proto to `protected` v souboru a proto to stojí v SECURITY.md.
+   * Without a keyring the anchor is plain text rather than absent — refusing it
+   * would disable detection on a whole platform, and an unsealed anchor still
+   * catches accidental rollbacks. `protected` keeps it from posing as security.
    */
   const payload = isProtected
     ? sealer.seal(body).toString('base64')
@@ -119,7 +93,7 @@ export function serializeGuard(counter: number, at: number, sealer: GuardSealer)
   return JSON.stringify({ version: GUARD_VERSION, protected: isProtected, payload }, null, 2)
 }
 
-/** Přečte obsah `vault.guard`. Nikdy nevyhazuje – chyba je návratová hodnota. */
+/** Never throws — a failure is a return value. */
 export function parseGuard(raw: string, sealer: GuardSealer): GuardRead {
   let outer: unknown
   try {
@@ -133,9 +107,8 @@ export function parseGuard(raw: string, sealer: GuardSealer): GuardRead {
 
   const file = outer as Record<string, unknown>
   /*
-   * Novější verzi nečteme a volající ji nesmí přepsat. Přepsat kotvu, které
-   * nerozumíme, je přesně to snížení ochrany, kvůli kterému tenhle soubor je:
-   * stačilo by ji podvrhnout jako `version: 999` a detekce zmizí potichu.
+   * An unknown version is not read, and the caller must not overwrite it —
+   * otherwise planting a `version: 999` anchor silently switches detection off.
    */
   if (file.version !== GUARD_VERSION) {
     return { kind: 'unreadable', reason: `unsupported version ${String(file.version)}` }
@@ -153,7 +126,7 @@ export function parseGuard(raw: string, sealer: GuardSealer): GuardRead {
   let body: string
   if (file.protected) {
     if (!sealer.available()) {
-      // Chráněná kotva na stroji bez keyringu: nevíme, ne že je špatně.
+      // Sealed anchor on a machine without a keyring: unknown, not invalid.
       return { kind: 'unreadable', reason: 'sealed anchor, no keyring available' }
     }
     try {
@@ -189,20 +162,16 @@ export function parseGuard(raw: string, sealer: GuardSealer): GuardRead {
   }
 }
 
-/* ------------------------------------------------------------ práce se souborem */
+/* ------------------------------------------------------------------ file access */
 
 /**
- * Přečte `vault.guard`.
+ * A missing file is `absent`, anything else `unreadable` — never merge the two.
+ * The caller overwrites the first and not the second; merged, a corrupted anchor
+ * would switch detection off by itself.
  *
- * Chybějící soubor je `absent`, cokoliv jiného `unreadable` — mezi „kotva tu
- * není" a „kotva tu je, ale nerozumím jí" se **nesmí** míchat. Volající první
- * případ přepisuje a druhý ne; kdyby splynuly, stačí kotvu poškodit a detekce
- * se sama vypne.
- *
- * Otevírá se dřív, než se ptá: `fstat` na otevřeném deskriptoru odpoví
- * `isFile() === false` i na pojmenovanou rouru, kterou `stat` nad cestou hlásí
- * jako soubor. Ta by jinak prošla limitem a čtení by se zaseklo na vlákně,
- * které nejde zrušit — přesně při odemykání.
+ * Opened before it is questioned: `fstat` on the descriptor reports
+ * `isFile() === false` for a named pipe that `stat` on the path calls a file,
+ * and such a pipe would pass the size check and hang the read uncancellably.
  */
 export async function readAnchorFile(file: string, sealer: GuardSealer): Promise<GuardRead> {
   let handle: fsp.FileHandle
@@ -219,11 +188,8 @@ export async function readAnchorFile(file: string, sealer: GuardSealer): Promise
     if (stat.size > GUARD_MAX_BYTES) return { kind: 'unreadable', reason: 'too large' }
 
     /*
-     * Dva stropy, které se navzájem zálohují: `stat.size` je rychlá cesta,
-     * tenhle je ta skutečná pojistka, protože velikost ze `stat` je výpověď
-     * o minulosti a soubor mohl mezitím povyrůst. Mutace to ukázala poctivě —
-     * odebrat jeden z nich testy nezčervená, odebrat oba ano. Neber to jako
-     * důkaz, že je jeden zbytečný.
+     * Second cap behind `stat.size`: the stat result describes the past and the
+     * file may have grown since. Both are needed; neither alone is sound.
      */
     const buf = Buffer.alloc(GUARD_MAX_BYTES + 1)
     let filled = 0
@@ -243,15 +209,12 @@ export async function readAnchorFile(file: string, sealer: GuardSealer): Promise
 }
 
 /**
- * Zapíše kotvu.
+ * Writes via a temp file and `rename`: a truncated anchor would read back as
+ * `unreadable`, so a power cut must not silently disable detection.
  *
- * Přes dočasný soubor a `rename`, aby přerušený zápis nenechal na disku
- * useknutou kotvu — tu by příští start četl jako `unreadable` a detekce by
- * tiše zmizela kvůli výpadku proudu.
- *
- * **Volá se až po úspěšném zápisu trezoru, nikdy před ním.** Opačné pořadí
- * nechá po pádu kotvu napřed a `verdict` pak hlásí vrácení souboru při každém
- * nečistém vypnutí.
+ * **Call only after a successful vault write, never before.** The reverse order
+ * leaves the anchor ahead after a crash, and `verdict` then reports a rollback
+ * on every unclean shutdown.
  */
 export async function writeAnchorFile(
   file: string,
@@ -266,10 +229,8 @@ export async function writeAnchorFile(
 }
 
 /**
- * Smaže kotvu. Chybějící soubor není chyba.
- *
- * Patří k mazání trezoru: kotva, která přežije svůj trezor, ohlásí u nově
- * založeného (čítač zpátky na nule) vrácení souboru, které se nestalo.
+ * Belongs with deleting the vault: an anchor outliving its vault reports a
+ * rollback that never happened against a fresh one, whose counter is at zero.
  */
 export async function removeAnchorFile(file: string): Promise<void> {
   await fsp.rm(file, { force: true })

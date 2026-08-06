@@ -19,10 +19,7 @@ import {
   type GuardSealer
 } from '../src/main/vaultGuard.ts'
 
-/**
- * Pečetidlo, které jen otočí bajty. Nešifruje — ověřuje se tvar a cesty kódu,
- * ne kryptografie, tu dodává platforma.
- */
+/** Reverses bytes instead of encrypting — the tests cover shape and code paths, not crypto. */
 function fakeSealer(available = true): GuardSealer {
   return {
     available: () => available,
@@ -31,7 +28,7 @@ function fakeSealer(available = true): GuardSealer {
   }
 }
 
-/** Pečetidlo, kterému se dešifrování nepovede — cizí profil, jiný uživatel. */
+/** A sealer whose open() always fails — a foreign profile, a different user. */
 const brokenSealer: GuardSealer = {
   available: () => true,
   seal: (plain) => Buffer.from(plain, 'utf8'),
@@ -49,12 +46,8 @@ describe('verdict', () => {
     assert.deepEqual(verdict(anchor(5), 5), { kind: 'ok' })
   })
 
-  /*
-   * The one-way rule. The anchor is written only after the vault write
-   * succeeds, so a crash in between leaves it one behind -- an ordinary event.
-   * Alarming on it would mean crying wolf at every unclean shutdown, and a
-   * warning that fires on the innocent gets clicked through blind inside a week.
-   */
+  // The anchor is written only after the vault write succeeds, so a crash between
+  // the two leaves it one behind -- ordinary, and not worth crying wolf over.
   it('novější soubor než kotva není poplach', () => {
     assert.deepEqual(verdict(anchor(5), 6), { kind: 'ok' })
     assert.deepEqual(verdict(anchor(5), 500), { kind: 'ok' })
@@ -77,11 +70,8 @@ describe('verdict', () => {
     assert.deepEqual(verdict(null, 3), { kind: 'unknown' })
   })
 
-  /*
-   * A header counter that is not a sane integer must not become a verdict.
-   * NaN loses every comparison, so a naive `<` would answer "ok" and quietly
-   * turn the check off for exactly the corrupt file worth looking at.
-   */
+  // NaN loses every comparison, so a naive `<` answers "ok" and turns the check
+  // off for exactly the corrupt file worth looking at.
   it('nesmyslný čítač v hlavičce nedá ani ok, ani poplach', () => {
     for (const bad of [NaN, -1, 1.5, Infinity]) {
       assert.deepEqual(verdict(anchor(5), bad), { kind: 'unknown' }, `pro ${bad}`)
@@ -97,11 +87,8 @@ describe('serializeGuard + parseGuard', () => {
     assert.deepEqual(read.kind === 'ok' && read.anchor, { counter: 7, at: 1234, protected: true })
   })
 
-  /*
-   * Decode the payload before judging it. Asserting on the raw file text looks
-   * equivalent and is not: base64 hides the plaintext either way, so that
-   * version of this test passed against an anchor that was never sealed at all.
-   */
+  // Decode before judging: base64 hides the plaintext either way, so asserting on
+  // the raw file text also passes for an anchor that was never sealed.
   it('zapsané je opravdu zapečetěné, ne jen zakódované', () => {
     const raw = serializeGuard(42, 1234, fakeSealer())
     assert.equal(JSON.parse(raw).protected, true)
@@ -111,11 +98,8 @@ describe('serializeGuard + parseGuard', () => {
     assert.ok(!decoded.includes('"counter"'), 'čítač nesmí být čitelný po dekódování base64')
   })
 
-  /*
-   * Refusing to write an anchor without a keyring would switch rollback
-   * detection off for a whole platform. It is written anyway, flagged as
-   * unprotected, and it still catches every non-adversarial rollback.
-   */
+  // Refusing to write an anchor without a keyring would switch rollback detection
+  // off for a whole platform; unprotected still catches every honest rollback.
   it('bez keyringu se kotva zapíše jako prostý text, ale přizná to', () => {
     const sealer = fakeSealer(false)
     const raw = serializeGuard(7, 1234, sealer)
@@ -175,11 +159,8 @@ describe('parseGuard odmítá poškozený soubor', () => {
     })
   }
 
-  /*
-   * The forward-compatibility trap. If an unknown version read as "absent" the
-   * caller would overwrite it, so writing `version: 999` into the file would be
-   * enough to switch rollback detection off with no error anywhere.
-   */
+  // If an unknown version read as "absent" the caller would overwrite it, so
+  // `version: 999` in the file would switch rollback detection off silently.
   it('neznámá verze je nečitelná, ne chybějící', () => {
     const raw = JSON.stringify({ version: GUARD_VERSION + 1, protected: false, payload: 'eA==' })
     const read = parseGuard(raw, sealer)
@@ -209,11 +190,8 @@ describe('parseGuard odmítá poškozený soubor', () => {
 })
 
 describe('modul nesmí sáhnout na Electron', () => {
-  /*
-   * Four test files stub only `app` from electron. An import of safeStorage
-   * here would take three of them down at import time rather than in one test,
-   * which is why the sealer is injected instead.
-   */
+  // Four test files stub only `app` from electron, so importing safeStorage here
+  // would take three of them down at import time. Hence the injected sealer.
   it('zdroj neimportuje electron', async () => {
     const fs = await import('node:fs/promises')
     const source = await fs.readFile(new URL('../src/main/vaultGuard.ts', import.meta.url), 'utf8')
@@ -253,12 +231,9 @@ describe('vault.guard na disku', () => {
     assert.deepEqual(await readAnchorFile(file, sealer), { kind: 'absent' })
   })
 
-  /*
-   * The distinction this whole file rests on. The caller overwrites an absent
-   * anchor and refuses to touch an unreadable one, so if a corrupt file read as
-   * absent, damaging it would be enough to switch rollback detection off -- and
-   * damaging a file is exactly what the attacker being modelled here can do.
-   */
+  // The caller overwrites an absent anchor and refuses to touch an unreadable one,
+  // so a corrupt file reading as absent would let an attacker switch rollback
+  // detection off by damaging it -- which is exactly what this attacker can do.
   it('poškozený soubor je unreadable, NIKDY absent', async () => {
     const file = path.join(await tmpDir(), 'vault.guard')
     for (const junk of ['', '{{{', '[]', '{"version":999}']) {
@@ -276,13 +251,9 @@ describe('vault.guard na disku', () => {
     assert.match(read.kind === 'unreadable' ? read.reason : '', /too large/)
   })
 
-  /*
-   * The case that actually measures the ceiling. Garbage past the limit gets
-   * refused by the parser whatever the size checks do, so it proves nothing --
-   * a valid anchor padded with whitespace does: JSON.parse accepts trailing
-   * space, so without a bound the read would truncate at the limit and hand
-   * back a perfectly good anchor from a file it never finished looking at.
-   */
+  // The case that actually measures the ceiling: JSON.parse accepts trailing
+  // whitespace, so without a bound the read would truncate at the limit and hand
+  // back a good anchor from a file it never finished looking at.
   it('platná kotva s přetečením za sebou taky neprojde', async () => {
     const file = path.join(await tmpDir(), 'vault.guard')
     const valid = serializeGuard(3, 1000, sealer)
@@ -310,11 +281,8 @@ describe('vault.guard na disku', () => {
     assert.deepEqual(await fsp.readdir(dir), ['vault.guard'], 'dočasný soubor nesmí zůstat')
   })
 
-  /*
-   * An anchor outliving its vault would report a rollback that never happened:
-   * a freshly created vault starts at counter 0, which is below anything the
-   * old anchor recorded.
-   */
+  // An anchor outliving its vault reports a rollback that never happened: a fresh
+  // vault starts at counter 0, below anything the old anchor recorded.
   it('smazání je tiché a opakovatelné', async () => {
     const file = path.join(await tmpDir(), 'vault.guard')
     await writeAnchorFile(file, 5, 1000, sealer)

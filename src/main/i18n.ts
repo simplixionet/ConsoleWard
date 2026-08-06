@@ -2,11 +2,9 @@
 // Copyright (C) 2026 Simplixio — Stanislav Opletal <info@simplixio.net>
 
 /**
- * Překlady v hlavním procesu.
- *
- * Chybové hlášky vznikají tady (trezor, SSH, MCP) a uživatel je čte, takže
- * musí být přeložené. Řetězce, které čte AI přes MCP, zůstávají naopak vždy
- * anglicky — je to strojové rozhraní, ne text pro člověka.
+ * Error messages originate in the main process (vault, SSH, MCP) and users read
+ * them, so they are translated. Strings the AI reads over MCP always stay
+ * English — that is a machine interface, not text for a human.
  */
 
 import { createTranslator, SOURCE_LOCALE, type Translator } from '../shared/i18n'
@@ -18,7 +16,7 @@ let current: { locale: string; t: Translator } = {
   t: createTranslator(SOURCE_LOCALE, SOURCE_DICTIONARY, SOURCE_DICTIONARY)
 }
 
-/** Musí doběhnout dřív, než začne cokoliv volat appError() — viz index.ts app.whenReady(). */
+/** Must finish before anything calls appError() — see app.whenReady() in index.ts. */
 export async function initI18n(): Promise<void> {
   const locale = readPrefs().locale ?? SOURCE_LOCALE
   const dictionary = await dictionaryFor(locale)
@@ -34,14 +32,11 @@ export async function setLocale(locale: string): Promise<void> {
   current = { locale, t: createTranslator(locale, dictionary, SOURCE_DICTIONARY) }
 }
 
-/** Přeloží klíč do aktuálně zvoleného jazyka. */
 export const t: Translator = (key, params) => current.t(key, params)
 
 /**
- * Chyba nesoucí překladový klíč.
- *
- * Zpráva se vyrábí až v okamžiku vzniku, takže po přepnutí jazyka platí nová
- * volba pro všechno, co teprve nastane.
+ * Error carrying a translation key. The message is rendered at construction
+ * time, so a language switch applies to everything raised from then on.
  */
 export class AppError extends Error {
   readonly key: string

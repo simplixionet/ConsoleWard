@@ -2,14 +2,9 @@
 // Copyright (C) 2026 Simplixio — Stanislav Opletal <info@simplixio.net>
 
 /**
- * The approval queue between the MCP tools and the window.
- *
- * It owns the cap and the window raise as well as the records, because both
- * decisions are functions of the queue's size: `mcp.ts` cannot see it, and
- * while this lived in `index.ts` nothing could reach it — that file exports
- * nothing and calls `app.requestSingleInstanceLock()` at module scope. Nothing
- * here imports Electron, and that is the point: the gate is the part that has
- * to be tested.
+ * The approval queue between the MCP tools and the window. It owns the cap and
+ * the window raise because both decisions are functions of the queue's size.
+ * Nothing here imports Electron, deliberately: the gate has to be testable.
  */
 
 import type { CommandApproval, ShareRequest } from '../shared/types'
@@ -24,7 +19,7 @@ export interface ShareAnswer {
   text: string
 }
 
-/** The window half of the queue; `index.ts` supplies the Electron calls. */
+/** `index.ts` supplies the Electron calls. */
 export interface ApprovalHost {
   sendCommand: (req: CommandApproval) => void
   sendShare: (req: ShareRequest) => void
@@ -33,10 +28,8 @@ export interface ApprovalHost {
 }
 
 /**
- * The queue is the human's attention, not a buffer. Three is roughly what a
- * person can hold at once; past that a client is talking over itself, and the
- * honest answer is to refuse rather than to store the request, arm a timer for
- * it and yank the window forward on its behalf.
+ * The queue is the human's attention, not a buffer. Past three, refusing is more
+ * honest than storing the request, arming a timer and raising the window for it.
  */
 export const MAX_PENDING_APPROVALS = 3
 
@@ -44,14 +37,11 @@ export const MAX_PENDING_APPROVALS = 3
 export const APPROVAL_TIMEOUT_MS = 5 * 60_000
 
 /**
- * A batch is one raise per stretch of pending work, plus this much quiet after
- * it drains. Without the tail a client raises the window again the instant the
- * human answers the last dialog — on Windows that is `flashFrame` in a loop,
- * driven by the human's own clicks.
+ * Quiet tail after the queue drains. Without it a client raises the window again
+ * the instant the human answers — `flashFrame` in a loop driven by their clicks.
  */
 export const FOCUS_QUIET_MS = 5_000
 
-/** Refusal by the cap. `mcp.ts` turns this into a tool error for the model. */
 export class ApprovalQueueFullError extends Error {
   constructor() {
     super(`Too many approvals are already pending (limit ${MAX_PENDING_APPROVALS}).`)
@@ -73,11 +63,7 @@ export class ApprovalQueue {
   private host: ApprovalHost | null = null
   private commands = new Map<string, Pending<CommandAnswer>>()
   private shares = new Map<string, Pending<ShareAnswer>>()
-  /**
-   * -Infinity, not 0: a clock reading 0 — a fake one in a test, or a machine
-   * whose time has not been set yet — would otherwise swallow the very first
-   * raise, and the first raise is the one that matters.
-   */
+  /** -Infinity, not 0: a zero clock would swallow the first raise, the one that matters. */
   private lastRaiseAt = Number.NEGATIVE_INFINITY
 
   bind(host: ApprovalHost): void {
@@ -102,15 +88,12 @@ export class ApprovalQueue {
   }
 
   async askShare(req: ShareRequest): Promise<ShareAnswer> {
-    // The output half of a run_command the human already approved and which has
-    // already run. Their click bought this slot, so refusing it here would
-    // throw away an approval they already gave — and would hand a client a way
-    // to silence an answer by flooding the queue while the command executes.
+    // Exempt from the cap: the human already approved the command that produced
+    // this output. Refusing here would also let a client silence an answer by
+    // flooding the queue while the command runs.
     if (req.origin !== 'command_output') this.admit()
-    // A forced dialog is the one case where the human was explicitly promised
-    // no dialog at all. It jumps the quiet window — otherwise it can sit behind
-    // the terminal until the five-minute timer denies it on their behalf, and
-    // they never learn a credential was about to be sent.
+    // A forced dialog jumps the quiet window: the human was promised no dialog,
+    // so one left behind the terminal would time out into a denial unseen.
     const raise = req.autoShareOverridden === true || this.shouldRaise()
     return new Promise<ShareAnswer>((resolve) => {
       const timer = setTimeout(() => {
@@ -149,8 +132,7 @@ export class ApprovalQueue {
       p.resolve({ shared: false, text: '' })
     }
     this.shares.clear()
-    // Lock and quit end the batch. Whatever arrives afterwards is a new one and
-    // may raise the window again — the user comes back to an app showing nothing.
+    // Lock and quit end the batch, so the next request may raise the window again.
     this.lastRaiseAt = Number.NEGATIVE_INFINITY
   }
 
@@ -160,12 +142,9 @@ export class ApprovalQueue {
   }
 
   /**
-   * Read before the record is inserted, so the new request does not count
-   * itself. `Date.now()` is not monotonic, so a clock that jumps can move this
-   * either way: backwards suppresses a raise, forwards ends the quiet window
-   * early and allows one. Both are harmless at the scale of a single window
-   * raise. `performance.now()` would be monotonic but node's MockTimers cannot
-   * advance it, which would make the quiet window untestable.
+   * Must be read before the record is inserted, or the new request counts itself
+   * and never raises. `Date.now()` because node's MockTimers cannot advance
+   * `performance.now()`; a clock jump costs at most one window raise.
    */
   private shouldRaise(): boolean {
     if (this.size() > 0) return false

@@ -2,16 +2,11 @@
 // Copyright (C) 2026 Simplixio — Stanislav Opletal <info@simplixio.net>
 
 /**
- * The settings that live outside the vault.
- *
- * Only the language does, and only because it is needed before the vault is
- * unlocked — the unlock screen and its error messages have to be in the user's
- * language. Everything sensitive belongs in the vault, so the property worth
- * testing hardest is that this file stays boring: an unreadable, hostile or
- * absent prefs.json must never stop the app reaching its unlock screen.
- *
- * `readPrefs` memoises into a module-level `cache`, so these tests are written
- * to be order-independent around it rather than pretending it is not there.
+ * The settings that live outside the vault — only the language, and only
+ * because the unlock screen must be in the user's language before the vault is
+ * open. Everything sensitive belongs in the vault, so what is tested hardest is
+ * that an unreadable, hostile or absent prefs.json never stops the app reaching
+ * its unlock screen.
  */
 
 import { describe, test, mock, after } from 'node:test'
@@ -42,13 +37,6 @@ after(() => {
   for (const made of madeDirs) fs.rmSync(made, { recursive: true, force: true })
 })
 
-/**
- * A fresh profile directory, and a cache cleared through the public API.
- *
- * `writePrefs` is the only exported thing that replaces the cache, so it is
- * what these tests use to get back to a known state — reaching into the module
- * would test the reach rather than the behaviour.
- */
 function fresh(): void {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-prefs-'))
   madeDirs.push(dir)
@@ -58,27 +46,18 @@ const prefsPath = (): string => path.join(dir, 'prefs.json')
 
 describe('prefs', () => {
   /*
-   * THIS TEST MUST STAY FIRST.
+   * THIS TEST MUST STAY FIRST. The module-level cache is never invalidated, so
+   * the file is read once per process and every later test gets the cache. That
+   * one read is spent here, on the path that decides whether the app starts at
+   * all — a corrupt prefs.json must not throw, because this runs before the
+   * vault is open and the fix would be a file the user cannot see. One junk
+   * fixture rather than a loop, for the same reason.
    *
-   * `readPrefs` memoises into a module-level `cache` that nothing invalidates,
-   * so the file is read exactly once per process. Every later test in this file
-   * gets the cache, not the disk — which means the file-reading path, the one
-   * that has to survive a corrupt prefs.json, is reachable only here.
-   *
-   * That is also why there is one junk fixture rather than a loop over six:
-   * the second iteration would be reading the cache and asserting nothing.
-   *
-   * What this consequently does NOT cover, stated rather than implied: the
-   * `resolveLocale(parsed.locale) ?? systemLocale()` arm, which handles a file
-   * that parses but names a language this build does not ship. One process gets
-   * one file read, and it is spent here on the arm that decides whether the app
-   * starts at all. The same guard on the write side is covered below, and every
-   * prefs.json this application produced went through it — the residual gap is
-   * a hand-edited file.
+   * NOT covered as a result: `resolveLocale(parsed.locale) ?? systemLocale()`,
+   * for a file that parses but names an unshipped language. The same guard on
+   * the write side is covered below.
    */
   test('a corrupt prefs.json does not stop the app reaching the unlock screen', () => {
-    // This runs before the vault is opened, so a throw here is an app that will
-    // not start at all — and the fix would be a file the user cannot see.
     fresh()
     fs.writeFileSync(prefsPath(), '{"locale": 42, "trailing":')
     let out: { locale: string } | null = null
@@ -116,8 +95,8 @@ describe('prefs', () => {
   })
 
   test('nothing sensitive is written beside the vault', async () => {
-    // The whole rule for this file. A regression here is a secret in plaintext
-    // next to the encrypted vault, which is the one thing it must never be.
+    // The whole rule for this file: a regression here is a secret in plaintext
+    // next to the encrypted vault.
     fresh()
     await writePrefs({ locale: 'fr' })
     const stored = JSON.parse(fs.readFileSync(prefsPath(), 'utf8')) as Record<string, unknown>
@@ -126,7 +105,7 @@ describe('prefs', () => {
 
   test('a missing prefs.json is not an error', async () => {
     fresh()
-    // Reset the cache through the public API, then delete the file behind it.
+    // writePrefs is the only exported way to replace the cache.
     await writePrefs({ locale: 'en' })
     fs.rmSync(prefsPath(), { force: true })
     assert.doesNotThrow(() => readPrefs(), 'a missing prefs.json threw')

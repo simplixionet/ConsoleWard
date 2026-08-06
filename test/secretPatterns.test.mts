@@ -2,21 +2,13 @@
 // Copyright (C) 2026 Simplixio — Stanislav Opletal <info@simplixio.net>
 
 /**
- * Tests for the secret highlighter behind the "what actually goes to the AI"
- * dialog.
+ * The secret highlighter behind the "what actually goes to the AI" dialog.
+ * Every advertised pattern must fire on a realistic example, and ordinary
+ * output must stay dark — a highlighter that paints every `ls` teaches the user
+ * to click through the one paste that mattered.
  *
- * The module documents itself as a hint, not a guarantee, so these tests hold
- * it to that claim and no further: every pattern it advertises must fire on a
- * realistic example, and ordinary command output must stay dark. The second
- * half matters as much as the first — the module's own header names
- * habituation as the failure mode, and a highlighter that paints every `ls`
- * teaches the user to click through the one paste that mattered.
- *
- * Two tests are marked `todo`. They are not unfinished: each carries a real,
- * unweakened assertion against behaviour that is currently wrong, marked so
- * that the first test suite this project has ever had does not start out red.
- * They still run, and still print the defect on every pass. Delete the marker
- * when the source is fixed. See KNOWN GAPS at the bottom.
+ * A `todo` marker means the assertion is real and fails against the source
+ * today, not that the test is unfinished. See KNOWN GAPS at the bottom.
  */
 
 import { describe, test } from 'node:test'
@@ -28,16 +20,10 @@ import {
   summarizeSecrets
 } from '../src/shared/secretPatterns.ts'
 
-// --------------------------------------------------------------------------
-// Helpers
-// --------------------------------------------------------------------------
-
-/** The text a match actually covers — what the dialog paints. */
 function covered(text: string, m: { start: number; end: number }): string {
   return text.slice(m.start, m.end)
 }
 
-/** Readable rendering of every finding, for assertion messages. */
 function describeMatches(text: string, matches: ReturnType<typeof findSecrets>): string {
   if (matches.length === 0) return '(nothing)'
   return matches
@@ -46,9 +32,8 @@ function describeMatches(text: string, matches: ReturnType<typeof findSecrets>):
 }
 
 /**
- * Asserts the given label fires and returns it. Also asserts the highlight
- * covers `secret`, so a pattern that matched only a fragment — and left the
- * rest of the credential unpainted — fails here rather than passing quietly.
+ * Asserts the label fires AND that the highlight covers `secret`, so a pattern
+ * painting one fragment and leaving the rest of the credential bare fails here.
  */
 function expectHit(text: string, label: string, severity: 'high' | 'medium', secret: string) {
   const matches = findSecrets(text)
@@ -63,7 +48,6 @@ function expectHit(text: string, label: string, severity: 'high' | 'medium', sec
   return hit
 }
 
-/** Asserts nothing at all is highlighted, naming what leaked in on failure. */
 function expectQuiet(name: string, text: string) {
   const matches = findSecrets(text)
   assert.equal(
@@ -72,10 +56,6 @@ function expectQuiet(name: string, text: string) {
     `${name} must not be highlighted, but was: ${describeMatches(text, matches)}`
   )
 }
-
-// --------------------------------------------------------------------------
-// Fixtures
-// --------------------------------------------------------------------------
 
 const PRIVATE_KEY_BLOCK = [
   '-----BEGIN OPENSSH PRIVATE KEY-----',
@@ -124,10 +104,6 @@ const PACKAGE_VERSIONS = [
   'zod         4.4.3   4.4.3   4.5.0  node_modules/zod'
 ].join('\n')
 
-// --------------------------------------------------------------------------
-// Detection — one realistic positive per advertised pattern
-// --------------------------------------------------------------------------
-
 describe('findSecrets: detects the patterns it advertises', () => {
   test('a complete private key block is flagged high as secret.privateKey', () => {
     const text = 'cat ~/.ssh/id_rsa\n' + PRIVATE_KEY_BLOCK + '\nstan@web01:~$ '
@@ -136,8 +112,6 @@ describe('findSecrets: detects the patterns it advertises', () => {
   })
 
   test('a private key truncated by the scrollback still trips secret.privateKeyStart', () => {
-    // Only the header survives when the paste is cut short — the body is gone
-    // but the fact a key was on screen must still show.
     const text = 'cat id_rsa\n-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA'
     expectHit(text, 'secret.privateKeyStart', 'high', '-----BEGIN RSA PRIVATE KEY-----')
   })
@@ -195,10 +169,9 @@ describe('findSecrets: detects the patterns it advertises', () => {
   })
 
   test('the bounded scheme still covers every scheme that carries credentials', () => {
-    // The `{0,19}` bound that made urlCreds linear is a real behaviour change:
-    // a scheme longer than 20 characters stops matching. These are the ones
-    // that plausibly appear in terminal output carrying userinfo, and this test
-    // is what stops the constant being tidied downward later.
+    // The `{0,19}` bound that makes urlCreds linear also stops a scheme longer
+    // than 20 characters matching at all. These are the schemes that plausibly
+    // carry userinfo, and this test is what stops the bound being tidied down.
     const urls = [
       'postgres://admin:s3cr3t@db.internal/app',
       'postgresql://admin:s3cr3t@db/app',
@@ -239,21 +212,16 @@ describe('findSecrets: detects the patterns it advertises', () => {
   })
 })
 
-// --------------------------------------------------------------------------
-// Credential file formats
-//
-// Each of these scanned as `medium` at worst before, which is the severity
-// `outputNeedsReview` in mcp.ts does NOT force the review dialog for. So a
-// model that asked to run `cat` on any of them, with the auto-share box
-// ticked, had the contents forwarded with no human ever seeing them. The
-// severity is the assertion that matters here, not the label.
-// --------------------------------------------------------------------------
+/*
+ * `outputNeedsReview` forces the review dialog for `high` only, so a credential
+ * file scanning as `medium` reaches the model unseen when auto-share is ticked.
+ * Severity is the assertion that matters in this block, not the label.
+ */
 
 describe('findSecrets: credential file formats reach high severity', () => {
   test('an armoured PGP secret key is flagged high, suffix label and all', () => {
     // `-----BEGIN PGP PRIVATE KEY BLOCK-----` puts a word AFTER "PRIVATE KEY",
-    // which the pattern's leading `[ A-Z]*` alone could never match. The whole
-    // of GnuPG's secret keyring reads as `secret.randomString` without this.
+    // which the pattern's leading `[ A-Z]*` cannot match on its own.
     const block = [
       '-----BEGIN PGP PRIVATE KEY BLOCK-----',
       '',
@@ -273,7 +241,6 @@ describe('findSecrets: credential file formats reach high severity', () => {
   })
 
   test('a PuTTY .ppk is flagged high as secret.puttyKey', () => {
-    // This application replaces PuTTY, so its users are the people with these.
     const ppk = [
       'PuTTY-User-Key-File-3: ssh-ed25519',
       'Encryption: none',
@@ -333,8 +300,7 @@ describe('findSecrets: credential file formats reach high severity', () => {
   })
 
   test('a JSON-quoted secret key is flagged, not just a bare one', () => {
-    // The quote closing the key name sits between the keyword and the colon,
-    // which used to end the match before it started.
+    // The quote closing the key name sits between the keyword and the colon.
     const text = '{"api_key": "sk-live-not-a-real-key-000", "name": "prod"}'
     const matches = findSecrets(text)
     assert.ok(
@@ -346,8 +312,8 @@ describe('findSecrets: credential file formats reach high severity', () => {
 
 describe('findSecrets: the new file-format patterns stay off ordinary output', () => {
   test('/etc/passwd is not mistaken for .pgpass', () => {
-    // Seven fields, so the five-field shape can only match if its last field
-    // swallows colons — which is exactly what it is written to refuse.
+    // Seven fields, so the five-field shape matches only if its last field
+    // swallows colons — which it is written to refuse.
     const text = [
       'root:x:0:0:root:/root:/bin/bash',
       'daemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin',
@@ -382,9 +348,8 @@ describe('findSecrets: the new file-format patterns stay off ordinary output', (
   })
 
   test('ordinary listings pick up no NEW highlights', () => {
-    // A new pattern that lights up `ls` costs more than it buys. Asserted per
-    // label rather than with expectQuiet, because GIT_LOG is not quiet for
-    // reasons that predate these patterns — see the randomString known gap.
+    // Asserted per label rather than with expectQuiet, because GIT_LOG is not
+    // quiet for reasons that predate these patterns — see the randomString gap.
     const added = [
       'secret.puttyKey',
       'secret.kubeClientKey',
@@ -400,15 +365,10 @@ describe('findSecrets: the new file-format patterns stay off ordinary output', (
       const noisy = findSecrets(text).filter((m) => added.includes(m.label))
       assert.deepEqual(noisy, [], `${name} gained highlights it did not have before`)
     }
-    // The two that were already quiet must have stayed exactly that way.
     expectQuiet('ls -la', LS_LA)
     expectQuiet('npm outdated', PACKAGE_VERSIONS)
   })
 })
-
-// --------------------------------------------------------------------------
-// Negatives — the half that decides whether anyone still reads the highlights
-// --------------------------------------------------------------------------
 
 describe('findSecrets: ordinary command output stays dark', () => {
   test('`ls -la` highlights nothing', () => {
@@ -469,8 +429,6 @@ describe('findSecrets: ordinary command output stays dark', () => {
   })
 
   test('prompts and help text that merely mention passwords highlight nothing', () => {
-    // The words are there; no value follows them. Flagging these would train
-    // the user to ignore the highlight, which is the whole risk.
     const text = [
       '[sudo] password for stan:',
       "Enter passphrase for key '/home/stan/.ssh/id_ed25519':",
@@ -488,9 +446,8 @@ describe('findSecrets: ordinary command output stays dark', () => {
       [],
       'a git log must never raise a high-severity finding'
     )
-    // Documented false positive: a 40-hex commit hash is indistinguishable
-    // from a token to secret.randomString, so every git log paints its SHAs.
-    // Pinned rather than endorsed — see KNOWN GAPS.
+    // Known false positive, pinned rather than endorsed: a 40-hex commit hash
+    // is indistinguishable from a token.
     for (const m of matches) {
       assert.equal(m.label, 'secret.randomString', `unexpected finding: ${covered(GIT_LOG, m)}`)
       assert.match(covered(GIT_LOG, m), /^[0-9a-f]{40}$/)
@@ -499,9 +456,8 @@ describe('findSecrets: ordinary command output stays dark', () => {
   })
 
   test('the quiet corpus is not quiet by accident: one planted key lights it up', () => {
-    // Guards every expectQuiet above. If findSecrets ever silently stopped
-    // matching anything at all, those tests would still pass; this one would
-    // not. A negative assertion is only worth having next to this.
+    // Guards every expectQuiet above: if findSecrets stopped matching anything
+    // at all, those tests would still pass and this one would not.
     const planted = LS_LA + '\n' + PRIVATE_KEY_BLOCK
     const matches = findSecrets(planted)
     assert.equal(matches.length, 1, describeMatches(planted, matches))
@@ -510,14 +466,8 @@ describe('findSecrets: ordinary command output stays dark', () => {
   })
 })
 
-// --------------------------------------------------------------------------
-// Overlap merge
-// --------------------------------------------------------------------------
-
 describe('findSecrets: overlapping matches merge into one highlight', () => {
   test('a private key block collapses to a single span labelled secret.privateKey', () => {
-    // Three patterns hit this text: privateKey, privateKeyStart and the
-    // randomString inside the body. The user must see one highlight, not three.
     assert.ok(
       findSecrets('-----BEGIN OPENSSH PRIVATE KEY-----')[0].label === 'secret.privateKeyStart',
       'precondition: the header alone matches privateKeyStart'
@@ -544,7 +494,6 @@ describe('findSecrets: overlapping matches merge into one highlight', () => {
   })
 
   test('two overlapping medium matches keep the earlier-starting label', () => {
-    // sshPublicKey starts at 0; the key blob inside it is also a randomString.
     assert.ok(
       findSecrets('AAAAB3NzaC1yc2EAAAADAQABAAABgQCK7hTn2vQ9wXsL4pR1nT5uHy3Fh1Qm0oV0mQmZ4Nn0p')
         .some((m) => m.label === 'secret.randomString'),
@@ -559,9 +508,8 @@ describe('findSecrets: overlapping matches merge into one highlight', () => {
   })
 
   test('a high match overlapping a medium one promotes severity and takes over the label', () => {
-    // Constructed so the medium match starts first and the high one starts
-    // inside it — the only ordering in which promotion is exercised at all.
-    // Reads like a header value of the form <opaque-session-id>-<credential>.
+    // The medium match must start first and the high one inside it: the only
+    // ordering in which promotion is exercised at all.
     const prefix = 'x'.repeat(45)
     const text = prefix + '-Basic dXNlcjpwYXNzd29yZA=='
 
@@ -578,9 +526,8 @@ describe('findSecrets: overlapping matches merge into one highlight', () => {
   })
 
   test('an ~/.aws/credentials line reports as an assignment, not as an AWS key', () => {
-    // Both patterns fire; secret.assignment starts at the identifier, earlier
-    // than secret.aws, so it keeps the label and the AWS wording is lost. Still
-    // high, still fully painted — worth knowing when reading the summary line.
+    // Both patterns fire; secret.assignment starts earlier, so it keeps the
+    // label and the AWS wording is lost. Still high, still painted whole.
     const text = '[default]\naws_access_key_id = AKIAIOSFODNN7EXAMPLE\nregion = eu-central-1'
     const matches = findSecrets(text)
     assert.equal(matches.length, 1, describeMatches(text, matches))
@@ -609,8 +556,8 @@ describe('findSecrets: overlapping matches merge into one highlight', () => {
 
   test('results are sorted and non-overlapping, as the highlight renderer assumes', () => {
     // OutputShareDialog walks the list with a cursor and slices text between
-    // matches. An unsorted or overlapping list would not throw — it would
-    // silently render text that differs from what is about to be sent.
+    // matches. An unsorted or overlapping list does not throw — it silently
+    // renders text that differs from what is about to be sent.
     const text = [
       'ssh stan@10.0.0.9',
       'export AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE',
@@ -632,10 +579,6 @@ describe('findSecrets: overlapping matches merge into one highlight', () => {
     }
   })
 })
-
-// --------------------------------------------------------------------------
-// summarizeSecrets
-// --------------------------------------------------------------------------
 
 describe('summarizeSecrets: counts group by label', () => {
   test('counts each label once per match', () => {
@@ -669,9 +612,6 @@ describe('summarizeSecrets: counts group by label', () => {
   })
 
   test('summarises the merged findings, not the raw pattern hits', () => {
-    // The key block hits three patterns but merges to one, so the dialog must
-    // say "private key", once — not "private key, start of a private key,
-    // long random string".
     const text = 'AKIAIOSFODNN7EXAMPLE AKIAJKLMNOPQRSTUVWXY\n' + PRIVATE_KEY_BLOCK
     assert.deepEqual(summarizeSecrets(findSecrets(text)), [
       { labelKey: 'secret.aws', count: 2 },
@@ -680,8 +620,7 @@ describe('summarizeSecrets: counts group by label', () => {
   })
 
   test('returns translation keys rather than prose', () => {
-    // The UI feeds these straight into t(); a human-readable string here would
-    // render as a missing translation.
+    // The UI feeds these straight into t(); prose renders as a missing string.
     const text = 'ssh stan@10.0.0.9 with token ghp_1234567890abcdefABCDEF1234567890abcd'
     for (const { labelKey } of summarizeSecrets(findSecrets(text))) {
       assert.match(labelKey, /^secret\.[A-Za-z]+$/, `${labelKey} does not look like a i18n key`)
@@ -689,14 +628,11 @@ describe('summarizeSecrets: counts group by label', () => {
   })
 })
 
-// --------------------------------------------------------------------------
-// KNOWN GAPS
-//
-// Confirmed defects in the source, pinned here so they are visible rather than
-// forgotten. These tests describe what the code does today; none of them
-// asserts that it is right. When a gap is fixed its test will fail — that is
-// the intended signal to delete it.
-// --------------------------------------------------------------------------
+/*
+ * KNOWN GAPS: confirmed defects and hard-won bounds, pinned so they stay
+ * visible. These describe what the code does today, not what is right; when a
+ * gap is fixed its test fails, which is the signal to delete it.
+ */
 
 describe('findSecrets: known gaps', () => {
   test('stops at 2000 hits per pattern and says so', () => {
@@ -737,8 +673,8 @@ describe('findSecrets: known gaps', () => {
   })
 
   test('a clipped scan keeps its offsets anchored to the start of the text', () => {
-    // OutputShareDialog paints these offsets over the WHOLE text, tail included.
-    // Offsets measured from anywhere but index 0 would paint the wrong characters.
+    // OutputShareDialog paints these offsets over the WHOLE text, tail included,
+    // so offsets measured from anywhere but index 0 paint the wrong characters.
     const text = 'AKIAIOSFODNN7EXAMPLE\n' + 'x'.repeat(MAX_SCAN_CHARS)
     const scan = scanSecrets(text)
     assert.equal(scan.clipped, true, 'precondition: this fixture must exceed the cap')
@@ -750,9 +686,8 @@ describe('findSecrets: known gaps', () => {
   })
 
   test('the assignment pattern survives adversarial input well inside 2 s', () => {
-    // The shape suspected of catastrophic backtracking: the keyword, then a
-    // long run of exactly the characters its {0,40} tails accept, and never
-    // the '=' it is hunting for. Both tails are bounded, so it holds up.
+    // The keyword, then a run of exactly the characters its {0,40} tails accept
+    // and never the '=' it hunts for. Both tails are bounded, hence no blow-up.
     const bait = ('.password' + '.-'.repeat(20)).repeat(5000)
     assert.ok(bait.length > 200 * 1024, 'exercise the real 256 KB scrollback ceiling')
 
@@ -763,15 +698,11 @@ describe('findSecrets: known gaps', () => {
   })
 
   test('secret.urlCreds no longer rescans the buffer from every word start', () => {
-    // Was `\b[a-z][a-z0-9+.-]*:\/\/`: the star swallowed the rest of the buffer
-    // from every word boundary, then backtracked all of it looking for `://`.
-    // '.' and '-' are both inside the class and both open a word boundary, so
-    // this input is ~85k starting points, each scanning ~256 KB. Measured 7518
-    // ms before the `{0,19}` bound, 12 ms after.
-    //
-    // This is not only a renderer problem: since outputNeedsReview started
-    // calling findSecrets, it runs on the main process event loop, where a
-    // stall freezes every session, the IPC layer and the auto-lock timer.
+    // An unbounded `[a-z0-9+.-]*` before `://` swallows the buffer from every
+    // word boundary and backtracks it all; '.' and '-' are in the class and
+    // both open a boundary, so this input is ~85k starting points. The `{0,19}`
+    // bound keeps it linear. findSecrets runs on the main process event loop,
+    // where a stall freezes every session, the IPC layer and the auto-lock.
     const soup = 'a.-'.repeat(85 * 1024)
     assert.ok(soup.length > 200 * 1024, 'exercise the real 256 KB scrollback ceiling')
 
@@ -782,20 +713,13 @@ describe('findSecrets: known gaps', () => {
   })
 
   test('secret.privateKey costs linear time, not quadratic', () => {
-    // The same defect C8 fixed one pattern above, left behind at the time. An
-    // unbounded `[\s\S]*?` makes every BEGIN with no END after it scan to the
-    // end of the buffer, so the cost squares with the input.
+    // An unbounded `[\s\S]*?` makes every BEGIN with no END after it scan to
+    // the end of the buffer, so the cost squares with the input.
     //
-    // Asserted as a RATIO rather than a millisecond budget. A wall-clock
-    // threshold has to sit between the two implementations, and here they are
-    // only 77 ms against 156 ms once the suite has warmed the JIT — close
-    // enough that any threshold separating them would flake on a slower CI
-    // machine, and a first attempt at 300 ms let the unbounded version through.
-    // The ratio does not care how fast the machine is: quadruple the input and
-    // linear work quadruples while quadratic work grows about sixteenfold.
-    //
-    // Since B4 this runs on the main process event loop, driven by whatever a
-    // compromised host prints, so the shape is what matters.
+    // Asserted as a RATIO, not a millisecond budget: the bounded and unbounded
+    // versions are close enough in wall clock that any fixed threshold flakes
+    // on a slower machine. Quadruple the input and linear work quadruples,
+    // quadratic work grows about sixteenfold.
     const line = '-----BEGIN PRIVATE KEY-----\n'
     const timeAt = (kb: number): number => {
       const text = line.repeat(Math.ceil((kb * 1024) / line.length)).slice(0, kb * 1024)
@@ -817,9 +741,8 @@ describe('findSecrets: known gaps', () => {
   })
 
   test('a key too long to match as a block is still caught by its header', () => {
-    // What makes bounding safe. A body over the bound stops matching as a
-    // complete block, but the header alone is its own pattern and also `high`,
-    // so nothing becomes invisible — it is merely labelled a start marker.
+    // What makes bounding safe: a body over the bound stops matching as a whole
+    // block, but the header is its own pattern and also `high`.
     const huge = `-----BEGIN RSA PRIVATE KEY-----\n${'A'.repeat(20000)}\n-----END RSA PRIVATE KEY-----`
     const found = findSecrets(huge)
     assert.ok(
@@ -829,7 +752,7 @@ describe('findSecrets: known gaps', () => {
   })
 
   test('a real 4096-bit key still matches as a whole block', () => {
-    // The bound must clear the largest thing realistically pasted here. A
+    // The bound must clear the largest thing realistically pasted here: a
     // 4096-bit RSA body is around 3.2 KB of base64.
     const real = `-----BEGIN RSA PRIVATE KEY-----\n${'A'.repeat(3300)}\n-----END RSA PRIVATE KEY-----`
     assert.ok(
@@ -839,9 +762,8 @@ describe('findSecrets: known gaps', () => {
   })
 
   test('and not from a run of scheme characters either', () => {
-    // Worse than 'a.-' because every other character opens a boundary: 34.7 s
-    // before the bound, 12 ms after. A fix aimed only at '.' and '-' would
-    // miss '+', which is in the class because of mongodb+srv and git+ssh.
+    // A fix aimed only at '.' and '-' would miss '+', which is in the class
+    // because of mongodb+srv and git+ssh.
     for (const bait of ['a+'.repeat(128 * 1024), 'a-'.repeat(128 * 1024), 'a.'.repeat(128 * 1024)]) {
       assert.equal(bait.length, 256 * 1024, 'the fixture must sit at the ceiling, not over it')
       const started = performance.now()
@@ -855,8 +777,6 @@ describe('findSecrets: known gaps', () => {
     'KNOWN GAP: a git commit hash is indistinguishable from a token',
     { todo: 'secret.randomString paints every 40-char SHA, which is most git output' },
     () => {
-      // Habituation is the stated failure mode, and `git log` is among the
-      // most-run commands there is. Every one of them highlights.
       assert.deepEqual(findSecrets(GIT_LOG), [], 'a plain git log should stay dark')
     }
   )

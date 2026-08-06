@@ -42,7 +42,6 @@ const STATUS_BAR_KEY: Record<SessionInfo['status'], string> = {
   error: 'term.barError'
 }
 
-/** Co se právě potvrzuje ke smazání. */
 type DeleteTarget =
   | { kind: 'connection'; item: ConnectionMeta }
   | { kind: 'snippet'; item: Snippet }
@@ -50,7 +49,6 @@ type DeleteTarget =
 export default function App() {
   const { t, locale } = useI18n()
   const [vaultStatus, setVaultStatus] = useState<VaultStatus | null>(null)
-  /** Časové razítko kotvy, jejíž varování už uživatel odklikl. */
   const [rollbackDismissed, setRollbackDismissed] = useState<number | null>(null)
   const [connections, setConnections] = useState<ConnectionMeta[]>([])
   const [snippets, setSnippets] = useState<Snippet[]>([])
@@ -78,7 +76,7 @@ export default function App() {
     key: string
     isNew: boolean
   } | null>(null)
-  // Fronty, aby se souběžné žádosti od AI neztratily.
+  // Queues, so concurrent requests from the model are never dropped.
   const [commandQueue, setCommandQueue] = useState<CommandApproval[]>([])
   const [shareQueue, setShareQueue] = useState<ShareRequest[]>([])
 
@@ -90,7 +88,7 @@ export default function App() {
     window.setTimeout(() => setToast(null), 4000)
   }, [])
 
-  /* ---------------------------------------------------------- inicializace */
+  /* ------------------------------------------------------------------ init */
 
   const loadData = useCallback(async () => {
     const [list, snips, cfg, live] = await Promise.all([
@@ -102,22 +100,10 @@ export default function App() {
     if (list.ok) setConnections(list.value)
     if (snips.ok) setSnippets(snips.value)
     if (cfg.ok) setSettings(cfg.value)
-    /*
-      Relace se přebírají od hlavního procesu, ne z paměti rendereru.
-
-      Locking is not disconnecting. With `disconnectOnLock` off — the user's
-      choice — doLock() deliberately leaves the SSH clients connected, but the
-      handler above clears the session list on `vault:locked` either way. There
-      was nothing to put them back, so after unlocking those sessions were live,
-      authenticated and unreachable: no tab, no way to read them, no way to
-      close them for the rest of the process lifetime, while MCP went on
-      enumerating them and running approved commands on them.
-
-      Main is the authority on what is connected, so ask it. On a cold start it
-      answers with an empty list and this costs nothing. Output that arrived
-      while the terminal was unmounted is still queued in terminalBus and gets
-      replayed when the view registers its sink again.
-    */
+    // Main is the authority on live sessions. With `disconnectOnLock` off the
+    // SSH clients survive a lock while `vault:locked` clears this list, so
+    // without re-adopting them here they stay authenticated but unreachable —
+    // no tab to read or close them, while MCP still runs commands on them.
     if (live.ok) setSessions(live.value)
   }, [])
 
@@ -135,7 +121,7 @@ export default function App() {
     void refreshVault()
   }, [refreshVault])
 
-  /* ------------------------------------------------------------- odposlechy */
+  /* -------------------------------------------------------------- listeners */
 
   useEffect(() => {
     const offData = api.ssh.onData((sessionId, base64) => dispatch(sessionId, base64))
@@ -161,9 +147,8 @@ export default function App() {
     const offShare = api.mcp.onShareRequest((req) => setShareQueue((prev) => [...prev, req]))
 
     const offLocked = api.vault.onLocked(() => {
-      // The next keypress after a lock is the human coming back, and it must
-      // reach the main process rather than being swallowed by a throttle
-      // window that started before they walked away.
+      // The first keypress after a lock must reach the main process, not be
+      // swallowed by a throttle window that opened before the user left.
       resetActivityThrottle()
       setSessions([])
       setActiveSession(null)
@@ -189,29 +174,11 @@ export default function App() {
     }
   }, [refreshVault, showToast])
 
-  /*
-    Aktivita uživatele odkládá automatické zamčení.
-
-    Capture, not bubble, and that argument is load-bearing. xterm registers its
-    own keydown listener on the hidden textarea and ends the ordinary key path
-    with `cancel(event, true)`, whose `force` argument makes it call
-    stopPropagation() no matter how the terminal is configured — so a keystroke
-    typed into a session never bubbles back up to window. On the bubble phase
-    these listeners saw menus, dialogs and the sidebar but *not* the one place
-    the user spends the whole session, and that gap used to be papered over by
-    also reporting from xterm's `onData` in TerminalView.
-
-    That patch was worse than the hole it filled. `onData` is not a user-input
-    event: xterm fires it for every reply the emulator owes the server — CPR,
-    device attributes, DECRQM, XTWINOPS size reports, DECRQSS, OSC colour
-    queries. A hostile host that printed `ESC [ 6 n` on a ten-second timer
-    therefore kept asserting "the human is here" through an idle machine, and
-    the vault never locked. The bytes are consumed by the parser, so nothing was
-    ever drawn on screen to give it away.
-
-    Capture runs at window before the event descends to the textarea, so nothing
-    downstream can suppress it, and only real DOM input ever gets that far.
-  */
+  // User activity defers the auto-lock. The capture flag is load-bearing:
+  // xterm's own keydown handler calls stopPropagation() unconditionally, so on
+  // the bubble phase typing into a session would count as idle. Only real DOM
+  // input may defer the lock — never report from xterm's `onData`, see
+  // activity.ts.
   useEffect(() => {
     const notify = (): void => reportActivity(() => api.app.notifyActivity())
     const events: (keyof WindowEventMap)[] = ['mousedown', 'keydown', 'wheel']
@@ -221,7 +188,7 @@ export default function App() {
     }
   }, [])
 
-  /* ------------------------------------------------------------ připojení */
+  /* ----------------------------------------------------------- connections */
 
   async function connect(c: ConnectionMeta): Promise<void> {
     try {
@@ -253,7 +220,7 @@ export default function App() {
     }
   }
 
-  /* ------------------------------------------------- příkazy a poznámky */
+  /* -------------------------------------------------------------- snippets */
 
   async function duplicateSnippet(s: Snippet): Promise<void> {
     try {
@@ -269,10 +236,8 @@ export default function App() {
     showToast(t('snip.copied', { title: s.title }))
   }
 
-  /**
-   * Vložení do terminálu. Víceřádkový text potvrzujeme zvlášť – v shellu se
-   * každý konec řádku chová jako Enter, takže by se spustilo víc příkazů.
-   */
+  // Multi-line bodies need their own confirmation: in a shell every newline
+  // acts as Enter, so one insert would run several commands.
   function requestInsert(s: Snippet, withEnter: boolean): void {
     const active = sessions.find((x) => x.id === activeSession)
     if (!active || active.status !== 'ready') {
@@ -298,7 +263,7 @@ export default function App() {
     }
   }
 
-  /* ---------------------------------------------------------------- mazání */
+  /* -------------------------------------------------------------- deletion */
 
   async function confirmDelete(): Promise<void> {
     if (!deleteTarget) return
@@ -331,7 +296,7 @@ export default function App() {
     return <div className="boot">{t('common.loading')}</div>
   }
 
-  // Obnovovací klíč se zobrazuje jen jednou, takže musí přežít i přepnutí obrazovky.
+  // Shown exactly once, so the modal must survive the unlock-screen switch.
   const recoveryModal = recoveryKeyToShow ? (
     <RecoveryKeyDialog
       recoveryKey={recoveryKeyToShow.key}
@@ -361,11 +326,8 @@ export default function App() {
 
   const active = sessions.find((s) => s.id === activeSession) ?? null
   const canInsert = active?.status === 'ready'
-  /*
-   * Odloží se konkrétní událost, ne „varování obecně". Kdyby se ukládalo jen
-   * `true`, druhé vrácení souboru v témže běhu by zůstalo neviditelné, protože
-   * ho umlčelo odkliknutí toho prvního.
-   */
+  // Dismissal is per event: a plain `true` would hide a second rollback in the
+  // same run behind the first dismissal.
   const showRollback = vaultStatus.rollback !== null && rollbackDismissed !== vaultStatus.rollback.at
 
   return (
@@ -389,12 +351,9 @@ export default function App() {
       </header>
 
       {/*
-        Pruh, ne modál, a ne předčasný `return`.
-
-        Modál se zavírá reflexem a tenhle stav se jedním kliknutím nespraví —
-        trezor je už otevřený a jde o to, s čím v něm od teď počítat. Předčasný
-        return by navíc přeskočil `recoveryModal` níž, takže kdo se sem dostal
-        obnovovacím klíčem, by nikdy neuviděl ten nový, který mu právě vznikl.
+        A bar, not a modal, and never an early `return`: returning early skips
+        `recoveryModal` below, so whoever unlocked with a recovery key would
+        never see its replacement.
       */}
       {showRollback && vaultStatus.rollback && (
         <div className="rollback-bar">
@@ -403,8 +362,7 @@ export default function App() {
             {t('vault.rollbackBody', {
               found: vaultStatus.rollback.found,
               expected: vaultStatus.rollback.expected,
-              // Jazykem aplikace, ne systému. Kdo si přepnul na češtinu na
-              // anglickém Windows, čte česky všechno ostatní.
+              // The app's language, not the system's.
               date: new Date(vaultStatus.rollback.at).toLocaleString(locale)
             })}{' '}
             {t('vault.rollbackHostKeys')}
@@ -522,25 +480,12 @@ export default function App() {
       )}
 
       {/*
-        Nejvýš jeden schvalovací dialog naráz.
-
-        These three used to render on independent conditions, all rooted in
-        `.modal-backdrop` at the same z-index and in the same parent — so paint
-        order was DOM order and whichever came last covered the ones before it.
-        The dangerous dialog was always the covered one.
-
-        That is worse than an ordering annoyance, because `useArmedAfterPaint`
-        keys off requestAnimationFrame, which is document-wide: an occluded but
-        still-mounted dialog arms on schedule. Its `key` does not change when
-        the cover unmounts, so React does not remount it and the delay does not
-        restart — the danger button is live in the very first painted frame
-        after the dialog above it goes away. The anti-click-through delay exists
-        precisely to stop a click landing on a button the user has not read yet.
-
-        Rendering one at a time removes the whole class. The order is by how
-        long the request can wait: a host-key prompt times out in two minutes,
-        an approval in five, so the shorter fuse goes first. A deferred request
-        that does hit its timeout is denied, which is the safe direction.
+        The three dialog conditions below must stay mutually exclusive. They
+        share `.modal-backdrop` at one z-index, so concurrent dialogs occlude
+        each other while `useArmedAfterPaint` arms the hidden one anyway
+        (requestAnimationFrame is document-wide) — the covered dialog would
+        expose a live danger button the frame its cover unmounts. Ordered by
+        timeout, shortest fuse first: host key two minutes, approval five.
       */}
       {hostKeyQueue.length > 0 && (
         <HostKeyDialog
@@ -551,13 +496,9 @@ export default function App() {
       )}
 
       {/*
-        The `key` is load-bearing, not tidiness. Without it React reconciles the
-        same component across two different requests instead of remounting, so
-        useState initialisers never re-run: the share dialog would keep request
-        A's textarea while showing request B's header, and the auto-share
-        checkbox would carry A's tick into B — the "memory of past approvals"
-        DECISIONS.md says does not exist. Keying on the request id forces a
-        fresh mount per request.
+        The `key` is load-bearing: without a remount per request, useState
+        initialisers never re-run and request A's edited text and auto-share
+        tick leak into request B.
       */}
       {hostKeyQueue.length === 0 && commandQueue.length > 0 && (
         <CommandApprovalDialog
@@ -576,10 +517,8 @@ export default function App() {
           key={shareQueue[0].id}
           request={shareQueue[0]}
           /*
-            Selecting in the console only means anything if the console on
-            screen is the one the model asked about. Switching tabs for the
-            human beats trusting them to notice they are highlighting the
-            wrong session.
+            A console selection only means anything if the visible tab is the
+            session the model asked about, so switch for the user.
           */
           onShowSession={(sessionId) => setActiveSession(sessionId)}
           onAnswer={(shared, text) => {

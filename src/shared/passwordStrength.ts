@@ -2,36 +2,22 @@
 // Copyright (C) 2026 Simplixio — Stanislav Opletal <info@simplixio.net>
 
 /**
- * How much a master password is actually worth.
+ * How much a master password is actually worth. Deliberately not zxcvbn: a
+ * megabyte of dictionary for a number shown to a person, not used as a gate.
  *
- * Deliberately not zxcvbn. That would be a good estimator and a megabyte of
- * dictionary in an installer whose whole pitch is that you can read what it
- * does — and this number is shown to a person, not used as a gate. The gate is
- * the length floor below, which is a fact rather than a guess.
- *
- * What this does estimate is the search space an attacker who knows the shape
- * of the password would face, which is the honest reading of "strength": the
- * character classes actually used, times the length, minus what obvious
- * structure gives back for free.
- *
- * It is shared because both ends need the same answer. The renderer draws the
- * meter, the main process enforces the floor, and a meter that says "strong"
- * over a password the vault then refuses is worse than no meter.
+ * Shared because both ends need the same answer — the renderer draws the meter,
+ * the main process enforces the floor, and a meter that says "strong" over a
+ * password the vault then refuses is worse than no meter.
  */
 
 /**
- * The shortest master password the vault will accept.
+ * The shortest master password the vault accepts. scrypt at N = 2^17 buys ~160
+ * ms per guess, so eight human-invented characters fall in hours to days
+ * offline; twelve costs more than an attacker is likely to spend on one vault.
  *
- * Was eight, which at four random words is fine and at eight characters of
- * anything a human invented is not — scrypt at N = 2^17 buys roughly 160 ms per
- * guess, so eight lowercase letters is days on one machine and hours on a few.
- * Twelve is the point where even an all-lowercase password costs more than an
- * offline attacker is likely to spend on one vault, and it is short enough that
- * nobody reaches for a sticky note.
- *
- * Only `create`, `changePassword` and the new password set during recovery are
- * checked against it. Unlocking is not, so raising it never locks anyone out of
- * a vault they already have.
+ * Only `create`, `changePassword` and recovery's new password are checked
+ * against it — unlocking is not, so raising it locks nobody out of a vault they
+ * already have.
  */
 export const MIN_PASSWORD_LENGTH = 12
 
@@ -54,12 +40,9 @@ const CLASSES: { re: RegExp; size: number }[] = [
 ]
 
 /**
- * Length after collapsing the structure a guesser gets for free.
- *
- * `aaaaaaaaaaaa` is twelve characters and about as hard as one. `abcdefghijkl`
- * is twelve characters and about as hard as `abc`. Neither is exotic — both are
- * what people type when told to make it longer — so both have to cost something
- * here or the meter rewards exactly the wrong instinct.
+ * Length after collapsing structure a guesser gets free: `aaaaaaaaaaaa` is about
+ * as hard as one character, `abcdefghijkl` as hard as `abc`. Both are what people
+ * type when told to make it longer, so both must cost something here.
  */
 function effectiveLength(pw: string): number {
   let length = 0
@@ -68,11 +51,9 @@ function effectiveLength(pw: string): number {
   for (const ch of pw) {
     const code = ch.codePointAt(0) ?? 0
     const step = code - previous
-    // A run of the same character, or a straight ascending or descending walk.
     // Guarded on `previous`, not on `run`: `run` only grows once a pattern has
     // been seen, so testing it here would mean a pattern could never start.
     const patterned = previous >= 0 && (step === 0 || step === 1 || step === -1)
-    // The first repetition still costs something; the tenth costs almost nothing.
     length += patterned ? 1 / (run + 1) : 1
     run = patterned ? run + 1 : 0
     previous = code
@@ -88,13 +69,9 @@ export function estimatePasswordStrength(pw: string): PasswordStrength {
 
   const alphabet = CLASSES.reduce((sum, c) => sum + (c.re.test(text) ? c.size : 0), 0)
   const distinct = new Set(text).size
-  // The classes say what an attacker would have to try; the distinct count says
-  // what was actually reached for. Twelve 'a's touch a 26-letter alphabet and
-  // one symbol, and no class analysis should pretend otherwise — but a genuinely
-  // random twelve-character string only touches twelve of the twenty-six either,
-  // so clamping straight to `distinct` would punish it for being short. Doubling
-  // splits the difference: it bites hard on `abab…` and barely at all on a
-  // password that simply is not very long.
+  // Doubling `distinct` splits the difference: twelve 'a's read as a 26-letter
+  // alphabet by class but reach one symbol, while a genuinely random twelve-char
+  // string reaches only twelve — clamping to `distinct` would punish it for that.
   const symbols = Math.max(2, Math.min(alphabet, distinct * 2))
   const bits = Math.floor(effectiveLength(text) * Math.log2(symbols))
 

@@ -2,13 +2,10 @@
 // Copyright (C) 2026 Simplixio — Stanislav Opletal <info@simplixio.net>
 
 /**
- * Nastavení mimo trezor.
- *
- * Volba jazyka není tajemství a je potřeba dřív, než trezor odemkneš —
- * odemykací obrazovka i chybové hlášky musí být ve tvém jazyce. Proto žije
- * v prostém JSON souboru vedle trezoru.
- *
- * Cokoliv citlivého patří do trezoru, ne sem.
+ * Settings that live outside the vault. The language choice is not a secret and
+ * is needed before the vault is unlocked — the unlock screen and its error
+ * messages have to be in the user's language. Anything sensitive belongs in the
+ * vault, not here.
  */
 
 import { app } from 'electron'
@@ -27,7 +24,6 @@ function prefsPath(): string {
   return path.join(app.getPath('userData'), 'prefs.json')
 }
 
-/** Jazyk systému, pokud ho umíme obsloužit. */
 function systemLocale(): string {
   const candidates = [app.getLocale?.(), app.getSystemLocale?.(), process.env.LANG]
   for (const candidate of candidates) {
