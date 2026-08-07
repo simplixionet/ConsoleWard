@@ -7,6 +7,13 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [1.0.2] — 2026-08-07
+
+Anyone using the MCP gateway wants this one: before it, taking your time over a
+dialog was the same as refusing.
+
 ### Fixed
 
 - **An AI client gave up before the human could answer.** The MCP transport
@@ -264,6 +271,7 @@ previous version.
 - **macOS and Linux targets are configured but untested**, and have no icons.
 - ~~**Source comments are in Czech.**~~ Resolved in 1.0.1.
 
-[Unreleased]: https://github.com/simplixionet/ConsoleWard/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/simplixionet/ConsoleWard/compare/v1.0.2...HEAD
+[1.0.2]: https://github.com/simplixionet/ConsoleWard/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/simplixionet/ConsoleWard/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/simplixionet/ConsoleWard/tree/v1.0.0
