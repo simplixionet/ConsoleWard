@@ -11,9 +11,14 @@ Nothing yet.
 
 ## [1.0.1] — 2026-08-07
 
-A security review of the whole codebase, and the fixes it produced. One finding
-was a real vulnerability; the rest are hardening, one user-facing i18n bug and
-one broken build gate.
+**The first published release.** 1.0.0 was tagged but never released, so there
+are no 1.0.0 binaries and nobody was running it; everything under 1.0.0 below is
+part of this release too. The split is kept because the two halves answer
+different questions — what the application *is*, and what a security review of
+it changed.
+
+That review is what 1.0.1 records. One finding was a real vulnerability; the
+rest are hardening, one user-facing i18n bug and one broken build gate.
 
 ### Security
 
@@ -77,8 +82,9 @@ one broken build gate.
 
 ## [1.0.0] — 2026-08-05
 
-First public release. Everything below is the initial implementation rather than
-a change from a previous version.
+Tagged, never released — see 1.0.1 above, which is what actually shipped.
+Everything below is the initial implementation rather than a change from a
+previous version.
 
 ### Added
 
@@ -239,4 +245,4 @@ a change from a previous version.
 
 [Unreleased]: https://github.com/simplixionet/ConsoleWard/compare/v1.0.1...HEAD
 [1.0.1]: https://github.com/simplixionet/ConsoleWard/compare/v1.0.0...v1.0.1
-[1.0.0]: https://github.com/simplixionet/ConsoleWard/releases/tag/v1.0.0
+[1.0.0]: https://github.com/simplixionet/ConsoleWard/tree/v1.0.0
