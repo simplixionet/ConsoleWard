@@ -7,7 +7,28 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
-Nothing yet.
+### Fixed
+
+- **An AI client gave up before the human could answer.** The MCP transport
+  buffered the whole response, so not one byte — not even the status line — left
+  the server until the tool handler returned, and these handlers return when a
+  person answers a dialog. Clients bound the wait to the first response byte;
+  Claude Code allows 60 seconds for an HTTP MCP server, which is not enough time
+  to read a command and decide. The call died while the dialog was still open,
+  and the answer, when it came, was delivered to nobody. Responses now stream:
+  the headers go out immediately and the result follows whenever it is ready.
+  Refusals are unchanged — they were never the case that broke.
+- While a dialog is open the client is told the wait is deliberate, rather than
+  being left to infer it from silence.
+
+### Changed
+
+- An approval now stands for fifteen minutes instead of five. Five was enough to
+  answer a dialog you were already looking at, and not enough to read terminal
+  output, decide what part of it a model may see, and edit it down; people doing
+  that carefully were being denied mid-edit. Fifteen also matches the default
+  auto-lock, which is the real ceiling: locking rejects everything pending, so an
+  approval never outlives the vault it belongs to.
 
 ## [1.0.1] — 2026-08-07
 

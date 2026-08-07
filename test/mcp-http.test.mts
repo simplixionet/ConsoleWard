@@ -35,7 +35,17 @@ mock.module('../src/main/vault.ts', {
   }
 })
 mock.module('../src/main/ssh.ts', {
-  exports: { ssh: { isReady: () => true, title: () => 'web01', listForModel: () => [] } }
+  exports: {
+    ssh: {
+      isReady: () => true,
+      title: () => 'web01',
+      listForModel: () => [],
+      // read_terminal reads a preview before it ever asks the human; without
+      // this the tool fails before reaching the dialog and the streaming test
+      // below would prove nothing.
+      readText: () => 'preview'
+    }
+  }
 })
 
 const {
@@ -45,8 +55,10 @@ const {
   mcp,
   modelErrorFor,
   onceClosed,
+  PROGRESS_INTERVAL_MS,
   readJsonBody,
-  takesSlot
+  takesSlot,
+  whileAwaitingHuman
 } = await import('../src/main/mcp.ts')
 const { MAX_PENDING_APPROVALS } = await import('../src/main/approvals.ts')
 
@@ -542,5 +554,272 @@ describe('the server that actually listens', () => {
     // The decrement lives in a `finally`; losing it wedges the gateway at 503.
     const afterwards = await call(port)
     assert.equal(afterwards.status, 200, `the slots were never given back: ${afterwards.body}`)
+  })
+})
+
+/**
+ * The response has to start before the human answers.
+ *
+ * This is the whole reason the transport streams instead of buffering. Under
+ * `enableJsonResponse: true` the SDK returns a promise that settles only once
+ * the tool handler does, so nothing at all — not even the status line — left
+ * the server while a dialog was open. Clients bound the wait to their first
+ * response byte, and Claude Code allows 60 seconds for an HTTP MCP server, so a
+ * call died mid-decision and the human's answer arrived for a request that had
+ * already been abandoned.
+ *
+ * The assertion is an ordering, not a duration: the headers must be readable
+ * while the bridge promise is still pending. Nothing here sleeps, so a build
+ * that goes back to buffering fails by timing out on a `response` event that
+ * can never come, rather than by being slow.
+ */
+describe('a call parked on a human starts its response immediately', () => {
+  let port = 0
+
+  before(async () => {
+    port = await freePort()
+    assert.ok(port >= 1024, `the ephemeral port ${port} is one clampPort would replace`)
+    vaultState.unlocked = true
+    vaultState.data.settings.mcpPort = port
+    await mcp.start()
+  })
+
+  after(async () => {
+    vaultState.unlocked = true
+    await mcp.stop()
+  })
+
+  test('the headers arrive while the dialog is still open, and the answer follows', async () => {
+    let answerTheHuman: (value: { shared: boolean; text: string }) => void = () => {}
+    let dialogOpened: () => void = () => {}
+    const opened = new Promise<void>((resolve) => {
+      dialogOpened = resolve
+    })
+
+    mcp.bind({
+      askCommand: async () => ({ approved: false, autoShare: false }),
+      askShare: () =>
+        new Promise<{ shared: boolean; text: string }>((resolve) => {
+          answerTheHuman = resolve
+          dialogOpened()
+        })
+    })
+
+    const body = JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: {
+        name: 'read_terminal',
+        arguments: { session_id: 's1', reason: 'checking' },
+        // A client that wants to be kept informed sends this; the server may
+        // not depend on it, but it must not ignore one that is offered.
+        _meta: { progressToken: 'tok-1' }
+      }
+    })
+
+    const req = request({
+      host: '127.0.0.1',
+      port,
+      method: 'POST',
+      agent: false,
+      headers: { ...CLIENT_HEADERS, authorization: `Bearer ${SERVER_TOKEN}` }
+    })
+
+    const headers = new Promise<{ status: number; contentType: string; finished: Promise<string> }>(
+      (resolve, reject) => {
+        req.on('error', reject)
+        req.on('response', (res) => {
+          let text = ''
+          res.setEncoding('utf8')
+          res.on('data', (chunk: string) => {
+            text += chunk
+          })
+          resolve({
+            status: res.statusCode ?? 0,
+            contentType: String(res.headers['content-type'] ?? ''),
+            finished: new Promise<string>((done) => res.on('end', () => done(text)))
+          })
+        })
+      }
+    )
+    req.end(body)
+
+    // The dialog is open and unanswered from here until the resolve below.
+    await opened
+    const started = await headers
+
+    assert.equal(started.status, 200, 'no status reached the client while the human was deciding')
+    assert.match(
+      started.contentType,
+      /text\/event-stream/,
+      `the response was buffered as ${started.contentType}: nothing can reach the client until ` +
+        'the handler returns, which is exactly the timeout this streaming exists to avoid'
+    )
+
+    answerTheHuman({ shared: true, text: 'the human picked this' })
+    const full = await started.finished
+    assert.match(full, /the human picked this/, 'the answer never reached the client')
+    assert.match(
+      full,
+      /^event: message\r?\ndata: /,
+      `the stream was not SSE-framed: ${JSON.stringify(full.slice(0, 60))}`
+    )
+    // Progress is deliberately NOT asserted here: this test answers the human
+    // as soon as the headers land, so no interval has elapsed and none is due.
+    // The notifications themselves are pinned in the whileAwaitingHuman block.
+  })
+
+  test('a call still works for a client that sends no progress token', async () => {
+    // The token is optional in the protocol, so the waiting cannot depend on it.
+    mcp.bind({
+      askCommand: async () => ({ approved: false, autoShare: false }),
+      askShare: async () => ({ shared: true, text: 'answered without progress' })
+    })
+
+    const answer = await call(port, {
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 2,
+        method: 'tools/call',
+        params: { name: 'read_terminal', arguments: { session_id: 's1', reason: 'checking' } }
+      })
+    })
+
+    assert.equal(answer.status, 200, `a call without a progress token was refused: ${answer.body}`)
+    assert.match(answer.body, /answered without progress/, 'the answer never reached the client')
+    assert.ok(
+      !answer.body.includes('notifications/progress'),
+      'progress was sent to a client that never asked to be kept informed'
+    )
+  })
+})
+
+/**
+ * Saying "still waiting" for as long as a human takes.
+ *
+ * Tested here rather than over HTTP because the interval is measured in tens of
+ * seconds: a real socket would have to be held open for a minute to see two
+ * notifications, and a suite that sleeps is a suite nobody runs.
+ */
+describe('whileAwaitingHuman', () => {
+  /** Collects what the transport would have put on the wire. */
+  function recorder(token?: string | number) {
+    const sent: { progressToken: string | number; progress: number; message?: string }[] = []
+    return {
+      sent,
+      extra: {
+        _meta: token === undefined ? undefined : { progressToken: token },
+        sendNotification: async (n: {
+          method: 'notifications/progress'
+          params: { progressToken: string | number; progress: number; message?: string }
+        }): Promise<void> => {
+          assert.equal(n.method, 'notifications/progress', 'wrong notification method')
+          sent.push(n.params)
+        }
+      }
+    }
+  }
+
+  test('reports progress for as long as the human takes', async (t) => {
+    mock.timers.enable({ apis: ['setInterval'] })
+    t.after(() => mock.timers.reset())
+    const rec = recorder('tok')
+
+    let answer: (value: string) => void = () => {}
+    const decision = new Promise<string>((resolve) => {
+      answer = resolve
+    })
+    const waiting = whileAwaitingHuman(rec.extra, decision)
+
+    mock.timers.tick(PROGRESS_INTERVAL_MS * 3)
+    assert.equal(rec.sent.length, 3, `three intervals produced ${rec.sent.length} notifications`)
+    assert.deepEqual(
+      rec.sent.map((p) => p.progress),
+      [1, 2, 3],
+      'progress must advance, or a client cannot tell a live wait from a stuck one'
+    )
+    assert.ok(
+      rec.sent.every((p) => p.progressToken === 'tok'),
+      'every notification must carry the token the client asked us to use'
+    )
+    assert.ok(
+      rec.sent.every((p) => !('total' in p) || p.total === undefined),
+      'a total would render as a progress bar, and nobody knows how long a person takes'
+    )
+
+    answer('decided')
+    assert.equal(await waiting, 'decided', 'the human decision must pass through unchanged')
+  })
+
+  test('stops reporting the moment the human answers', async (t) => {
+    mock.timers.enable({ apis: ['setInterval'] })
+    t.after(() => mock.timers.reset())
+    const rec = recorder('tok')
+
+    await whileAwaitingHuman(rec.extra, Promise.resolve('immediate'))
+    mock.timers.tick(PROGRESS_INTERVAL_MS * 5)
+    assert.equal(rec.sent.length, 0, 'notifications kept firing after the call had finished')
+  })
+
+  test('says nothing when the client sent no progress token', async (t) => {
+    // Optional in the protocol: there is nothing to address a notification to,
+    // and the waiting itself must not depend on having one.
+    mock.timers.enable({ apis: ['setInterval'] })
+    t.after(() => mock.timers.reset())
+    const rec = recorder(undefined)
+
+    let answer: (value: string) => void = () => {}
+    const waiting = whileAwaitingHuman(
+      rec.extra,
+      new Promise<string>((resolve) => {
+        answer = resolve
+      })
+    )
+    mock.timers.tick(PROGRESS_INTERVAL_MS * 4)
+    assert.equal(rec.sent.length, 0, 'progress was addressed to a token that does not exist')
+
+    answer('decided')
+    assert.equal(await waiting, 'decided', 'the wait broke without a progress token')
+  })
+
+  test('a client that has gone away does not deny the human their answer', async (t) => {
+    // The notification fails once the client drops. The person is still at the
+    // dialog, and their answer is still worth delivering if the stream lives.
+    mock.timers.enable({ apis: ['setInterval'] })
+    t.after(() => mock.timers.reset())
+
+    const extra = {
+      _meta: { progressToken: 'tok' },
+      sendNotification: async (): Promise<void> => {
+        throw new Error('client is gone')
+      }
+    }
+
+    let answer: (value: string) => void = () => {}
+    const waiting = whileAwaitingHuman(
+      extra,
+      new Promise<string>((resolve) => {
+        answer = resolve
+      })
+    )
+    mock.timers.tick(PROGRESS_INTERVAL_MS * 2)
+    answer('decided')
+    assert.equal(await waiting, 'decided', 'a failed notification rejected the tool call')
+  })
+
+  test('a rejected decision still stops the reporting', async (t) => {
+    // askShare rejects when the approval queue is full; the interval must be
+    // cleared on that path too or it outlives the request that armed it.
+    mock.timers.enable({ apis: ['setInterval'] })
+    t.after(() => mock.timers.reset())
+    const rec = recorder('tok')
+
+    await assert.rejects(
+      () => whileAwaitingHuman(rec.extra, Promise.reject(new Error('queue full'))),
+      /queue full/
+    )
+    mock.timers.tick(PROGRESS_INTERVAL_MS * 3)
+    assert.equal(rec.sent.length, 0, 'the interval outlived the request that armed it')
   })
 })

@@ -52,11 +52,78 @@ const QUEUE_FULL_MESSAGE =
  * on a dialog pins an McpServer and a transport for up to APPROVAL_TIMEOUT_MS.
  * Node bounds none of this itself. Eight leaves room for an initialize and a
  * tools/list alongside the three dialogs MAX_PENDING_APPROVALS allows.
+ *
+ * The ceiling is a count, so raising APPROVAL_TIMEOUT_MS does not raise what
+ * this can hold: eight bodies at MAX_BODY_BYTES is the worst case whether they
+ * are held for five minutes or fifteen. What a longer wait does change is how
+ * long a slot stays taken, and the answer to a full gateway is already the
+ * right one — BUSY_MESSAGE refuses immediately and queues nothing, so a client
+ * is told to wait rather than left to discover it by timing out.
  */
 export const MAX_INFLIGHT_REQUESTS = 8
 
 /** Small enough that MAX_INFLIGHT_REQUESTS bodies cannot exhaust memory. */
 export const MAX_BODY_BYTES = 4 * 1024 * 1024
+
+/**
+ * How often a call parked on a dialog reports that it is still parked.
+ *
+ * Belt and braces rather than the load-bearing part: the transport already
+ * keeps the SSE connection warm by itself, so the bytes flow with or without
+ * this. What progress adds is a client-visible reason for the wait — an idle
+ * window is reset either way, but only this says *why* nothing has come back.
+ *
+ * Under the transport's own 15s keep-alive so the two never coincide for long,
+ * and far under any client's idle window.
+ */
+export const PROGRESS_INTERVAL_MS = 20_000
+
+/**
+ * Awaits a human decision, saying so periodically while it waits.
+ *
+ * A no-op passthrough unless the caller asked to be kept informed: progress is
+ * addressed to a `progressToken` the client mints per request, and there is
+ * nothing to address a notification to when the client did not send one. That
+ * is a real case, not a defensive one — the token is optional in the protocol —
+ * so the waiting itself must not depend on it.
+ *
+ * Notification failures are swallowed on purpose. A client that has gone away
+ * must not turn into a rejected tool call for a human who is still deciding,
+ * and whose answer is still worth delivering if the stream survives.
+ */
+export async function whileAwaitingHuman<T>(
+  extra: {
+    _meta?: { progressToken?: string | number }
+    sendNotification: (notification: {
+      method: 'notifications/progress'
+      params: { progressToken: string | number; progress: number; message?: string }
+    }) => Promise<void>
+  },
+  pending: Promise<T>
+): Promise<T> {
+  const progressToken = extra._meta?.progressToken
+  if (progressToken === undefined) return pending
+
+  let progress = 0
+  const timer = setInterval(() => {
+    progress++
+    void extra
+      .sendNotification({
+        method: 'notifications/progress',
+        // No total: nobody knows how long a person takes, and a made-up
+        // denominator would render as a progress bar that lies.
+        params: { progressToken, progress, message: 'Waiting for the human to decide.' }
+      })
+      .catch(() => {})
+  }, PROGRESS_INTERVAL_MS)
+  timer.unref?.()
+
+  try {
+    return await pending
+  } finally {
+    clearInterval(timer)
+  }
+}
 
 const BUSY_MESSAGE =
   `ConsoleWard is already handling ${MAX_INFLIGHT_REQUESTS} requests and will not start ` +
@@ -164,9 +231,31 @@ class McpService {
 
           const body = await readJsonBody(req)
           mcpServer = this.buildServer()
+          /*
+            SSE, not buffered JSON, and the difference is the whole reason a
+            call can wait on a human at all.
+
+            Under `enableJsonResponse: true` the transport returns a promise
+            that only settles once every response is ready, so not one byte —
+            not even the status line — leaves before the tool handler returns.
+            Our handlers return when a person answers a dialog. Clients time out
+            on the first response byte: Claude Code allows 60 seconds for an
+            HTTP MCP server, which is nowhere near long enough to read a command
+            and decide. The call died while the dialog was still open, and the
+            human's eventual answer landed on a request nobody was listening to.
+
+            With SSE the transport writes the headers and hands back a live
+            stream immediately, then pushes the result into it whenever it
+            arrives. It also keeps the connection warm on its own — a
+            `: keepalive` comment every 15s by default — which holds open the
+            separate idle window clients apply after the first byte.
+
+            Switching cannot break a client that works today: the transport
+            already requires `Accept: text/event-stream` on every POST, in both
+            modes, so anything talking to us has always had to accept a stream.
+          */
           transport = new StreamableHTTPServerTransport({
             sessionIdGenerator: undefined,
-            enableJsonResponse: true,
             enableDnsRebindingProtection: true,
             allowedHosts,
             allowedOrigins
@@ -174,6 +263,26 @@ class McpService {
           await mcpServer.connect(transport)
           await transport.handleRequest(req, res, body)
         } catch (err) {
+          /*
+            Which branch runs is decided by SSE, so the split is worth stating.
+
+            Everything that can be refused deliberately — a bad name or token,
+            a locked vault, a full gateway, a body over the cap — happens above,
+            before `handleRequest` is ever called, so the headers are still
+            unsent and those callers get the status and JSON-RPC error they got
+            before. `readJsonBody` in particular runs first, which is what keeps
+            413 intact.
+
+            The other branch is now reachable only for a failure inside
+            `handleRequest` itself, once the stream is live. There is no status
+            code left to send at that point — 200 went out with the headers — so
+            the client sees a stream that ends without ever carrying a response
+            to its request id. Its own request timeout is what surfaces that,
+            and there is no way to do better without inventing a JSON-RPC error
+            for an id we may not have parsed. Ending the response rather than
+            leaving it open is the part that matters: a dangling stream would
+            keep the client waiting for the full idle window instead.
+          */
           if (!res.headersSent) {
             // Never `String(err)`: it ships the human's translated message to the
             // client and echoes the caller's own bytes back inside a SyntaxError.
@@ -300,7 +409,7 @@ class McpService {
         },
         annotations: { readOnlyHint: true, openWorldHint: false }
       },
-      async ({ session_id, reason }) => {
+      async ({ session_id, reason }, extra) => {
         const bridge = this.bridge
         if (!bridge) return toolError(modelErrorFor({ key: 'error.mcpBridgeMissing' }))
         if (!ssh.isReady(session_id)) return toolError('The session does not exist or is not ready.')
@@ -314,14 +423,17 @@ class McpService {
 
         let answer: { shared: boolean; text: string }
         try {
-          answer = await bridge.askShare({
-            id: randomUUID(),
-            sessionId: session_id,
-            sessionName: ssh.title(session_id),
-            reason,
-            origin: 'read_terminal',
-            text: preview
-          })
+          answer = await whileAwaitingHuman(
+            extra,
+            bridge.askShare({
+              id: randomUUID(),
+              sessionId: session_id,
+              sessionName: ssh.title(session_id),
+              reason,
+              origin: 'read_terminal',
+              text: preview
+            })
+          )
         } catch (err) {
           if (!isQueueFull(err)) throw err
           return toolError(QUEUE_FULL_MESSAGE)
@@ -352,7 +464,7 @@ class McpService {
         },
         annotations: { destructiveHint: true, openWorldHint: false }
       },
-      async ({ session_id, command, reason }) => {
+      async ({ session_id, command, reason }, extra) => {
         const bridge = this.bridge
         if (!bridge) return toolError(modelErrorFor({ key: 'error.mcpBridgeMissing' }))
         if (!ssh.isReady(session_id)) return toolError('The session does not exist or is not ready.')
@@ -360,14 +472,17 @@ class McpService {
 
         let approval: { approved: boolean; autoShare: boolean }
         try {
-          approval = await bridge.askCommand({
-            id: randomUUID(),
-            sessionId: session_id,
-            sessionName: ssh.title(session_id),
-            command,
-            commandVisualized: visualizeControlChars(command),
-            reason
-          })
+          approval = await whileAwaitingHuman(
+            extra,
+            bridge.askCommand({
+              id: randomUUID(),
+              sessionId: session_id,
+              sessionName: ssh.title(session_id),
+              command,
+              commandVisualized: visualizeControlChars(command),
+              reason
+            })
+          )
         } catch (err) {
           if (!isQueueFull(err)) throw err
           return toolError(QUEUE_FULL_MESSAGE)
@@ -393,15 +508,18 @@ class McpService {
         // approvals.ts, so changing it makes this call able to reject.
         // `autoShareOverridden` is also the queue's force-raise flag — the human
         // was promised no dialog, so a hidden one would time out into a denial.
-        const answer = await bridge.askShare({
-          id: randomUUID(),
-          sessionId: session_id,
-          sessionName: ssh.title(session_id),
-          reason: `Command output: ${command}`,
-          origin: 'command_output',
-          text: result.output,
-          autoShareOverridden: overridden
-        })
+        const answer = await whileAwaitingHuman(
+          extra,
+          bridge.askShare({
+            id: randomUUID(),
+            sessionId: session_id,
+            sessionName: ssh.title(session_id),
+            reason: `Command output: ${command}`,
+            origin: 'command_output',
+            text: result.output,
+            autoShareOverridden: overridden
+          })
+        )
 
         if (!answer.shared) {
           return {
