@@ -3,24 +3,11 @@
 
 /**
  * What may be written into the vault's settings, and what each field may hold.
- *
- * `settings:save` used to merge the caller's object straight into the stored
- * settings, so the settings block was whatever the caller said it was. Three
- * things followed from that. An unrecognised key was persisted verbatim inside
- * the encrypted vault and handed back by `settings:get`. `mcpPort` reached the
- * vault without the check `mcp:setPort` performs, and `mcpEnabled` was never
- * even coerced, so `'0'` was stored as a string and read back through
- * `Boolean()` as an enabled MCP gateway. And `Number(x) || 0` turned any
- * nonsense in `autoLockMinutes` into `0`, which is this file's encoding for
- * *never lock* — the one value here that must never be reachable by accident.
- *
- * The renderer is the only caller today. That is the argument for writing this
- * down now rather than later: a whitelist is worth having while it is still
- * cheap, not after the assumption that made it unnecessary has stopped holding.
- *
- * It lives outside `index.ts` because nothing in that file is reachable from a
- * test — it exports nothing and calls `app.requestSingleInstanceLock()` at
- * module scope. Same reason the approval queue moved to `approvals.ts`.
+ * A whitelist and not a merge of what the caller sent: a merge persists unknown
+ * keys inside the encrypted vault, lets `mcpPort` skip the check `mcp:setPort`
+ * performs, reads an uncoerced `mcpEnabled` of `'0'` back as an enabled gateway,
+ * and turns nonsense in `autoLockMinutes` into `0` — the encoding for *never
+ * lock*, the one value that must not be reachable by accident.
  */
 
 import type { Settings } from '../shared/types'
@@ -30,18 +17,9 @@ import { appError } from './i18n'
 const DEFAULT_MCP_PORT = 7345
 
 /**
- * `aiModel` and `aiEffort` are deliberately absent.
- *
- * They are declared on `Settings` and reserved for the AI assistant, but
- * nothing reads or writes them and `sanitizeSettings` does not persist them —
- * so a default here was returned by `settings:get`, dropped by the first save,
- * and nowhere near the vault afterwards. Advertising a stored value that is not
- * stored is the kind of thing a reader trusts and then debugs.
- *
- * A hardcoded model name is worse than merely unused: it ships into the shape
- * of every install and names a model that will not be current a year from now.
- * Both fields are optional on the type, so whatever adds the feature supplies
- * its own defaults in one line.
+ * `aiModel` and `aiEffort` are deliberately absent: `sanitizeSettings` does not
+ * persist them, so a default here would be handed out by `settings:get` and
+ * dropped by the first save — a stored value that is not stored.
  */
 export const DEFAULT_SETTINGS: Settings = {
   autoLockMinutes: 15,
@@ -60,22 +38,14 @@ export const SETTINGS_LIMITS = {
 } as const
 
 /**
- * Every key of `Settings` and what `sanitizeSettings` does about it.
+ * Nothing reads this at runtime; it exists so adding a field to `Settings`
+ * without deciding about it is a type error, not a field that never persists.
  *
- * Nothing reads this at runtime. It is here so that adding a field to
- * `Settings` without deciding about it is a type error rather than a field that
- * silently never persists — the failure a whitelist otherwise introduces.
- *
- *   saved      the general and security tabs own it; validated below
- *   elsewhere  stored, but only by its own handler. A copy of it in a patch is
- *              stale by construction — the settings dialog reads it once, when
- *              it opens — so writing it here undoes `mcp:setEnabled` or
- *              `mcp:setPort` whenever the human saves the other tab afterwards
- *   unused     reserved for the AI assistant. Nothing writes or reads either
- *              one; they need a real validator (a fixed set for `aiEffort`, a
- *              length and charset bound for `aiModel`) the day something does.
- *              Until then this is the record that they were considered, not
- *              forgotten — the dead-code pass decides their fate, not this file
+ *   saved      validated below
+ *   elsewhere  stored only by its own handler; a copy in a patch is stale by
+ *              construction and would undo `mcp:setEnabled` or `mcp:setPort`
+ *   unused     reserved for the AI assistant; needs its own validator the day
+ *              something reads or writes it
  *   derived    computed by `settings:get` from `aiApiKey`, never stored
  */
 export const SETTINGS_FIELDS: Record<
@@ -93,13 +63,7 @@ export const SETTINGS_FIELDS: Record<
   hasAiApiKey: 'derived'
 }
 
-/**
- * `hasOwnProperty`, never `in` and never `obj[key]`.
- *
- * Both reach the prototype, so `{ toString: 1 }` would pass for a known field.
- * Same reason `mcp.ts` keeps its error table in a `Map` and `shared/i18n.ts`
- * looks keys up through `own()`.
- */
+/** Never `in` or `obj[key]`: both reach the prototype, so `{ toString: 1 }` passes. */
 function has(obj: object, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(obj, key)
 }
@@ -109,13 +73,10 @@ function invalid(field: string): Error {
 }
 
 /**
- * A whole number inside `range`, clamped.
- *
- * With `fallback` it repairs, without it refuses, and the two callers are not
- * the same. A value the caller just sent must fail loudly, because inventing
- * one is exactly how `Number('x') || 0` switched auto-lock off. A value already
- * in the vault must not, because refusing it would make Save impossible over a
- * number the human never typed and cannot see.
+ * A whole number inside `range`, clamped. With `fallback` it repairs, without it
+ * refuses, and the two must stay distinct: a value the caller just sent has to
+ * fail loudly — inventing one is how `Number('x') || 0` switched auto-lock off —
+ * while a value already in the vault must not block Save.
  */
 function whole(
   value: unknown,
@@ -139,24 +100,19 @@ function flag(value: unknown, field: string, fallback?: boolean): boolean {
   return value
 }
 
-/** Carried over only. Repairs to the default, which is what `clampPort` binds. */
+/** Carried over only; repairs to the default that `clampPort` also binds. */
 function port(value: unknown): number {
   const ok = typeof value === 'number' && Number.isInteger(value) && value >= 1024 && value <= 65535
   return ok ? value : DEFAULT_MCP_PORT
 }
 
 /**
- * The settings to store, from the ones already stored plus a patch.
- *
  * Absent field: unchanged. Present and legal: written, clamped into range.
  * Present and not legal: the whole save fails and nothing is written.
  *
- * Unknown keys are refused rather than dropped. Dropping is how "the setting
- * did not stick" bugs are born — a field is added to the dialog, nobody adds it
- * here, Save reports success and changes nothing. Refusing costs nothing:
- * renderer and main process ship as one build, so they cannot disagree about
- * which keys exist, and the only things that can send an unknown one are a bug
- * and a caller that is not this application. Both deserve to be seen.
+ * Unknown keys are refused, never dropped: an unknown key is either a field
+ * someone forgot to add here — dropping it gives a silent "the setting did not
+ * stick" — or a caller that is not this application. Both deserve to be seen.
  */
 export function sanitizeSettings(current: Settings, patch: unknown): Settings {
   if (typeof patch !== 'object' || patch === null) throw appError('error.unknownSetting')
@@ -164,14 +120,13 @@ export function sanitizeSettings(current: Settings, patch: unknown): Settings {
 
   for (const key of Object.keys(incoming)) {
     if (has(SETTINGS_FIELDS, key)) continue
-    // The key is the caller's own text, so it goes to the log rather than into a
-    // translated string that ends up in front of the user.
+    // The caller's own text: to the log, never into a string shown to the user.
     console.warn('settings: refusing unknown key', JSON.stringify(key).slice(0, 80))
     throw appError('error.unknownSetting')
   }
 
-  // Rebuilt field by field rather than spread, so whatever a previous build may
-  // have left in the settings block is gone after one save.
+  // Rebuilt field by field, not spread, so anything a previous build left in the
+  // settings block is gone after one save.
   const next: Settings = {
     autoLockMinutes: whole(
       current.autoLockMinutes,

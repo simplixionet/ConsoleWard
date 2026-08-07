@@ -11,17 +11,14 @@ import { dictionaryFor, SOURCE_DICTIONARY } from '@shared/locales'
 import './styles.css'
 import '@xterm/xterm/css/xterm.css'
 
-/**
- * Jazyk načteme dřív než UI, aby ani odemykací obrazovka neproblikla
- * v angličtině.
- */
+/** The locale loads before the UI so even the unlock screen never flashes English. */
 async function boot(): Promise<void> {
   let locale = SOURCE_LOCALE
   try {
     const result = await api.app.getLocale()
     if (result.ok) locale = result.value
   } catch {
-    /* zůstane výchozí jazyk */
+    /* keep the default locale */
   }
   document.documentElement.lang = locale
 

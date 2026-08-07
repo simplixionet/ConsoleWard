@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Simplixio — Stanislav Opletal <info@simplixio.net>
 
-/** Názvy IPC kanálů – jediný zdroj pravdy pro main i preload. */
+/** IPC channel names — the single source of truth for main and preload. */
 export const CH = {
   vaultStatus: 'vault:status',
   vaultCreate: 'vault:create',
@@ -29,6 +29,7 @@ export const CH = {
   hostsList: 'hosts:list',
   hostsForget: 'hosts:forget',
 
+  sshList: 'ssh:list',
   sshConnect: 'ssh:connect',
   sshWrite: 'ssh:write',
   sshResize: 'ssh:resize',

@@ -2,16 +2,9 @@
 // Copyright (C) 2026 Simplixio — Stanislav Opletal <info@simplixio.net>
 
 /**
- * Reading a file the human picked in the open dialog.
- *
- * The interesting case is the one `fsp.stat` cannot see: on Windows a named
- * pipe reports `size: 0` AND `isFile() === true`, so the obvious `stat.isFile()`
- * guard lets it through and the read that follows never returns. The pipe test
- * below is therefore the point of this file, not a corner case.
- *
- * Every assertion is raced against a timer. A regression here does not produce
- * a wrong value, it produces a promise that never settles — and a hanging test
- * reads as a stuck CI runner rather than as a failure.
+ * Reading a file the human picked in the open dialog. Every assertion is raced
+ * against a timer, because a regression here produces a promise that never
+ * settles rather than a wrong value.
  */
 
 import { describe, test, mock, after } from 'node:test'
@@ -43,7 +36,7 @@ function write(name: string, content: string): string {
 
 const HUNG = Symbol('the call never settled')
 
-/** Resolves to HUNG rather than hanging, so a regression is red and not stuck. */
+/** Resolves to HUNG rather than hanging, so a regression is red, not stuck. */
 function within<T>(promise: Promise<T>, ms = 2000): Promise<T | typeof HUNG | Error> {
   return Promise.race([
     promise.catch((err: Error) => err),
@@ -89,13 +82,13 @@ describe('readSmallTextFile', () => {
   })
 
   test('refuses a pipe that stat calls a regular file', async (t) => {
-    // THE finding. On win32 a named pipe answers `size: 0, isFile() === true`
-    // to a path stat, so the release plan's proposed `stat.isFile()` fix leaves
-    // this wide open — and fsp.readFile on it never returns, pinning one of the
-    // four libuv threadpool threads for good.
+    // On win32 a named pipe answers `size: 0, isFile() === true` to a path
+    // stat, so a `stat.isFile()` guard leaves this wide open — and fsp.readFile
+    // on a pipe never returns, pinning one of the four libuv threadpool threads
+    // for good.
     if (process.platform !== 'win32') {
-      // POSIX: a real FIFO. mkfifo is not available through node, so skip
-      // rather than pretend — the win32 path is the one that ships.
+      // mkfifo is not reachable from node, so skip rather than pretend; win32
+      // is the path that ships.
       t.skip('named pipes are exercised on win32; POSIX FIFOs need mkfifo')
       return
     }

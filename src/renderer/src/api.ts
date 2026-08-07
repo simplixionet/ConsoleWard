@@ -11,10 +11,7 @@ declare global {
 
 export const api = window.api
 
-/**
- * Rozbalí `Result` z IPC – při chybě vyhodí výjimku, aby volající mohl
- * použít běžný try/catch místo ručního větvení.
- */
+/** Unwraps an IPC `Result`, throwing on failure so callers can use try/catch. */
 export function unwrap<T>(result: Result<T>): T {
   if (!result.ok) throw new Error(result.error)
   return result.value

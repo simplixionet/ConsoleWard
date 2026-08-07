@@ -4,28 +4,15 @@
 /**
  * The Content-Security-Policy, in one place.
  *
- * There used to be two: a strict one built in `applyCsp()` and a permissive one
- * hardcoded in `index.html`. The strict one was installed through
- * `webRequest.onHeadersReceived`, which **does not fire for `file://`** — and
- * production loads the renderer with `loadFile`. So the policy that actually
- * shipped was the meta tag's, which carried the development relaxations.
- *
- * That was measured, not inferred: in a packaged build `eval('1+1')` returned
- * 2 and `new WebSocket('wss://example.invalid/')` was permitted. A bare `wss:`
- * scheme-source matches any host, in an application that holds private keys.
- *
- * Now the meta tag is written at build time from this function and the header
- * repeats it. Two policies both apply and CSP intersects them, so agreement is
- * required — a divergence would silently produce the intersection rather than
- * either policy, which is exactly the failure that hid the original bug.
- */
-
-/**
- * @param dev  true for the dev server, which needs inline/eval for HMR and a
- *             websocket back to Vite. Production gets neither.
+ * `webRequest.onHeadersReceived` **does not fire for `file://`**, and production
+ * loads the renderer with `loadFile` — so a header-only policy does not apply in
+ * a packaged build. The meta tag in `index.html` is therefore generated from
+ * this function at build time and the header repeats it. Both must stay in
+ * agreement: two policies both apply and CSP intersects them, so a divergence
+ * silently produces the intersection rather than either policy.
  */
 export function contentSecurityPolicy(dev: boolean): string {
-  // HMR needs eval and a socket home. Nothing else ever does.
+  // `dev` is the Vite dev server: HMR needs eval and a socket home. Nothing else does.
   const scriptSrc = dev ? `'self' 'unsafe-inline' 'unsafe-eval'` : `'self'`
   const connectSrc = dev ? `'self' ws://localhost:* ws://127.0.0.1:*` : `'self'`
 

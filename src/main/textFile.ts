@@ -2,35 +2,21 @@
 // Copyright (C) 2026 Simplixio — Stanislav Opletal <info@simplixio.net>
 
 /**
- * Reading the file a human picked in the open dialog.
+ * Reads the file a human picked in the open dialog. The path comes from the OS
+ * picker, so the threat is a picker aimed at something that is not a file.
  *
- * The path comes from the OS picker, never from the renderer, so this is not a
- * remote attack surface — it is what happens when the person at the keyboard
- * points the picker at something that is not an ordinary file.
+ * Open first, ask afterwards — never `fsp.stat()` on the path. A Windows named
+ * pipe reports `size: 0` and `isFile() === true` to path-`stat`, walks through
+ * any size limit, and the read that follows never returns: it sits on an
+ * uncancellable libuv threadpool thread, and four exhaust the default pool,
+ * after which every `fsp.*` call and the `crypto.scrypt` that unlocks the vault
+ * queue behind them forever. `fstat` on the handle answers `isFile() === false`
+ * for that pipe, and closes the check-to-read gap as well.
  *
- * `fsp.stat()` cannot tell those apart. A POSIX FIFO reports `size: 0`, and on
- * Windows a named pipe reports `size: 0` **and** `isFile() === true` — measured
- * on node 24, Windows 11. Both walk through a size limit, and the `readFile`
- * that follows never returns: the read sits on a libuv threadpool thread and
- * cannot be cancelled, so the promise behind the dialog never settles, and four
- * of them exhaust the default pool of four. After that every `fsp.*` call in
- * the application and every `crypto.scrypt` the vault needs to unlock queue
- * behind them forever.
- *
- * So the file is opened first and asked afterwards: `fstat` on the open handle
- * answers `isFile() === false` for the same named pipe that path-`stat` called a
- * file. The handle is also what closes the gap between the check and the read —
- * they are now one file description rather than one path resolved twice.
- *
- * `O_NONBLOCK` is what keeps the open itself from blocking on POSIX, where
- * `open(fifo, O_RDONLY)` waits for a writer. It is a no-op for regular files
- * there, and node does not define it on Windows, where the open returns anyway
- * and only the read blocks.
- *
- * Symlinks are followed on purpose. `~/.ssh/id_ed25519` is a symlink on plenty
- * of machines, so `lstat` or `O_NOFOLLOW` would reject exactly the file this
- * dialog exists to load. Following it and then asking about the target is both
- * safe and correct: a symlink to a FIFO fails the `isFile()` check.
+ * `O_NONBLOCK` stops the open itself blocking on POSIX, where
+ * `open(fifo, O_RDONLY)` waits for a writer; a no-op for regular files. Symlinks
+ * are followed on purpose — `~/.ssh/id_ed25519` is often one — and safely, since
+ * a symlink to a FIFO still fails the `isFile()` check.
  */
 
 import { constants as fsConstants } from 'node:fs'
@@ -41,9 +27,8 @@ import { appError } from './i18n'
 /** A private key is a few kilobytes. A megabyte is already generous. */
 export const TEXT_FILE_MAX_BYTES = 1024 * 1024
 
-// Read defensively: node defines only the flags the platform has, and on
-// Windows `O_NONBLOCK` is absent — referencing it directly yields `undefined`
-// and turns the whole flag word into NaN.
+// Read defensively: `O_NONBLOCK` is absent on Windows, and referencing it
+// directly yields `undefined`, turning the whole flag word into NaN.
 const O_NONBLOCK = (fsConstants as { O_NONBLOCK?: number }).O_NONBLOCK ?? 0
 
 export async function readSmallTextFile(
@@ -56,10 +41,9 @@ export async function readSmallTextFile(
     if (!stat.isFile()) throw appError('error.notRegularFile')
     if (stat.size > maxBytes) throw appError('error.fileTooLarge')
 
-    // One byte more than the limit, so a file that grew between the fstat and
-    // the read is refused rather than silently cut in half — a size from `stat`
-    // is a statement about the past. A single `read()` may come back short on a
-    // network share, hence the loop.
+    // One byte more than the limit, so a file that grew since the fstat is
+    // refused rather than silently cut in half. A single `read()` may come back
+    // short on a network share, hence the loop.
     const buf = Buffer.alloc(maxBytes + 1)
     let filled = 0
     while (filled < buf.length) {
@@ -71,8 +55,8 @@ export async function readSmallTextFile(
 
     return { name: path.basename(file), content: buf.subarray(0, filled).toString('utf8') }
   } finally {
-    // A failed close on a read-only handle says nothing the caller can act on,
-    // and must not replace the error that brought us here.
+    // A failed close on a read-only handle must not replace the error that
+    // brought us here.
     await handle.close().catch(() => {})
   }
 }

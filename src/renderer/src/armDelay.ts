@@ -4,13 +4,10 @@
 import { useEffect, useState } from 'react'
 
 /**
- * How long a freshly painted approval dialog refuses to act.
- *
- * The window is raised for the first request of a batch, so a dialog can land
- * under a cursor that was aimed at something else entirely — and the next
- * request in the queue renders the instant the previous one is answered, under
- * a cursor that is still on the button. Long enough to break the reflex, short
- * enough that nobody notices they waited.
+ * How long a freshly painted approval dialog refuses to act. A dialog can land
+ * under a cursor aimed at something else — the window is raised for the first
+ * request, and the next one renders the instant its predecessor is answered —
+ * so this must stay long enough to break a click reflex.
  */
 export const ARM_DELAY_MS = 400
 
@@ -18,14 +15,10 @@ export const ARM_DELAY_MS = 400
  * False until the component has actually been on screen for `delayMs`.
  *
  * Two animation frames, not one: the first callback still runs before this
- * commit reaches the screen, the second runs after it. Starting the clock on
- * mount would let the delay expire while the dialog was invisible, which is
- * exactly the window a request arriving during a raise would slip through.
- *
- * A hidden or minimised window never gets its frames, so a dialog rendered
- * behind the user's back stays unarmed until the window is genuinely visible.
- * That is intended — do not add a plain setTimeout fallback, it would hand the
- * whole property back.
+ * commit reaches the screen, the second after it. Timing from mount would let
+ * the delay expire while the dialog was invisible. A hidden window never gets
+ * frames, so a dialog rendered behind the user's back stays unarmed —
+ * intended; a plain setTimeout fallback would give that property away.
  */
 export function useArmedAfterPaint(delayMs: number = ARM_DELAY_MS): boolean {
   const [armed, setArmed] = useState(false)

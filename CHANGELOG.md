@@ -17,7 +17,7 @@ section against a release that never happened describes the development process
 rather than the software, and this file is for the latter.
 -->
 
-## [1.0.0] — 2026-08-05
+## [1.0.0] — 2026-08-06
 
 First public release. Everything below is the initial implementation rather than
 a change from a previous version.
@@ -60,7 +60,12 @@ a change from a previous version.
   recovery key working. The pre-migration copy is removed once the new file has
   been read back and decrypted.
 - Automatic lock after a configurable idle period, optionally ending SSH
-  sessions with it.
+  sessions with it. Presence is measured only from genuine keyboard and mouse
+  input; the replies a terminal owes the server — cursor position, device
+  attributes, window size — do not count as somebody being there, so a remote
+  host cannot hold the vault open by asking questions on a timer.
+- Sessions kept alive across a lock are taken back from the main process on
+  unlock, so nothing is left connected without a tab to close it from.
 
 **SSH**
 
@@ -73,6 +78,10 @@ a change from a previous version.
 - xterm.js terminal with search, configurable font size and PuTTY-style
   right-click paste. Terminal data crosses IPC as base64 so multi-byte UTF-8
   never splits.
+- Error text chosen by the other end — an SSH disconnect reason arrives before
+  key exchange finishes, so anyone on the path can supply it — is shown as a
+  quotation rather than in the application's own voice, stripped of escape and
+  bidirectional characters, flattened to one line and capped in length.
 
 **Command library**
 
@@ -119,9 +128,12 @@ a change from a previous version.
   whole buffer, and sending nothing is its own button rather than what happens
   when you do nothing.
 - Suspicious spans highlighted in the sharing dialog — passwords in assignments,
-  JWT/AWS/GitHub/Slack tokens, credentials in URLs, password hashes, IP
-  addresses. Documented as a hint, not a guarantee, and the dialog says so when
-  it stopped highlighting early or could not read the whole text.
+  including quoted JSON and YAML keys; JWT/AWS/GitHub/Slack tokens; credentials
+  in URLs; password hashes; IP addresses; and whole credential files: PEM and
+  PGP private keys, PuTTY `.ppk`, kubeconfig client keys, `~/.docker/config.json`
+  registry logins, `~/.netrc` and `~/.pgpass`. Documented as a hint, not a
+  guarantee, and the dialog says so when it stopped highlighting early or could
+  not read the whole text.
 - Output can be released automatically once a command finishes, but that choice
   is revoked whenever the output turns out to look like a credential. The tick
   is given while reading the *command*, before any output exists, so it cannot
@@ -129,7 +141,12 @@ a change from a previous version.
 - At most three approvals may be waiting at once; past that the model is told
   so rather than the request being queued. The window is raised once per batch,
   not once per request, and a freshly drawn dialog ignores clicks for a moment
-  so one aimed at something else cannot land on it.
+  so one aimed at something else cannot land on it. Only one approval dialog is
+  on screen at a time, in order of how soon it expires — a dialog cannot serve
+  out its click delay hidden behind another and come forward already live.
+- The approval dialog shows how long the command is and says outright when the
+  text is taller than the box, so nothing is approved with part of it scrolled
+  out of sight.
 - Unanswered requests auto-deny after 5 minutes.
 - Everything the model reads is fixed English, including error messages. It is a
   machine interface, so a Czech user does not ship Czech diagnostics to it.
@@ -141,6 +158,10 @@ a change from a previous version.
   `Intl.PluralRules` with no i18n dependency.
 - Language chosen from the system on first run, changeable in Settings, and
   stored outside the vault so the unlock screen is already translated.
+- The native file dialogs are translated too. The one string that is not is the
+  placeholder for an unreadable host-key type, which stays `unknown` in every
+  language: it is written into the known-hosts entry as well as shown, and a
+  translated one would leave stored entries disagreeing with each other.
 - A missing translation falls back to English, never to a raw key. Only the
   active locale's dictionary is fetched at runtime.
 
@@ -159,6 +180,8 @@ a change from a previous version.
   gates.
 - `npm run build:icon` generates `build/icon.ico` from the SVG mark using the
   Electron already in the tree — no image dependency.
+- Every GitHub Action is pinned to a commit SHA, so the workflow that signs and
+  publishes the installers cannot change under a moved tag.
 
 ### Known limitations
 

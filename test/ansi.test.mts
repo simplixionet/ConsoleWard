@@ -2,20 +2,11 @@
 // Copyright (C) 2026 Simplixio — Stanislav Opletal <info@simplixio.net>
 
 /**
- * Terminal escape handling.
- *
- * `src/main/ansi.ts` is the last filter between a remote host's bytes and the
- * text a human reads before approving a command. Everything it sees is hostile
- * by definition, so these tests care about two failure directions equally:
- *
- *   - too little cleaning — remote-controlled text reaching the reader
- *     disguised as trustworthy output, or invisible characters hiding intent;
- *   - too much cleaning — ordinary output getting mangled, which teaches the
- *     user to stop reading the dialog at all.
- *
- * The second direction is not the lesser concern. A filter that eats progress
- * output is a filter people learn to distrust, and a distrusted gate is not a
- * gate.
+ * Terminal escape handling. `src/main/ansi.ts` is the last filter between a
+ * remote host's bytes and the text a human reads before approving a command.
+ * Both failure directions are tested equally: too little cleaning lets remote
+ * text reach the reader disguised as trustworthy output, too much mangles
+ * ordinary output and teaches the user to stop reading the dialog at all.
  *
  * Control characters are written as escapes on purpose — raw bytes in a source
  * file are invisible and do not survive editors reliably.
@@ -34,12 +25,11 @@ const ST = `${ESC}\\`
 /** Single-byte C1 CSI introducer. */
 const CSI1 = ''
 
-/** Marker glyphs emitted by `visualizeControlChars`. */
 const MARK_CTRL = '␦'
 const MARK_BIDI = '␤'
 const MARK_INVISIBLE = '␣'
 
-/** For assertion messages, so a failure names the code point. */
+/** Names the code point in an assertion message. */
 const u = (ch: string): string =>
   `U+${ch.codePointAt(0)!.toString(16).toUpperCase().padStart(4, '0')}`
 
@@ -87,9 +77,8 @@ describe('cleanTerminalText: OSC sequences', () => {
   })
 
   test('an unterminated OSC does not leak its payload', () => {
-    // ESC ] used to fall through to the two-character rule, so everything after
-    // it was displayed as ordinary output — a remote host writing straight into
-    // the approval dialog.
+    // Falling through to the two-character rule would display the payload as
+    // ordinary output: a remote host writing into the approval dialog.
     const out = cleanTerminalText(`${ESC}]0;root@host:~# rm -rf /`)
     assert.equal(out, '')
     assert.ok(!out.includes('rm -rf'))
@@ -171,8 +160,8 @@ describe('cleanTerminalText: two-character and charset escapes', () => {
   })
 
   test('cursor save and restore leave no stray digit', () => {
-    // ESC 7 / ESC 8 pour out of vim, less and anything ncurses. The old range
-    // stripped the ESC as a control byte and left the digit behind as "output".
+    // ESC 7 / ESC 8 pour out of vim, less and anything ncurses. Stripping the
+    // ESC alone leaves the digit behind, reading as output the host never sent.
     assert.equal(cleanTerminalText(`a${ESC}7b${ESC}8c`), 'abc')
   })
 
@@ -195,9 +184,8 @@ describe('cleanTerminalText: carriage return handling', () => {
   })
 
   test('a line ending in a lone CR keeps its text', () => {
-    // The most exploitable bug this module had: one byte removed a whole line
-    // from what the reviewer sees. On a real terminal CR only moves the cursor
-    // — the text stays on screen.
+    // On a real terminal CR only moves the cursor, so the text stays on screen.
+    // Dropping the line would let one byte hide it from the reviewer.
     assert.equal(cleanTerminalText('important warning\r'), 'important warning')
   })
 
@@ -238,8 +226,8 @@ describe('cleanTerminalText: control and invisible characters', () => {
   })
 
   test('C1 controls are stripped', () => {
-    // The visualizer was extended for these; the cleaner had the same hole, and
-    // nothing downstream catches it because the visualizer never sees output.
+    // Nothing downstream catches a leak here: the visualizer only ever sees
+    // commands, never output.
     for (let code = 0x80; code <= 0x9f; code++) {
       const ch = String.fromCharCode(code)
       assert.ok(!cleanTerminalText(`a${ch}b`).includes(ch), `${u(ch)} survived`)
@@ -295,8 +283,6 @@ describe('tailLines', () => {
 
 describe('visualizeControlChars', () => {
   test('an ordinary command is returned unchanged', () => {
-    // False positives matter as much as misses here: a dialog that marks up
-    // every harmless command teaches the reader to ignore the markings.
     assert.equal(visualizeControlChars('ls -la /var/log'), 'ls -la /var/log')
   })
 

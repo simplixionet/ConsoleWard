@@ -15,16 +15,8 @@ import { useArmedAfterPaint } from '../armDelay'
 import { terminalSelection } from '../terminalBus'
 
 /**
- * Co z výstupu odejde AI — ve třech krocích.
- *
- * Původní podoba nasypala celý buffer do textarey a nabídla „odeslat vše".
- * Tisíc řádků nikdo nečte, takže se to odklikávalo a zvýrazňování tajemství
- * bylo k ničemu: podbarvit tři sta míst v textu, který se stejně nečte, není
- * ochrana, jen ozdoba. Proto se teď nejdřív vybírá **co**, a teprve to krátké
- * se kontroluje.
- *
- * Klíčové je, že žádný krok neumí odeslat celý buffer. Kdo chce poslat všechno,
- * musí to všechno v konzoli označit — a přitom to uvidí.
+ * What leaves for the AI, in three steps. No step can send the whole buffer:
+ * sending everything requires selecting it all in the console, in plain sight.
  */
 
 type Stage = 'choose' | 'picking' | 'review'
@@ -32,7 +24,6 @@ type Stage = 'choose' | 'picking' | 'review'
 interface Props {
   request: ShareRequest
   onAnswer: (shared: boolean, text: string) => void
-  /** Přepne hlavní okno na relaci, ze které se vybírá. */
   onShowSession: (sessionId: string) => void
 }
 
@@ -41,12 +32,9 @@ export default function OutputShareDialog({ request, onAnswer, onShowSession }: 
   const [excerpt, setExcerpt] = useState('')
 
   /*
-   * Every stage is its own component, and that is load-bearing rather than
-   * tidiness: `useArmedAfterPaint` starts its clock on mount, so a stage that
-   * appears under a cursor which has just clicked the button now occupying that
-   * spot gets its own arming delay. Rendered as one component with a `stage`
-   * variable, the arm would expire once at the start and the second half of a
-   * double click could carry straight through to "send".
+   * Each stage must stay its own component: `useArmedAfterPaint` restarts on
+   * mount, so every stage re-arms. Merged into one, the arm would expire once
+   * and a double click could carry through to "send".
    */
   if (stage === 'picking') {
     return (
@@ -89,7 +77,7 @@ export default function OutputShareDialog({ request, onAnswer, onShowSession }: 
   )
 }
 
-/* --------------------------------------------------------------- 1. výběr */
+/* -------------------------------------------------------------- 1. choose */
 
 function ChooseStage({
   request,
@@ -104,10 +92,8 @@ function ChooseStage({
 }) {
   const t = useT()
   /*
-   * No `armed` gate here on purpose: not one button on this stage sends
-   * anything. That is the point of splitting the dialog — a stray click on a
-   * window that just raised itself can no longer leak output, it can at worst
-   * open the review step, which sends nothing until it is clicked again.
+   * No `armed` gate here on purpose: no button on this stage sends anything, so
+   * a stray click can at worst open the review step.
    */
   const canPick = terminalSelection(request.sessionId) !== null
   const hasText = request.text.length > 0
@@ -157,9 +143,8 @@ function ChooseStage({
   )
 }
 
-/* ------------------------------------------------- 2. označování v konzoli */
+/* ---------------------------------------------- 2. picking in the console */
 
-/** Jak často se kontroluje, že terminál pořád existuje. Levné — sáhnutí do Mapy. */
 const LOST_POLL_MS = 500
 
 function PickStage({
@@ -185,27 +170,21 @@ function PickStage({
     }
     const read = (): void => setSelected(source.read())
     /*
-     * Wipe whatever was highlighted before the dialog opened. A selection the
-     * human made ten minutes ago for some unrelated reason is not consent, and
-     * leaving it in place would arm "continue" the moment this panel appears —
-     * exactly the accident the "disabled until something is selected" rule
-     * exists to prevent.
+     * Wipe whatever was highlighted before the dialog opened: an older selection
+     * is not consent, and would arm "continue" the moment this panel appears.
      */
     try {
       source.clear()
     } catch {
-      /* nevadí, přečte se stejně */
+      /* never mind, read() runs anyway */
     }
     read()
     const unsubscribe = source.subscribe(read)
 
     /*
-     * Losing the console mid-selection has to be looked for, because nothing
-     * announces it: the registry has no "gone" event, and a disposed xterm does
-     * not fail on read — it stops reporting selection changes and answers with
-     * an empty string. Left unwatched, the panel would sit at "nothing selected
-     * yet" forever, which reads as "you have not highlighted anything" when the
-     * truth is "there is nothing left to highlight".
+     * A console lost mid-selection has to be polled for: the registry has no
+     * "gone" event, and a disposed xterm answers reads with an empty string
+     * instead of failing, so the panel would read as "nothing selected yet".
      */
     let watch = 0
     const stop = (): void => {
@@ -215,7 +194,7 @@ function PickStage({
     watch = window.setInterval(() => {
       if (terminalSelection(request.sessionId) === source) return
       stop()
-      // Co bylo označeno v mezitím zavřené konzoli, dál nejde — „continue" je na nule zamčené.
+      // Nothing selected in a console that has since closed may go on — zero locks "continue".
       setSelected('')
       setLost(true)
     }, LOST_POLL_MS)
@@ -271,7 +250,7 @@ function PickStage({
   )
 }
 
-/* ------------------------------------------------------------ 3. kontrola */
+/* -------------------------------------------------------------- 3. review */
 
 function ReviewStage({
   request,
@@ -291,11 +270,8 @@ function ReviewStage({
   const areaRef = useRef<HTMLTextAreaElement>(null)
   const backdropRef = useRef<HTMLDivElement>(null)
 
-  /*
-   * Sized once from the excerpt as it arrived, not from the live text: deleting
-   * a couple of lines while redacting would otherwise shrink the field under
-   * the cursor and slide the buttons up towards it.
-   */
+  // Sized from the excerpt as it arrived, not the live text: redacting would
+  // otherwise shrink the field and slide the buttons up under the cursor.
   const height = useMemo(() => reviewHeight(initialText), [initialText])
 
   const scan = useMemo(() => scanSecrets(text), [text])
@@ -349,11 +325,7 @@ function ReviewStage({
             </div>
           </div>
 
-          {/*
-            The reason belongs on this step too, not only on the first one. This
-            is where "send or not" is actually decided, and deciding it without
-            what was asked for in front of you is deciding half of it.
-          */}
+          {/* The reason belongs here too — this is where "send or not" is decided. */}
           <div>
             <div className="meta-label">{t('mcp.aiReason')}</div>
             <div className="ai-reason">{request.reason || t('mcp.noReason')}</div>
@@ -395,11 +367,9 @@ function ReviewStage({
           </div>
 
           {/*
-            An estimate, not a measurement: a line that wraps takes more than
-            one row, so a wide excerpt can still need scrolling. That is the
-            acceptable half — the box is bounded at both ends, so the worst case
-            is a short scroll, never a field collapsed to nothing or one that
-            pushes the send buttons off screen.
+            An estimate, not a measurement — wrapped lines still scroll. Keep it
+            bounded at both ends: the field must never collapse, nor grow until
+            it pushes the send buttons off screen.
           */}
           <div
             className="hl-wrap review-wrap"
@@ -436,11 +406,8 @@ function ReviewStage({
             {t('mcp.sendNothing')}
           </button>
           {/*
-            Disabled on an empty excerpt for the same reason "continue" is: an
-            approval that sends nothing is indistinguishable from a refusal to
-            the model, but not to the human, who walks away believing they
-            answered. Redacting everything is a refusal — say so with the other
-            button.
+            Disabled on an empty excerpt: an approval that sends nothing reads as
+            a refusal to the model but as an answer to the human.
           */}
           <button
             className="btn primary"
@@ -455,7 +422,7 @@ function ReviewStage({
   )
 }
 
-/** Řádkování 1.6 × 12px z .hl-input, plus vnitřní odsazení a rámeček. */
+/** Line height 1.6 × 12px from .hl-input, plus its padding and border. */
 const REVIEW_LINE_PX = 19.2
 const REVIEW_CHROME_PX = 22
 const REVIEW_MIN_PX = 120
@@ -486,7 +453,7 @@ function renderHighlighted(
     )
     pos = m.end
   })
-  // Koncová mezera drží poslední (prázdný) řádek, aby podbarvení nesjelo.
+  // The trailing space holds the last (empty) line so the highlight stays aligned.
   nodes.push(text.slice(pos) + '\n ')
   return nodes
 }

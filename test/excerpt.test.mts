@@ -6,58 +6,57 @@ import { describe, it } from 'node:test'
 import { EXCERPT_LINES, lastLines } from '../src/shared/excerpt.ts'
 
 describe('lastLines', () => {
-  it('vrátí posledních N řádků', () => {
+  it('returns the last N lines', () => {
     assert.equal(lastLines('a\nb\nc\nd\ne', 3), 'c\nd\ne')
   })
 
-  it('kratší text vrátí celý', () => {
+  it('returns a shorter text in full', () => {
     assert.equal(lastLines('a\nb', 10), 'a\nb')
-    assert.equal(lastLines('jediný řádek', 20), 'jediný řádek')
+    assert.equal(lastLines('a single line', 20), 'a single line')
   })
 
-  it('přesně N řádků vrátí beze změny', () => {
+  it('returns exactly N lines unchanged', () => {
     assert.equal(lastLines('a\nb\nc', 3), 'a\nb\nc')
   })
 
   /*
-   * The whole reason this is not main's tailLines. Terminal output ends with a
-   * newline, so a naive split gives a trailing empty string that eats one of
-   * the N slots and shows up in the review dialog as a blank final line.
+   * Why this is not main's tailLines: terminal output ends with a newline, so a
+   * naive split leaves a trailing empty string that eats one of the N slots.
    */
-  it('koncový nový řádek ukončuje poslední řádek, nezakládá nový', () => {
+  it('a trailing newline ends the last line, it does not begin a new one', () => {
     assert.equal(lastLines('a\nb\nc\n', 3), 'a\nb\nc')
     assert.equal(lastLines('a\nb\nc\nd\n', 2), 'c\nd')
-    assert.equal(lastLines('jediný\n', 20), 'jediný')
+    assert.equal(lastLines('a single line\n', 20), 'a single line')
   })
 
-  it('zahodí se jen poslední oddělovač, prázdné řádky uvnitř zůstanou', () => {
+  it('only the final separator is dropped, blank lines inside stay', () => {
     assert.equal(lastLines('a\n\n\n', 5), 'a\n\n')
     assert.equal(lastLines('a\n\n\n', 2), '\n')
   })
 
-  it('prázdný vstup i samotný nový řádek dají prázdný výběr', () => {
+  it('empty input and a lone newline both give an empty excerpt', () => {
     assert.equal(lastLines('', 20), '')
     assert.equal(lastLines('\n', 20), '')
   })
 
-  it('nulový nebo záporný počet nevybere nic', () => {
+  it('a zero or negative count selects nothing', () => {
     assert.equal(lastLines('a\nb\nc', 0), '')
     assert.equal(lastLines('a\nb\nc', -1), '')
   })
 
   /*
-   * The dialog disables "continue" on an empty excerpt, so a helper that can
-   * quietly hand back the whole buffer would route around the one rule the
-   * redesign is built on: nothing leaves without someone choosing it.
+   * A helper that quietly handed back more than it was asked for would route
+   * around the one rule the review dialog rests on: nothing leaves without
+   * someone choosing it.
    */
-  it('nikdy nevrátí víc, než kolik bylo požádáno', () => {
+  it('never returns more than was asked for', () => {
     const text = Array.from({ length: 500 }, (_, i) => `line ${i}`).join('\n')
     for (const n of [1, 2, 20, 499, 500]) {
       assert.equal(lastLines(text, n).split('\n').length, n)
     }
   })
 
-  it('EXCERPT_LINES je v rozumných mezích', () => {
+  it('EXCERPT_LINES stays within sane bounds', () => {
     assert.ok(EXCERPT_LINES >= 5 && EXCERPT_LINES <= 100)
   })
 })

@@ -2,12 +2,10 @@
 // Copyright (C) 2026 Simplixio — Stanislav Opletal <info@simplixio.net>
 
 /**
- * The master-password strength estimate.
- *
- * The number is shown to a person, not used as a gate — the gate is the length
- * floor, which is a fact rather than a guess. So these tests pin the ORDERING
- * (this password must not rate above that one) rather than exact bit counts,
- * which would break on any tweak to the model without meaning anything.
+ * The master-password strength estimate. The number is shown to a person, not
+ * used as a gate — the gate is the length floor. So these tests pin the
+ * ORDERING (this password must not rate above that one) rather than exact bit
+ * counts, which would break on any tweak to the model without meaning anything.
  */
 
 import { describe, test } from 'node:test'
@@ -40,8 +38,8 @@ describe('estimatePasswordStrength', () => {
   })
 
   test('a run of one character is not twelve characters of strength', () => {
-    // What people type when told to make it longer. It has to cost something
-    // here, or the meter rewards exactly the wrong instinct.
+    // What people type when told to make it longer, so it has to cost something
+    // or the meter rewards exactly the wrong instinct.
     assert.ok(
       rate('aaaaaaaaaaaaaaaa').bits < rate('kzqmwtbrxnvd').bits,
       'sixteen repeats outscored twelve unrelated letters'
@@ -58,9 +56,8 @@ describe('estimatePasswordStrength', () => {
   })
 
   test('length beats punctuation, which is the advice the hint gives', () => {
-    // The hint tells the user four or five unrelated words beat any amount of
-    // punctuation. The meter has to agree with the hint, or one of them is
-    // lying to the person reading both.
+    // The hint tells the user that four or five unrelated words beat any amount
+    // of punctuation, so the meter has to agree or one of them is lying.
     const words = 'correct horse battery staple'
     const gnarly = 'P@ssw0rd!#$'.padEnd(MIN_PASSWORD_LENGTH, '%')
     assert.ok(

@@ -10,7 +10,6 @@ import type { SessionInfo, Settings } from '@shared/types'
 import { api } from '../api'
 import { useT } from '../i18n'
 import { registerFocus, registerSelection, registerSink } from '../terminalBus'
-import { reportActivity } from '../activity'
 
 const THEME = {
   background: '#0b0e13',
@@ -51,7 +50,6 @@ export default function TerminalView({ session, settings, visible }: Props) {
   const [searchOpen, setSearchOpen] = useState(false)
   const [query, setQuery] = useState('')
 
-  // Vytvoření terminálu – jednou na relaci.
   useEffect(() => {
     if (!hostRef.current) return
 
@@ -85,12 +83,18 @@ export default function TerminalView({ session, settings, visible }: Props) {
       clear: () => term.clearSelection()
     })
 
+    /*
+      Deliberately no activity report here. `onData` fires both for typed input
+      and for replies the emulator sends on its own (CPR, device attributes,
+      DECRQM, XTWINOPS, ...), and xterm does not expose which is which, so
+      treating it as proof of a human would let a remote host defer the auto-lock
+      forever by printing `ESC [ 6 n` on a timer. Presence comes from App.tsx's
+      capture-phase DOM listeners instead.
+    */
     const dataSub = term.onData((data) => {
-      reportActivity(() => api.app.notifyActivity())
       void api.ssh.write(session.id, data)
     })
 
-    // Klávesové zkratky terminálového typu (Ctrl+Shift+C/V, Ctrl+Shift+F).
     term.attachCustomKeyEventHandler((event) => {
       if (event.type !== 'keydown') return true
       if (event.ctrlKey && event.shiftKey) {
@@ -127,11 +131,11 @@ export default function TerminalView({ session, settings, visible }: Props) {
       fitRef.current = null
       searchRef.current = null
     }
-    // Terminál se záměrně nevytváří znovu při změně nastavení – to řeší efekt níže.
+    // Deliberately not rebuilt when settings change — that would lose the
+    // scrollback; the effect below applies them to the live terminal instead.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session.id])
 
-  // Změna nastavení bez ztráty historie.
   useEffect(() => {
     const term = termRef.current
     if (!term) return
@@ -141,7 +145,6 @@ export default function TerminalView({ session, settings, visible }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings.fontSize, settings.scrollback])
 
-  // Přizpůsobení velikosti okna / panelu.
   useEffect(() => {
     if (!hostRef.current) return
     const observer = new ResizeObserver(() => {
@@ -152,7 +155,8 @@ export default function TerminalView({ session, settings, visible }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible])
 
-  // Po přepnutí na tuto záložku dopočítat rozměry a vrátit fokus.
+  // The zero timeout defers the fit past layout — measuring a panel that is
+  // still hidden yields zero and the fit is skipped.
   useEffect(() => {
     if (!visible) return
     const id = window.setTimeout(() => {
@@ -172,7 +176,7 @@ export default function TerminalView({ session, settings, visible }: Props) {
       fit.fit()
       void api.ssh.resize(session.id, term.cols, term.rows)
     } catch {
-      /* rozměry ještě nejsou k dispozici */
+      /* dimensions not available yet */
     }
   }
 
@@ -182,7 +186,7 @@ export default function TerminalView({ session, settings, visible }: Props) {
   }
 
   function onContextMenu(event: React.MouseEvent): void {
-    // Chování jako v PuTTY: pravé tlačítko vloží obsah schránky.
+    // PuTTY behaviour: the right button pastes the clipboard, no context menu.
     event.preventDefault()
     const term = termRef.current
     if (term) void pasteFromClipboard(term)

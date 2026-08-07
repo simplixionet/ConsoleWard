@@ -39,7 +39,7 @@ export function I18nProvider({
 
   const setLocale = useCallback(async (next: string) => {
     const nextDictionary = next === SOURCE_LOCALE ? SOURCE_DICTIONARY : await dictionaryFor(next)
-    // Jazyk uloží hlavní proces, aby ho znal i pro své chybové hlášky.
+    // The main process persists the locale so its own error messages match.
     await api.app.setLocale(next)
     setDictionary(nextDictionary)
     setLocaleState(next)
@@ -57,7 +57,6 @@ export function useI18n(): I18nValue {
   return ctx
 }
 
-/** Zkratka pro komponenty, které potřebují jen překládat. */
 export function useT(): Translator {
   return useI18n().t
 }

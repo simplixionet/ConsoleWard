@@ -2,21 +2,16 @@
 // Copyright (C) 2026 Simplixio — Stanislav Opletal <info@simplixio.net>
 
 /**
- * Checks the locale dictionaries on disk. Static counterpart to
- * `check-i18n-ui.mjs`: that one drives the built app, this one reads the data.
+ * Static checks over the locale dictionaries on disk. Counterpart to
+ * `check-i18n-ui.mjs`, which drives the built app.
  *
- * Four checks:
- *   D1 — the locale array holds exactly the 8 shipping codes, and a
- *        dictionary file exists for each (SC-1).
- *   D2 — key parity, plural-aware (SC-3). NOT strict equality with English:
- *        Czech correctly carries two plural keys English does not have.
- *   D3 — every {{placeholder}} in the 81 security-critical keys survives
- *        translation intact (SC-4).
- *   D4 — informational review table of the security strings that carry a
- *        negation or a limiter. Feeds the human checkpoint. Never fails.
- *
- * Exit code is 1 when D1, D2 or D3 failed. D4 never affects it — a
- * length-ratio gate that cannot fail on real data would only be noise.
+ *   D1 — LOCALES holds exactly the shipping codes, each with a dictionary file.
+ *   D2 — key parity, plural-aware: Czech correctly carries plural keys English
+ *        does not, so this is not strict equality with English.
+ *   D3 — every {{placeholder}} in the security-critical keys survives
+ *        translation intact.
+ *   D4 — informational only, never gates: no length-ratio threshold survives
+ *        contact with real data. It feeds the human checkpoint.
  */
 import { fileURLToPath } from 'node:url'
 import fs from 'node:fs'
@@ -26,17 +21,13 @@ const PROJECT_ROOT = fileURLToPath(new URL('..', import.meta.url))
 const LOCALES_DIR = path.join(PROJECT_ROOT, 'src/shared/locales')
 const I18N_SOURCE = path.join(PROJECT_ROOT, 'src/shared/i18n.ts')
 
-/** The shipping set, in the order the picker offers it (D-01). */
+/** The shipping set, in the order the picker offers it. */
 const SHIPPING = ['en', 'cs', 'de', 'es', 'fr', 'it', 'pt-BR', 'nl']
 
 /**
- * The pluralised keys in the dictionary.
- *
- * Hand-maintained on purpose: a key listed here is exempted from strict parity
- * with English, so deriving the list from whatever happens to end in `_one`
- * would let a typo'd key exempt itself. Adding a pluralised string means adding
- * it here, and D2 then insists every locale carries every category its language
- * actually uses.
+ * Hand-maintained on purpose: a listed key is exempt from strict parity with
+ * English, so deriving the list from whatever ends in `_one` lets a typo'd key
+ * exempt itself. Adding a pluralised string means adding it here.
  */
 const PLURAL_KEYS = ['term.connCount', 'term.snipCount', 'mcp.pickLines', 'mcp.pickChars']
 
@@ -63,11 +54,7 @@ function placeholders(text) {
   return [...String(text).matchAll(/\{\{(\w+)\}\}/g)].map((m) => m[1]).sort()
 }
 
-/**
- * Categories the language actually uses for integers. Derived from the
- * platform, never hand-rolled — Czech's one/few/other split is exactly what
- * hand-written ternaries get wrong.
- */
+/** Integer plural categories from the platform — Czech's one/few/other split is what hand-rolled ternaries miss. */
 function integerCategories(code) {
   const rules = new Intl.PluralRules(code)
   const seen = new Set()
@@ -78,8 +65,6 @@ function integerCategories(code) {
 function isPluralVariant(key) {
   return PLURAL_KEYS.some((base) => key.startsWith(`${base}_`))
 }
-
-/* ------------------------------------------------------------------ D1 */
 
 function checkLocaleArray() {
   const source = fs.readFileSync(I18N_SOURCE, 'utf8')
@@ -107,8 +92,6 @@ function checkLocaleArray() {
   if (ok) report('D1', null, true, `${codes.length} codes, a dictionary file for each`)
   return ok
 }
-
-/* ------------------------------------------------------------------ D2 */
 
 function checkParity(dicts) {
   // The base set excludes plural variants — those are per-language by design.
@@ -146,8 +129,6 @@ function checkParity(dicts) {
   return ok
 }
 
-/* ------------------------------------------------------------------ D3 */
-
 function securityKeys(en) {
   return Object.keys(en).filter((k) => SECURITY_NAMESPACES.some((ns) => k.startsWith(ns)))
 }
@@ -183,8 +164,6 @@ function checkPlaceholders(dicts, keys) {
   return ok
 }
 
-/* ------------------------------------------------------------------ D4 */
-
 function reviewTable(dicts, keys) {
   const flagged = keys.filter((k) => LIMITERS.test(dicts.en[k]))
 
@@ -209,8 +188,6 @@ function reviewTable(dicts, keys) {
   }
   console.log('')
 }
-
-/* ----------------------------------------------------------------- main */
 
 function main() {
   const dicts = {}

@@ -4,16 +4,11 @@
 /**
  * The MCP approval gate: the cap, the window raise, and the timeout.
  *
- * Unlike vault.test.mts and ssh.test.mts this file needs no `mock.module`.
- * `src/main/approvals.ts` has no runtime imports at all, which is the reason
- * the queue was moved out of `src/main/index.ts`: that file exports nothing
- * and calls `app.requestSingleInstanceLock()` at module scope, so none of this
- * was reachable from a test while it lived there.
- *
- * NOT covered here, and it cannot be: the 400 ms arm delay on the dialog
- * buttons (`src/renderer/src/armDelay.ts`). It needs a DOM, a React renderer
- * and real animation frames, none of which this harness has. See the manual
- * check at the bottom of this file.
+ * `src/main/approvals.ts` has no runtime imports, which is why the queue lives
+ * there rather than in `src/main/index.ts` — that file calls
+ * `app.requestSingleInstanceLock()` at module scope, so none of this would be
+ * reachable from a test. The 400 ms button arm delay needs a DOM and is not
+ * covered; see the manual check at the bottom of this file.
  */
 
 import { test, mock } from 'node:test'
@@ -26,8 +21,6 @@ import {
   MAX_PENDING_APPROVALS,
   isQueueFull
 } from '../src/main/approvals.ts'
-
-/* ------------------------------------------------------------------ nářadí */
 
 let seq = 0
 
@@ -55,7 +48,6 @@ function share(origin: ShareRequest['origin'] = 'read_terminal'): ShareRequest {
   }
 }
 
-/** Records what the queue asked the window to do, in order. */
 function spyHost() {
   const sentCommands: CommandApproval[] = []
   const sentShares: ShareRequest[] = []
@@ -78,7 +70,6 @@ function spyHost() {
   }
 }
 
-/** A bound queue plus its spy — no test wants one without the other. */
 function fresh() {
   const spy = spyHost()
   const queue = new ApprovalQueue()
@@ -87,11 +78,9 @@ function fresh() {
 }
 
 /**
- * A request that should be refused resolves to this instead of hanging.
- *
- * Without the race, a build with no cap leaves `askCommand` pending until
- * somebody answers it — so a broken cap makes these tests hang rather than go
- * red, and a hang in CI reads as a stuck runner rather than as a regression.
+ * A refused request resolves to this instead of hanging: without the race, a
+ * build with no cap leaves `askCommand` pending until somebody answers it, and
+ * a hang in CI reads as a stuck runner rather than a regression.
  */
 const ACCEPTED = Symbol('the call was admitted instead of refused')
 
@@ -101,8 +90,6 @@ function refusal<T>(call: Promise<T>): Promise<unknown> {
     new Promise((r) => setTimeout(() => r(ACCEPTED), 50))
   ])
 }
-
-/* --------------------------------------------------------------- strop */
 
 test('the request past the cap is refused and leaves no record behind', async () => {
   const { queue, spy } = fresh()
@@ -147,8 +134,8 @@ test('the share that completes an approved command is exempt from the cap', asyn
     'a full queue accepted a new read_terminal share'
   )
 
-  // The output of a command they already approved is not: their click bought
-  // that slot, and dropping it would waste an approval already given.
+  // The output of one they already approved is not: their click bought that
+  // slot, and dropping it would waste an approval already given.
   const followUp = share('command_output')
   pending.push(queue.askShare(followUp))
   assert.equal(queue.size(), MAX_PENDING_APPROVALS + 1, 'the follow-up share was refused')
@@ -159,24 +146,19 @@ test('the share that completes an approved command is exempt from the cap', asyn
   await Promise.all(pending)
 })
 
-/* ---------------------------------------------------------------- fokus */
-
 test('a dialog that overrides auto-share raises the window even mid-batch', async () => {
   const { queue, spy } = fresh()
 
-  // A command is already on screen, so the batch has had its one raise.
   const pending = [queue.askCommand(command())]
   assert.equal(spy.raises(), 1, 'the first request of a batch did not raise the window')
 
-  // Its output tripped the secret detector. The human ticked auto-share and was
-  // told they would not be asked, so a dialog left behind the terminal would be
-  // denied on their behalf by the timeout — and they would never learn a
-  // credential was about to be sent.
+  // The human ticked auto-share and was told they would not be asked, so a
+  // dialog left behind the terminal is denied by the timeout on their behalf
+  // and they never learn a credential was about to be sent.
   const forced = { ...share('command_output'), autoShareOverridden: true }
   pending.push(queue.askShare(forced))
   assert.equal(spy.raises(), 2, 'the forced dialog opened without raising the window')
 
-  // An ordinary follow-up share does not get that exemption.
   pending.push(queue.askShare(share('command_output')))
   assert.equal(spy.raises(), 2, 'an ordinary share raised the window mid-batch')
 
@@ -212,7 +194,7 @@ test('a raise needs an empty queue and a quiet window, not just an empty queue',
   await firstAnswer
   assert.equal(queue.size(), 0, 'answering did not empty the queue')
 
-  // Emptying the queue is the human clicking Deny. A client that fires again
+  // Emptying the queue is the human clicking Deny; a client that fires again
   // straight away must not get a second flashFrame out of that same click.
   mock.timers.tick(FOCUS_QUIET_MS - 1)
   const second = command()
@@ -228,8 +210,6 @@ test('a raise needs an empty queue and a quiet window, not just an empty queue',
   queue.rejectAll()
   await third
 })
-
-/* -------------------------------------------------------------- účetnictví */
 
 test('a timed-out request denies the call and hands its slot back', async (t) => {
   mock.timers.enable({ apis: ['setTimeout', 'Date'] })
@@ -273,13 +253,11 @@ test('answering the same id twice resolves once and frees exactly one slot', asy
 /*
  * Manual check for the renderer half (`useArmedAfterPaint`, 400 ms):
  *
- *  1. `npm run dev`, unlock, connect a session, enable MCP.
- *  2. Drive run_command from a client. When the dialog appears, "Run the
- *     command" must be visibly dimmed (`.btn:disabled`, opacity 0.45) and must
- *     not respond to a click or to Enter for the first ~400 ms.
- *  3. Deny it and immediately fire a second run_command: the second dialog
- *     must arrive unarmed too, so a double-click on Deny cannot approve it.
- *  4. Minimise the window while a dialog is up, restore it: the button must be
- *     unarmed again for 400 ms after it becomes visible.
+ *  1. Drive run_command from a client. "Run the command" must be visibly
+ *     dimmed and must ignore a click or Enter for the first ~400 ms.
+ *  2. Deny it and immediately fire a second run_command: the second dialog must
+ *     arrive unarmed too, so a double-click on Deny cannot approve it.
+ *  3. Minimise the window while a dialog is up and restore it: the button must
+ *     be unarmed again for 400 ms after it becomes visible.
  */
 

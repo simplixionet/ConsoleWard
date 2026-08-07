@@ -7,16 +7,15 @@ import { api, errorMessage, unwrap } from '../api'
 import { useT } from '../i18n'
 
 interface Props {
-  /** null = nové připojení */
+  /** null = new connection */
   connection: ConnectionMeta | null
   onSaved: (saved: ConnectionMeta) => void
   onCancel: () => void
 }
 
 /**
- * Tajemství se do rendereru nikdy neposílají. Pole jsou proto prázdná a
- * odesílají se jen tehdy, když je uživatel skutečně vyplní:
- *   nedotčeno → undefined (ponechat), vymazáno tlačítkem → '' (smazat)
+ * Secrets are never sent to the renderer, so the fields start out empty and are
+ * submitted only when the user actually fills them in.
  */
 export default function ConnectionEditor({ connection, onSaved, onCancel }: Props) {
   const t = useT()
@@ -47,7 +46,7 @@ export default function ConnectionEditor({ connection, onSaved, onCancel }: Prop
   const keptKey = !isNew && connection.hasPrivateKey && !clearKey && !privateKey
   const keptPassphrase = !isNew && connection.hasPassphrase && !clearPassphrase && !passphrase
 
-  /** undefined = beze změny, '' = smazat, jinak nová hodnota */
+  /** undefined = leave unchanged, '' = delete, anything else = the new value */
   function secret(value: string, clear: boolean): string | undefined {
     if (value) return value
     if (clear) return ''

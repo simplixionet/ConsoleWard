@@ -2,35 +2,19 @@
 // Copyright (C) 2026 Simplixio — Stanislav Opletal <info@simplixio.net>
 
 /**
- * Šifrovaný trezor s obálkovým šifrováním (envelope encryption).
+ * Encrypted vault, envelope encryption. A random 32-byte data key (DEK)
+ * encrypts the contents and is stored once per unlock secret, wrapped under
+ * scrypt(secret, salt), so a password change or a recovery only rewraps it.
  *
- * Obsah trezoru šifruje náhodný **datový klíč (DEK)**, 32 B z CSPRNG.
- * Ten je v souboru uložený vícekrát – pokaždé zabalený jiným klíčem:
+ * File: { version: 3, cipher, counter, iv, tag, data, wraps: [...] }. The
+ * header is readable but not freely editable — `version`, `cipher`, `counter`
+ * and every wrap field go into GCM as AAD (see `headerAad`), so swapping,
+ * removing or splicing wraps breaks the tag on the body. `counter` rises with
+ * every write, but a whole older copy carries a valid, lower one, so the last
+ * seen value lives out of band in `vault.guard` (see `vaultGuard.ts`).
  *
- *   wrap[password] = AES-GCM(DEK, scrypt(hlavní heslo, salt₁))
- *   wrap[recovery] = AES-GCM(DEK, scrypt(obnovovací klíč, salt₂))
- *
- * Odemknout jde kterýmkoli z nich. Díky tomu:
- *  - změna hesla i obnova jen přebalí DEK, obsah se nešifruje znovu
- *  - zapomenuté heslo lze resetovat obnovovacím klíčem
- *
- * Formát souboru (JSON, čitelná hlavička + zašifrovaný obsah):
- *   { version: 3, cipher, counter, iv, tag, data, wraps: [...] }
- *
- * Hlavička je čitelná, ale ne volně měnitelná: `version`, `cipher`, `counter`
- * a všechna pole všech wrapů jdou do GCM jako AAD (viz `headerAad`). Kdo do
- * souboru zapíše, tím pádem nemůže vyndat password wrap, podstrčit cizí
- * recovery wrap ani splácnout wrapy ze starší kopie — tag na těle přestane
- * sedět a trezor se neotevře.
- *
- * `counter` roste s každým zápisem a AAD ho chrání před přepsáním. To samo
- * o sobě nepozná podstrčení **celé starší kopie** souboru — ta má svůj čítač
- * taky platný, jen menší. Poslední viděná hodnota proto leží mimo tenhle
- * soubor, v `vault.guard` (viz `vaultGuard.ts`), a porovnává se při odemčení.
- *
- * Starší formáty se při odemčení převedou na verzi 3:
- *   verze 1 – klíč odvozený přímo z hesla, bez DEK a bez wrapů
- *   verze 2 – DEK a wrapy jako dnes, ale hlavička nesvázaná s tělem
+ * v1 (key straight from the password, no DEK) and v2 (no header binding) are
+ * read and migrated to v3 on unlock.
  */
 
 import { app } from 'electron'
@@ -60,42 +44,22 @@ const scryptAsync = promisify(scrypt) as (
 ) => Promise<Buffer>
 
 const KDF_PARAMS = { N: 1 << 17, r: 8, p: 1, keylen: 32 }
-// scrypt potřebuje ~128 * N * r bajtů; Node má výchozí strop 32 MB, zvedáme ho.
+// scrypt needs ~128 * N * r bytes; Node's default 32 MB ceiling is too low for ours.
 const MAXMEM = 320 * 1024 * 1024
 
 /**
- * What `assertKdf` accepts out of a vault file.
- *
- * Deliberately **not** derived from `KDF_PARAMS`. Raising the cost of new
- * vaults must never lock anyone out of a vault sealed under the old cost, so
- * this is the record of what has actually been written, and it only widens.
- * Every version of this project wrote `N = 1 << 17, r = 8, p = 1, keylen = 32`
- * and a 32-byte salt, so the historical set is a single point today.
- *
- * `maxN` is the largest N that fits in `MAXMEM` (128 * r * (N + p + 2)) — raise
- * the two together, or newly written vaults start reading as corrupt.
+ * What `assertKdf` accepts. Deliberately **not** derived from `KDF_PARAMS`:
+ * raising the cost for new vaults must not lock anyone out of one sealed under
+ * the old cost, so this records what was written and may only widen. `maxN` is
+ * the largest N that fits in `MAXMEM` (128 * r * (N + p + 2)); raise both.
  */
 const KDF_ACCEPTED = { minN: 1 << 17, maxN: 1 << 18, r: 8, p: 1, keylen: 32, minSaltBytes: 16 }
 
-/** Aktuální formát souboru. Verze 1 a 2 se umí přečíst a při odemčení převést sem. */
 const VAULT_VERSION = 3 as const
 
-/**
- * Penalty after the first wrong password, doubling with each further one.
- *
- * Small enough that a human who mistyped once notices nothing — scrypt already
- * costs longer than this — and large enough that it compounds fast.
- */
+/** Penalty after the first wrong password, doubling with each further one. */
 const UNLOCK_BASE_DELAY_MS = 250
 
-/**
- * Ceiling on that penalty.
- *
- * Five seconds is an obstacle to a script and a nuisance to a person, which is
- * the right way round: someone who genuinely forgot their password has the
- * recovery key, and someone guessing has to spend five seconds per attempt for
- * as long as they keep going.
- */
 const UNLOCK_MAX_DELAY_MS = 5_000
 
 type WrapType = 'password' | 'recovery'
@@ -109,7 +73,6 @@ interface KdfSpec {
   keylen: number
 }
 
-/** Datový klíč zabalený jedním přihlašovacím tajemstvím. */
 interface KeyWrap {
   type: WrapType
   kdf: KdfSpec
@@ -139,7 +102,7 @@ interface VaultFileV2 {
 interface VaultFileV3 {
   version: 3
   cipher: 'aes-256-gcm'
-  /** Roste s každým zápisem. Chrání ho AAD, porovnává ho `vaultGuard`. */
+  /** Rises with every write. AAD protects it; `vaultGuard` compares it. */
   counter: number
   iv: string
   tag: string
@@ -152,9 +115,9 @@ export interface VaultData {
   knownHosts: KnownHost[]
   snippets: Snippet[]
   settings: Settings
-  /** Bearer token pro lokální MCP server. */
+  /** Bearer token for the local MCP server. */
   mcpToken?: string
-  /** Šifrovaný spolu se zbytkem trezoru; rezervováno pro 2. fázi. */
+  /** Encrypted along with the rest of the vault; reserved for phase 2. */
   aiApiKey?: string
 }
 
@@ -162,7 +125,7 @@ function emptyData(): VaultData {
   return { connections: [], knownHosts: [], snippets: [], settings: { ...DEFAULT_SETTINGS } }
 }
 
-/** Doplní chybějící kolekce – trezory z dřívějších verzí je nemusí mít. */
+/** Fills in missing collections — vaults from earlier versions may not have them. */
 function normalizeData(parsed: Partial<VaultData>): VaultData {
   return {
     connections: parsed.connections ?? [],
@@ -174,26 +137,22 @@ function normalizeData(parsed: Partial<VaultData>): VaultData {
   }
 }
 
-/* ------------------------------------------------------- obnovovací klíč */
+/* ----------------------------------------------------------- recovery key */
 
-/**
- * Crockford Base32 – bez písmen I, L, O a U, aby nešlo splést znaky
- * při ručním přepisu. 30 znaků = 150 bitů entropie.
- */
+/** Crockford Base32 – no I, L, O or U, so hand transcription cannot slip. 150 bits. */
 const RECOVERY_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
 const RECOVERY_LENGTH = 30
 const RECOVERY_GROUP = 5
 
-/** Vygeneruje nový obnovovací klíč ve tvaru `XXXXX-XXXXX-…` (6 skupin). */
 export function generateRecoveryKey(): string {
   const bytes = randomBytes(RECOVERY_LENGTH)
   let raw = ''
-  // 256 = 8 × 32, takže maskování na 5 bitů je rovnoměrné (bez zkreslení).
+  // 256 = 8 × 32, so masking down to 5 bits stays uniform (no modulo bias).
   for (let i = 0; i < RECOVERY_LENGTH; i++) raw += RECOVERY_ALPHABET[bytes[i] & 31]
   return raw.match(new RegExp(`.{1,${RECOVERY_GROUP}}`, 'g'))!.join('-')
 }
 
-/** Sjednotí zápis klíče: velká písmena, bez oddělovačů, záměny O/0 a I/L/1. */
+/** Canonicalises a key: upper case, no separators, O→0 and I/L→1. */
 export function normalizeRecoveryKey(input: string): string {
   const cleaned = String(input ?? '')
     .toUpperCase()
@@ -215,24 +174,16 @@ export function normalizeRecoveryKey(input: string): string {
   return cleaned
 }
 
-/* ------------------------------------------------------------- balení DEK */
+/* ----------------------------------------------------------- DEK wrapping */
 
 /**
- * Rejects KDF parameters that this application did not write.
- *
- * `deriveKek` feeds N, r, p and keylen from the file straight into scrypt, so
- * whoever can write `vault.enc` picks the cost. `maxmem` is a far weaker guard
- * than it looks: it bounds 128 * r * (N + p + 2), which at our N and r still
- * admits `p = 196606`. Measured at ~146 ms per unit of p, that is about eight
- * hours of one libuv threadpool thread for a single unlock, and the pool has
- * four — every `fsp.*` call in the application queues behind them. `keylen` is
- * not bounded by `maxmem` at all: `keylen: 1_000_000_000` is accepted and
- * allocates a gigabyte. And nothing sets a floor, so N could read 1024.
- *
- * Checked here rather than in `openWrap` because `unlockLegacy` reaches
- * `deriveKek` without passing through it, and because all five `openWrap`
- * callers wrap it in a `catch {}` that rewrites every throw into "wrong
- * password" — the user would be blamed for a file that is malformed.
+ * Rejects KDF parameters this application did not write. `deriveKek` feeds N,
+ * r, p and keylen from the file straight into scrypt, so whoever can write
+ * `vault.enc` picks the cost, and `maxmem` bounds neither `keylen` nor `p`
+ * usefully — it still admits `p = 196606`, hours of a libuv threadpool thread
+ * per unlock. Must run before any key is derived. Not in `openWrap`, because
+ * `unlockLegacy` bypasses that and every caller of it rewrites throws into
+ * "wrong password", blaming the user for a malformed file.
  */
 function assertKdf(kdf: unknown): void {
   const k = (kdf ?? {}) as Record<string, unknown>
@@ -289,7 +240,7 @@ async function makeWrap(type: WrapType, secret: string, dek: Buffer): Promise<Ke
   }
 }
 
-/** Rozbalí DEK. Vyhodí výjimku, pokud tajemství nesedí (ověřuje GCM tag). */
+/** Unwraps the DEK. Throws if the secret is wrong — the GCM tag decides. */
 async function openWrap(wrap: KeyWrap, secret: string): Promise<Buffer> {
   const salt = Buffer.from(wrap.kdf.salt, 'base64')
   const kek = await deriveKek(secret, salt, wrap.kdf)
@@ -305,19 +256,16 @@ async function openWrap(wrap: KeyWrap, secret: string): Promise<Buffer> {
   }
 }
 
-/* --------------------------------------------- autentizovaná hlavička (AAD) */
+/* --------------------------------------------- authenticated header (AAD) */
 
 /**
- * Doménová předpona serializace.
- *
- * Bez ní by stačilo, aby nějaký jiný formát náhodou vyprodukoval tytéž bajty,
- * a tag by ověřil hlavičku, kterou nikdo nezamýšlel. Číslo na konci je verze
- * *kódování*, ne verze souboru — kdyby se pořadí polí někdy měnilo, změní se
- * i tahle konstanta.
+ * Domain prefix: without it another format could produce the same bytes and the
+ * tag would authenticate a header nobody intended. The trailing number versions
+ * the *encoding*, not the file — change the field order, change it too.
  */
 const AAD_MAGIC = Buffer.from('consoleward.vault.aad.1', 'ascii')
 
-/** `délka || obsah`. Rámování je jediné, co brání záměně `ab|c` za `a|bc`. */
+/** `length || body`. The framing is the only thing stopping `ab|c` reading as `a|bc`. */
 function frame(value: string): Buffer {
   const body = Buffer.from(value, 'utf8')
   const header = Buffer.alloc(4)
@@ -338,23 +286,16 @@ function u64(value: number): Buffer {
 }
 
 /**
- * Kanonická podoba hlavičky, kterou přes `setAAD()` svážeme s tělem.
+ * Canonical header form, bound to the body through `setAAD()`. Covers
+ * `version`, `cipher`, `counter` and **every** field of **every** wrap, in file
+ * order; GCM already covers the body's `iv`, `tag` and `data`.
  *
- * Pokrývá `version`, `cipher`, `counter` a **všechna** pole **všech** wrapů
- * v tom pořadí, v jakém leží v souboru. Nepokrývá `iv`, `tag` a `data` těla:
- * `tag` je výstup právě počítané operace, `iv` vstupuje do GCM zvlášť a jeho
- * záměna rozbije tag sama o sobě, a `data` autentizuje GCM z definice.
- *
- * Proč ne `JSON.stringify`: pořadí klíčů v souboru si diktuje ten, kdo ho
- * napsal, takže dva soubory se stejným významem by daly různé AAD a trezor by
- * se po ručním přeformátování neotevřel. Tady je pořadí polí pevné a každý
- * proměnlivě dlouhý úsek nese svou délku před sebou; počet wrapů je zapsaný
- * před nimi. Díky tomu neexistují dvě různé hlavičky se stejnými bajty.
- *
- * Wrapy vlastní AAD nedostávají. Bylo by to kruhové — tag wrapu je součástí
- * téhle serializace — a hlavně by to zabilo migraci z v2: obnovovací wrap se dá
- * postavit znovu jen s obnovovacím klíčem v plaintextu, který nikde není.
- * Vazba tělo → všechna pole wrapů je ta, na které záleží.
+ * Not `JSON.stringify`: key order is the writer's choice, so a reformatted file
+ * would yield different AAD and stop opening. Here the field order is fixed,
+ * every variable-length run is length-prefixed and the wrap count precedes the
+ * wraps, so no two distinct headers share the same bytes. Wraps get no AAD of
+ * their own — it would be circular, and rebuilding a recovery wrap would need
+ * the plaintext recovery key, which is stored nowhere.
  */
 function headerAad(header: {
   version: number
@@ -387,13 +328,10 @@ function headerAad(header: {
 }
 
 /**
- * Ověří, že hlavička v3 jde vůbec zakódovat do AAD.
- *
- * KDF parametry řeší `assertKdf`, který běží dřív a je přísnější, než by tady
- * dávalo smysl. Zbývá čítač a ta pole wrapu, která jdou do `headerAad()` jako
- * rámované řetězce — bez téhle kontroly by `writeBigUInt64BE(BigInt(1.5))` nebo
- * `Buffer.from(null)` shodily odemykací obrazovku syrovým RangeError/TypeError
- * místo přeložené hlášky.
+ * Verifies a v3 header can be encoded into AAD at all (`assertKdf` covers the
+ * KDF fields earlier). Without it, `writeBigUInt64BE(BigInt(1.5))` or
+ * `Buffer.from(null)` drops a raw RangeError on the unlock screen instead of a
+ * translated message.
  */
 function assertHeaderShape(file: VaultFileV3): void {
   if (!Number.isSafeInteger(file.counter) || file.counter < 0) {
@@ -409,14 +347,12 @@ function assertHeaderShape(file: VaultFileV3): void {
   }
 }
 
-/* -------------------------------------------------------------- trezor */
+/* ------------------------------------------------------------------ vault */
 
 /**
- * Pečetidlo, které nic neumí — stav stroje bez platformního trezoru hesel.
- *
- * `seal` a `open` vyhazují schválně: kdyby vracely vstup beze změny, kotva by
- * se tvářila jako zapečetěná, aniž by byla. Nedostupnost se hlásí přes
- * `available()`, ne mlčky.
+ * The state on a machine with no platform keychain. `seal` and `open` throw on
+ * purpose: returning the input unchanged would make the anchor look sealed when
+ * it is not. Unavailability is reported through `available()`, never silently.
  */
 const NO_SEALER: GuardSealer = {
   available: () => false,
@@ -432,26 +368,23 @@ class Vault {
   private dek: Buffer | null = null
   private wraps: KeyWrap[] = []
   private data: VaultData | null = null
-  /** Poslední číslo zápisu, které jsme viděli nebo zapsali. Nula = zatím žádné. */
+  /** Last write number seen or written. Zero means none yet. */
   private counter = 0
-  /** Konec fronty zápisů; viz `enqueueWrite`. */
+  /** Tail of the write queue; see `enqueueWrite`. */
   private writes: Promise<unknown> = Promise.resolve()
-  /** Kolik pokusů o odemčení po sobě selhalo; viz `awaitUnlockSlot`. */
+  /** Consecutive failed unlock attempts; see `awaitUnlockSlot`. */
   private failedUnlocks = 0
-  /** Konec fronty pokusů o odemčení; viz `awaitUnlockSlot`. */
+  /** Tail of the unlock attempt queue; see `awaitUnlockSlot`. */
   private unlocks: Promise<unknown> = Promise.resolve()
 
   /**
-   * Pečetidlo kotvy. Instaluje ho `index.ts`, protože `safeStorage` se sem
-   * importovat nesmí: testovací soubory stubují z Electronu jen `app` a
-   * chybějící pojmenovaný export je shodí už při načtení, ne v jednom testu.
-   *
-   * Výchozí „žádné" je zároveň to, co běží na Linuxu bez keyringu — kotva se
-   * pak zapisuje jako prostý text a přizná to.
+   * Installed by `index.ts`: importing `safeStorage` here would break tests that
+   * stub only `app` out of Electron. The "none" default is also Linux without a
+   * keyring — the anchor is then written in the clear and says so.
    */
   private sealer: GuardSealer = NO_SEALER
 
-  /** Verdikt z poslední kotvy. Platí až po odemčení; `lock()` ho ruší. */
+  /** Verdict from the last anchor. Meaningful only after unlock; `lock()` clears it. */
   private guard: GuardVerdict = { kind: 'unknown' }
 
   get filePath(): string {
@@ -462,7 +395,7 @@ class Vault {
     return this.filePath + '.bak'
   }
 
-  /** Kotva je sourozenec trezoru, ne jeho přípona – kopie profilu vezme obojí. */
+  /** The anchor is a sibling of the vault, not a suffix — a profile copy takes both. */
   private get guardPath(): string {
     return path.join(app.getPath('userData'), 'vault.guard')
   }
@@ -472,11 +405,8 @@ class Vault {
   }
 
   /**
-   * Co kotva říká o souboru, který je právě otevřený.
-   *
-   * `unknown`, dokud se neodemklo — hlavička je sice čitelná i bez hesla, ale
-   * tvrdit něco o souboru, který se ani nepovedlo rozšifrovat, by znamenalo
-   * varovat u každého překlepu v hesle.
+   * `unknown` until an unlock succeeds — judging a file that could not be
+   * decrypted would mean warning on every password typo.
    */
   get rollback(): GuardVerdict {
     return this.guard
@@ -494,10 +424,7 @@ class Vault {
     return this.wraps.some((w) => w.type === 'recovery')
   }
 
-  /**
-   * Zjistí z hlavičky souboru, jestli je nastavený obnovovací klíč.
-   * Funguje i se zamčeným trezorem – hlavička není šifrovaná.
-   */
+  /** Reads it out of the file header, so it works on a locked vault too. */
   async hasRecoveryOnDisk(): Promise<boolean> {
     if (!this.exists()) return false
     try {
@@ -510,7 +437,7 @@ class Vault {
     }
   }
 
-  /** Založí nový trezor a rovnou vygeneruje obnovovací klíč, který vrátí. */
+  /** Returns the recovery key generated for the new vault. */
   async create(masterPassword: string): Promise<string> {
     if (this.exists()) throw appError('error.vaultExists')
     validatePassword(masterPassword)
@@ -522,24 +449,17 @@ class Vault {
     this.data = emptyData()
     this.counter = 0
     /*
-     * Zakládá se nový trezor, takže kotva po tom předchozím na stejné cestě je
-     * bezpředmětná — porovnávat proti ní by hlásilo vrácení souboru pokaždé,
-     * když si někdo trezor smaže a založí znovu. `persist` níž ji stejně
-     * přepíše; tohle jen říká, že se o ní vědomě nesoudí.
+     * A new vault: an anchor from a previous one at this path would report a
+     * rollback after every delete-and-recreate. `persist` overwrites it below.
      */
     this.guard = { kind: 'unknown' }
     this.wraps = [
       await makeWrap('password', masterPassword, dek),
       await makeWrap('recovery', normalizeRecoveryKey(recoveryKey), dek)
     ]
-    // Same guard as the v2 migration in `unlock`, and for the same reason: the
-    // three assignments above already made `isUnlocked()` true, so a failed
-    // write would report an error to the renderer while leaving the main
-    // process holding an open vault that `requireUnlockedPublic()` waves
-    // through. Worse here than there — the file does not exist at all, so the
-    // caller never receives the recovery key, and any later `mutate()` that
-    // succeeded would materialise a vault whose recovery wrap opens with a key
-    // nobody was ever shown.
+    // The assignments above already made `isUnlocked()` true, so a failed write
+    // would leave the main process holding an open vault behind an error screen,
+    // and the caller would never receive the recovery key for it.
     try {
       await this.persist(this.data!)
     } catch (err) {
@@ -575,25 +495,17 @@ class Vault {
     this.failedUnlocks = 0
     this.adopt(file, dek)
     /*
-     * Před migrací níž, jinak si verdikt přepíše její vlastní zápis.
-     *
-     * Nula pro v2 není náhradní hodnota, ale správná odpověď: kotva vznikne až
-     * prvním v3 zápisem, takže v2 soubor vedle kotvy je sestup na starší
-     * formát — přesně to vrácení, které se hledá.
+     * Before the migration below, or its own write overwrites the verdict. Zero
+     * for v2 is correct, not a fallback: the anchor first appears with a v3
+     * write, so a v2 file next to an anchor is the descent being looked for.
      */
     this.guard = await this.readAnchor(this.counter)
 
-    // Migrace v2 → v3. Přepsat soubor jde až teď, kdy je DEK v ruce. DEK ani
-    // wrapy se nemění: obnovovací wrap by šlo postavit znovu jen s obnovovacím
-    // klíčem v plaintextu, který se nikde neukládá, takže rotace by uživateli
-    // tiše zabila klíč, který má opsaný na papíře. Mění se jen tělo — nově
-    // zapečetěné s AAD nad hlavičkou.
-    //
-    // Když zápis selže (profil jen pro čtení, plný disk), je nutné se zamknout.
-    // `adopt()` už nastavil `dek`, `wraps` i `data`, takže bez tohohle by
-    // `unlock()` volajícímu ohlásil chybu, renderer zůstal na zamykací
-    // obrazovce — a `vault.isUnlocked()` by v hlavním procesu bylo `true`,
-    // což je přesně ten predikát, na kterém visí SSH i MCP.
+    // v2 → v3: only the body changes, resealed with AAD over the header. The DEK
+    // and wraps stay, because rebuilding the recovery wrap would need the
+    // plaintext recovery key, which is stored nowhere. A failed write must lock —
+    // `adopt()` has already set `dek`, `wraps` and `data`, so `isUnlocked()`
+    // would stay true behind the lock screen, and SSH and MCP both hang on it.
     if (file.version === 2) {
       try {
         await this.persist(this.data!)
@@ -605,10 +517,7 @@ class Vault {
     }
   }
 
-  /**
-   * Odemkne obnovovacím klíčem a rovnou nastaví nové hlavní heslo.
-   * Bez nastavení nového hesla by trezor zůstal přístupný jen přes obnovu.
-   */
+  /** Unlocks with the recovery key and sets a new master password in one step. */
   async unlockWithRecovery(recoveryKey: string, newPassword: string): Promise<string> {
     const normalized = normalizeRecoveryKey(recoveryKey)
     validatePassword(newPassword)
@@ -630,26 +539,17 @@ class Vault {
 
     this.adopt(file, dek)
     /*
-     * I obnova obnovovacím klíčem musí verdikt zjistit, a to PŘED `reseal`
-     * níž. Kdo se zotavuje do podstrčeného staršího souboru, je ten, kdo se to
-     * potřebuje dozvědět nejvíc — a bez tohohle by to byla jediná cesta do
-     * trezoru, která kotvu přeskočí.
+     * Before `reseal` below, and required: recovery would otherwise be the one
+     * way into the vault that skips the anchor.
      */
     this.guard = await this.readAnchor(this.counter)
     validatePassword(newPassword)
 
-    // Obnova je ze své podstaty reakce na kompromitaci nebo ztrátu, takže
-    // rotuje DEK. Použitý obnovovací klíč tím přestane platit — kdo by ho měl,
-    // po tomhle už dovnitř nevidí — a uživatel dostane nový.
+    // Recovery answers compromise, so it rotates the DEK: the key just used dies.
     const freshRecoveryKey = generateRecoveryKey()
     /*
-     * Stejná pojistka jako v `create()` a v migraci v2→v3, a ze stejného
-     * důvodu: `adopt()` výš už nastavil `dek`, `wraps` i `data`, takže
-     * `isUnlocked()` je od té chvíle `true`. Kdyby `reseal` selhal (profil jen
-     * pro čtení, plný disk), volající dostane chybu, renderer zůstane na
-     * zamykací obrazovce — a hlavní proces by měl odemčeno. Na `isUnlocked()`
-     * visí SSH i MCP, takže by za zamčenou obrazovkou zůstal otevřený trezor
-     * bez běžícího odpočtu automatického zamčení.
+     * As in `create()`: `adopt()` already made `isUnlocked()` true, so a failed
+     * `reseal` leaves an open vault behind the lock screen, un-auto-locked.
      */
     try {
       await this.reseal([
@@ -669,23 +569,17 @@ class Vault {
     this.data = null
     this.wraps = []
     this.counter = 0
-    // Verdikt patří k otevřenému souboru. Nechat ho tu by znamenalo, že po
-    // zamčení a odemčení jiného trezoru svítí varování o tom předchozím.
+    // Belongs to the file that was open; otherwise a warning about the previous
+    // vault would light up after unlocking a different one.
     this.guard = { kind: 'unknown' }
   }
 
   /**
-   * Změní hlavní heslo a **rotuje datový klíč**.
-   *
-   * Vrací nový obnovovací klíč, pokud trezor nějaký měl. To je nevyhnutelný
-   * důsledek rotace: starý obnovovací wrap by se musel postavit pod novým DEK,
-   * a k tomu je potřeba obnovovací klíč v plaintextu — ten se ale nikde
-   * neukládá, což je celý smysl jeho návrhu. Buď tedy rotace, nebo tichá
-   * nemožnost odvolání; volba padla na rotaci.
-   *
-   * Volající **musí** vrácený klíč uživateli zobrazit. Zahození návratové
-   * hodnoty znamená, že uživatel přijde o jedinou záchranu pro zapomenuté
-   * heslo, aniž by se to dozvěděl.
+   * Changes the master password and **rotates the data key**. Returns a new
+   * recovery key if the vault had one — rotation forces that, since rebuilding
+   * the old recovery wrap would need the plaintext recovery key. The caller
+   * **must** show it to the user; discarding it silently costs them the only way
+   * back from a forgotten password.
    */
   async changePassword(oldPw: string, newPw: string): Promise<string | null> {
     this.requireUnlocked()
@@ -715,30 +609,15 @@ class Vault {
     return recoveryKey
   }
 
-  /**
-   * Vygeneruje nový obnovovací klíč a nahradí jím starý wrap.
-   *
-   * POZOR — starý klíč tím **nepřestává platit**. Datový klíč (DEK) se
-   * nerotuje, a `persist()` před každým zápisem zkopíruje současný
-   * `vault.enc` do `vault.enc.bak`. Ten `.bak` tedy obsahuje wrap otevřený
-   * starým klíčem, ten wrap vydá tentýž DEK, a ten DEK dešifruje i všechny
-   * *budoucí* verze trezoru. Totéž platí pro `changePassword` a
-   * `removeRecoveryKey`.
-   *
-   * Předchozí znění tohoto komentáře tvrdilo, že starý klíč okamžitě přestane
-   * platit. Nebyla to pravda a nikdo si toho nevšiml, protože komentář zněl
-   * jako záruka. Skutečná revokace vyžaduje rotaci DEK a přešifrování obsahu.
-   */
+  /** Issues a new recovery key. `reseal` rotates the DEK, so the old one stops working. */
   async regenerateRecoveryKey(password: string): Promise<string> {
     this.requireUnlocked()
     const wrap = this.wraps.find((w) => w.type === 'password')
     if (!wrap) throw appError('error.noPasswordSet')
 
-    // Heslo je tu povinné ze dvou důvodů. Jednak ho rotace DEK potřebuje, aby
-    // šel postavit nový wrap. Jednak bez něj stačily dvě minuty u odemčené
-    // relace na vygenerování 150bitového klíče, který trezor otevírá navždy a
-    // jde zkopírovat do schránky nebo do souboru — `changePassword` staré heslo
-    // vyžadoval, tahle operace ne, a přitom je stejně mocná.
+    // Required, and not only because the rotation needs it to build the new
+    // password wrap: without a check, two minutes at an unlocked session yields
+    // a 150-bit key that opens the vault forever and can be copied out.
     try {
       const check = await openWrap(wrap, password)
       check.fill(0)
@@ -754,23 +633,13 @@ class Vault {
     return recoveryKey
   }
 
-  /**
-   * Zruší možnost obnovy. Pak už zapomenuté heslo znamená ztrátu dat.
-   *
-   * Rotuje DEK, takže odvolaný klíč skutečně přestane platit — dřív zůstal
-   * použitelný přes `.bak` navždy.
-   */
+  /** Removes the recovery option, rotating the DEK so the revoked key really dies. */
   async removeRecoveryKey(password: string): Promise<void> {
     this.requireUnlocked()
     const wrap = this.wraps.find((w) => w.type === 'password')
-    // Unreachable today, and kept anyway. Every path to an unlocked vault
-    // installs a password wrap — `create` writes one, `unlock` refuses a file
-    // without one (`error.noPasswordSet`), `unlockLegacy` builds one, and
-    // `reseal` rejects a secret list that has none — so no public API can
-    // produce the state this guards against. It stays because it is an
-    // invariant assertion, not a user-facing error: the day one of those four
-    // paths changes, this is a translated message rather than a TypeError
-    // thrown out of `openWrap(undefined, …)` in the middle of a rotation.
+    // Unreachable today: every path to an unlocked vault installs a password
+    // wrap. Kept as an invariant assertion — if that ever changes, this is a
+    // translated message rather than a TypeError in the middle of a rotation.
     if (!wrap) throw appError('error.lastUnlockMethod')
 
     try {
@@ -789,43 +658,25 @@ class Vault {
   }
 
   /**
-   * Provede změnu nad daty a uloží je.
-   *
-   * Změna se dělá nad **kopií**. Do `this.data` se překlopí až po úspěšném
-   * zápisu, takže selhání zápisu (plný disk, profil jen pro čtení, obsazená
-   * `.tmp`) nenechá v paměti stav, který na disku není. Dřív se měnil živý
-   * objekt a zápis přišel po něm: `conn:save` ohlásil rendereru chybu, ale
-   * připojení v paměti zůstalo a první další úspěšný zápis ho tiše uložil.
-   * Nejhůř to dopadalo u `verifyHostKey`: uživatel dostal chybu, otisk se
-   * neuložil — a přesto ho zbytek běhu aplikace považoval za důvěryhodný.
-   *
-   * `structuredClone` stačí — `VaultData` je čisté JSON (řetězce, čísla,
-   * booleany, pole). Kopie stojí zlomek toho, co zápis hned za ní.
-   *
-   * Vedlejší efekt, který stojí za to mít: když `fn` uprostřed vyhodí výjimku,
-   * rozdělaná změna zmizí s kopií. Předtím zůstala v živých datech.
+   * Applies a change to the data and stores it. The change runs on a **copy**
+   * and only lands in `this.data` after the write succeeds, so a failed write
+   * never leaves memory holding state that is not on disk — the bug that let
+   * `verifyHostKey` report an error and still trust the fingerprint for the rest
+   * of the run.
    */
   async mutate<T>(fn: (data: VaultData) => T): Promise<T> {
     this.requireUnlocked()
     return this.enqueueWrite(async () => {
-      // Znovu: mezi zařazením a během fronty se trezor mohl zamknout.
+      // Again: the vault can be locked between queueing and running.
       this.requireUnlocked()
       const draft = structuredClone(this.data!)
       const result = fn(draft)
       await this.writeSealed(draft)
-      // And once more, because `writeSealed` awaits four filesystem calls and
-      // `lock()` is synchronous: an auto-lock, or the user locking by hand, can
-      // land in the middle of the write.
-      //
-      // This does NOT reopen the vault — `isUnlocked()` also tests `dek`, which
-      // `lock()` nulls and nothing here restores. What it did was reattach the
-      // decrypted `VaultData` to the instance, and dropping that object is half
-      // of what `lock()` is for: every stored password, private key and
-      // passphrase stayed resident afterwards, in a process that had been told
-      // to forget them.
-      //
-      // The bytes on disk are right either way — the write finished — so there
-      // is nothing to roll back here, only a state not to restore.
+      // `writeSealed` awaits four filesystem calls and `lock()` is synchronous,
+      // so a lock can land mid-write. This does NOT reopen the vault (`dek` is
+      // still null); it reattaches the decrypted `VaultData`, and dropping that
+      // object is half of what `lock()` is for. Disk is correct either way, so
+      // there is nothing to roll back — only a state not to restore.
       if (this.dek === null) throw appError('error.vaultLocked')
       this.data = draft
       return result
@@ -833,39 +684,12 @@ class Vault {
   }
 
   /**
-   * Waits out the penalty earned by previous wrong passwords.
-   *
-   * scrypt at N = 2^17 already costs ~160 ms, which bounds an online guess at
-   * roughly six a second — enough against a person typing, useless against
-   * anything scripted against the IPC channel, and that channel is reachable
-   * from the lock screen without any secret at all.
-   *
-   * The delay is exponential in the number of consecutive failures and capped,
-   * so a human who mistypes twice waits a quarter of a second while a run of a
-   * thousand guesses waits `UNLOCK_MAX_DELAY_MS` for every one of them. It is
-   * deliberately in memory and not in the file: this raises the cost of guessing
-   * at a running app, which is what a lock screen is for. Someone who can copy
-   * `vault.enc` attacks it offline where no counter of ours applies, and
-   * persisting the count would hand them a way to lock the owner out by editing
-   * it.
-   *
-   * The counter resets on success, and `lock()` deliberately does NOT reset it —
-   * otherwise the way past the throttle would be to lock and try again.
-   */
-  /**
-   * One unlock attempt at a time, whatever the caller does.
-   *
-   * The delay alone is not a throttle. Fifty concurrent calls read the same
-   * `failedUnlocks`, sleep the same interval simultaneously, and reach scrypt
-   * together — fifty guesses for the price of one delay, and the counter only
-   * rises once because each of them read it before any of them failed. Nothing
-   * upstream imposes order: `ipcMain.handle` runs handlers concurrently and the
-   * lock screen can issue as many calls as it likes.
-   *
-   * Serialising the WHOLE attempt — the wait, the derivation and the counter
-   * update — is what makes the penalty compound. Errors are swallowed into the
-   * tail so one rejection cannot stall the queue; the caller still receives its
-   * own rejection.
+   * One unlock attempt at a time, whatever the caller does. The delay alone is
+   * not a throttle: `ipcMain.handle` runs handlers concurrently, so parallel
+   * calls read the same `failedUnlocks`, sleep together and reach scrypt
+   * together — many guesses for the price of one. Serialising the WHOLE attempt
+   * (wait, derivation, counter update) is what makes the penalty compound.
+   * Errors are swallowed into the tail so one rejection cannot stall the queue.
    */
   private enqueueUnlock<T>(attempt: () => Promise<T>): Promise<T> {
     const done = this.unlocks.then(attempt, attempt)
@@ -876,13 +700,21 @@ class Vault {
     return done
   }
 
+  /**
+   * Waits out the penalty earned by previous wrong passwords. scrypt alone only
+   * bounds guessing at the IPC channel to roughly six a second, and that channel
+   * is reachable from the lock screen with no secret at all. Deliberately in
+   * memory, not in the file: a persisted count would let an attacker lock the
+   * owner out by editing it. Resets on success — and `lock()` deliberately does
+   * NOT reset it, or the way past the throttle would be to lock and retry.
+   */
   private async awaitUnlockSlot(): Promise<void> {
     if (this.failedUnlocks === 0) return
     const delay = Math.min(UNLOCK_MAX_DELAY_MS, UNLOCK_BASE_DELAY_MS * 2 ** (this.failedUnlocks - 1))
     await new Promise((resolve) => setTimeout(resolve, delay))
   }
 
-  /* ------------------------------------------------------------ vnitřní */
+  /* ------------------------------------------------------------ internals */
 
   private async readFile(): Promise<VaultFileV1 | VaultFileV2 | VaultFileV3> {
     if (!this.exists()) throw appError('error.vaultMissing')
@@ -899,37 +731,29 @@ class Vault {
     ) {
       throw appError('error.vaultUnsupported')
     }
-    // Verze 2 stojí na seznamu wrapů. Bez téhle kontroly se poškozený soubor
-    // dostal až k `file.wraps.find(...)` a uživateli se na odemykací obrazovce
-    // ukázal syrový `TypeError` místo přeložené hlášky. `hasRecoveryOnDisk()`
-    // tuhle situaci hlídalo, `readFile()` ne — vypadá to na opomenutí, ne na
-    // rozhodnutí. Prázdné pole je legitimní a řeší se dál jako chybějící heslo.
+    // Without this a corrupt file reaches `wraps.find(...)` and puts a raw
+    // TypeError on the unlock screen. An empty array is legitimate.
     if (file.version !== 1 && !Array.isArray((file as VaultFileV2 | VaultFileV3).wraps)) {
       throw appError('error.vaultCorrupt')
     }
-    // The one place where file bytes become KDF parameters, so the one place
-    // that has to check them — before a key is derived from them, which is the
-    // only moment at which checking still helps. Wraps held in memory come only
-    // from `makeWrap()` or from a file that passed through here, which is why
-    // `openWrap()` does not repeat the check.
+    // The one place where file bytes become KDF parameters, and the last moment
+    // before a key is derived from them. Wraps in memory came from `makeWrap()`
+    // or from here, which is why `openWrap()` does not repeat the check.
     if (file.version === 1) {
       assertKdf(file.kdf)
     } else {
       for (const wrap of file.wraps) assertKdf(wrap?.kdf)
     }
-    // Hlavička v3 jde do AAD, takže co nejde zakódovat, se sem nesmí dostat.
+    // The v3 header goes into AAD, so anything unencodable must not get past here.
     if (file.version === 3) assertHeaderShape(file)
     return file
   }
 
   /**
-   * Dešifruje obsah pomocí DEK a převezme stav do paměti.
-   *
-   * U v3 je hlavička svázaná s tělem přes AAD, takže vyndaný wrap, přidaný wrap,
-   * přeházené pořadí i posunutý čítač skončí selháním tagu. U v2 žádné AAD není
-   * a být nemůže — soubor vznikl bez něj. Právě proto je `version` součástí AAD:
-   * přepsat v3 hlavičku na `version: 2` a doufat, že se AAD přeskočí, končí
-   * `error.decryptFailed`.
+   * Decrypts the body with the DEK and takes the state into memory. In v3 the
+   * AAD binding makes any header edit fail the tag; v2 has none and cannot,
+   * which is why `version` is itself in the AAD — rewriting a v3 header to
+   * `version: 2` to skip AAD ends in `error.decryptFailed`.
    */
   private adopt(file: VaultFileV2 | VaultFileV3, dek: Buffer): void {
     let plaintext: string
@@ -948,12 +772,11 @@ class Vault {
 
     this.dek = dek
     this.wraps = file.wraps
-    // v2 čítač nemá; navazovat je na čem až od prvního v3 zápisu.
+    // v2 has no counter; there is nothing to continue from until the first v3 write.
     this.counter = file.version === 3 ? file.counter : 0
     this.data = normalizeData(JSON.parse(plaintext) as Partial<VaultData>)
   }
 
-  /** Trezor verze 1: klíč byl odvozený přímo z hesla. Po odemčení převedeme na v3. */
   private async unlockLegacy(file: VaultFileV1, masterPassword: string): Promise<void> {
     const salt = Buffer.from(file.kdf.salt, 'base64')
     const key = await deriveKek(masterPassword, salt, file.kdf)
@@ -967,11 +790,9 @@ class Vault {
         decipher.final()
       ]).toString('utf8')
     } catch {
-      // Counted here too, or a v1 vault — the format an early-build user still
-      // has, and the one that only migrates on a SUCCESSFUL unlock, so it stays
-      // v1 for exactly as long as somebody is guessing at it — gets no throttle
-      // at all. `unlock` increments on the v2/v3 path; this branch returns
-      // before reaching it.
+      // Counted here too, or v1 gets no throttle at all: it only migrates on a
+      // SUCCESSFUL unlock, so it stays v1 for as long as somebody is guessing.
+      // `unlock` increments on the v2/v3 path and this branch returns first.
       this.failedUnlocks += 1
       throw appError('error.wrongPassword')
     } finally {
@@ -982,13 +803,12 @@ class Vault {
     this.dek = randomBytes(32)
     this.data = normalizeData(JSON.parse(plaintext) as Partial<VaultData>)
     this.counter = 0
-    // Stejně jako u v2: kotva vedle souboru ve formátu v1 znamená sestup, ne
-    // starožitnost. Před `persist` níž, protože ten kotvu přepíše.
+    // As with v2: an anchor next to a v1 file means a descent, not an antique.
+    // Before `persist` below, because that overwrites the anchor.
     this.guard = await this.readAnchor(0)
     this.wraps = [await makeWrap('password', masterPassword, this.dek)]
-    // The v1 half of the guard the v2 branch of `unlock` already has. Without
-    // it a v1 user on a read-only or full profile directory gets an error, the
-    // lock screen, and an unlocked vault behind it.
+    // As in the v2 branch: without this a v1 user on a read-only profile gets an
+    // error, the lock screen, and an unlocked vault behind it.
     try {
       await this.persist(this.data!)
     } catch (err) {
@@ -1003,38 +823,23 @@ class Vault {
   }
 
   /**
-   * Totéž jako `requireUnlocked`, ale volatelné zvenčí.
-   *
-   * Existuje pro IPC handlery SSH. Zámek musí platit i pro ně — jinak zamčená
-   * aplikace pořád píše do vzdáleného shellu, protože relace žijí v hlavním
-   * procesu nezávisle na tom, co si o nich myslí renderer.
+   * For the SSH IPC handlers — sessions live in the main process, so without
+   * this a locked app keeps writing to the remote shell.
    */
   requireUnlockedPublic(): void {
     this.requireUnlocked()
   }
 
   /**
-   * Přepečetí trezor pod **novým** datovým klíčem.
+   * Reseals the vault under a **new** data key. This is what makes revocation
+   * real: swapping a wrap alone leaves `.bak` holding a copy the old secret
+   * opens, yielding the same DEK that decrypts every *future* version too.
    *
-   * Tohle je jádro skutečné revokace. Dřív každá „revokační" operace jen
-   * vyměnila wrap a nechala DEK být — jenže `persist()` před každým zápisem
-   * kopíruje trezor do `.bak`, takže vedle souboru zůstal wrap otevřený starým
-   * tajemstvím, který vydal tentýž DEK, kterým šlo dešifrovat i všechny
-   * *budoucí* verze. Odvolání kl��če tedy neodvolalo nic.
-   *
-   * Teď se vygeneruje nový DEK, všechny wrapy se postaví pod ním, `persist()`
-   * obsah přešifruje a záloha se přepíše náhodnými daty a smaže. Starý wrap ani
-   * starý DEK nikde nezůstanou.
-   *
-   * Dva invarianty, na kterých to stojí:
-   *
-   * 1. **Nic se nepřiřadí do instance, dokud nejsou hotové všechny wrapy.**
-   *    Dřív se seznam nejdřív profiltroval a teprve pak se čekalo na
-   *    `makeWrap()`; když scrypt selhal, zůstal trezor bez hesla a další
-   *    nesouvisející zápis to potvrdil na disk. Hlavní heslo bylo mrtvé při
-   *    příštím spuštění.
-   * 2. **Při selhání `persist()` se stav vrátí zpět.** Jinak by DEK v paměti
-   *    přestal odpovídat souboru na disku.
+   * 1. **Nothing is assigned to the instance until every wrap is built**, or a
+   *    failed scrypt leaves a vault with no password wrap and the next write
+   *    commits that to disk.
+   * 2. **A failed `persist()` rolls the state back**, or the DEK in memory stops
+   *    matching the file on disk.
    */
   private async reseal(secrets: Array<{ type: KeyWrap['type']; secret: string }>): Promise<void> {
     if (!secrets.some((s) => s.type === 'password')) {
@@ -1070,12 +875,10 @@ class Vault {
   }
 
   /**
-   * Přepíše zálohu náhodnými daty a smaže ji.
-   *
-   * Samotné `unlink` nestačí: obsah zůstane na disku, dokud ho něco nepřepíše,
-   * a `.bak` po rotaci drží starý wrap i starý obsah. Přepis nedává záruku na
-   * SSD s wear levellingem ani na copy-on-write souborovém systému — je to
-   * zlepšení, ne důkaz — ale je výrazně lepší než ponechat soubor ležet.
+   * `unlink` alone is not enough: the content stays on disk until something
+   * overwrites it, and after a rotation `.bak` holds the old wrap and contents.
+   * The overwrite proves nothing on a wear-levelling SSD or a copy-on-write
+   * filesystem, but it beats leaving the file lying there.
    */
   private async destroyBackup(): Promise<void> {
     try {
@@ -1083,27 +886,16 @@ class Vault {
       await fsp.writeFile(this.backupPath, randomBytes(stat.size))
       await fsp.rm(this.backupPath, { force: true })
     } catch {
-      // Záloha neexistuje, nebo ji drží něco jiného. Rotace tím neselhává.
+      // No backup, or something else holds it. The rotation does not fail over this.
     }
   }
 
   /**
-   * Drops the pre-migration backup, but only once the new file has been read
-   * back and decrypted.
-   *
-   * A migration leaves `.bak` holding the vault in the OLD format with the SAME
-   * secrets, and nothing ever removed it. For v1 that is a copy whose key came
-   * straight from the password; for v2 it is a copy with no AAD and no counter,
-   * which is a ready-made target for exactly the rollback C6 exists to detect.
-   * Leaving either lying next to the vault for good is worse than the risk of
-   * dropping it.
-   *
-   * But dropping it blind would remove the safety net at the one moment a
-   * format change most needs one. So the new file is opened again from disk and
-   * its body decrypted with the data key already in memory — no password, no
-   * scrypt, just the AES-GCM pass. If that succeeds the old copy is provably
-   * redundant. If anything at all goes wrong the backup stays, because a
-   * needless `.bak` costs nothing next to a vault nobody can open.
+   * Drops the pre-migration backup, but only after reading the new file back and
+   * decrypting it. `.bak` otherwise keeps the vault in the OLD format under the
+   * SAME secrets — for v2, a copy with no AAD and no counter, a ready-made
+   * target for the rollback the guard exists to detect. Verifying first keeps the
+   * safety net at the one moment a format change needs it; on failure it stays.
    */
   private async dropBackupAfterMigration(): Promise<void> {
     try {
@@ -1120,16 +912,14 @@ class Vault {
   }
 
   /**
-   * Zařadí zápis za všechny předchozí, ať dopadly jakkoli.
-   *
-   * Trezor je jeden soubor, jedna cesta `.tmp` a jeden čítač. Dva zápisy naráz
-   * si `.tmp` přepíšou pod rukama a vyrobí dvě různá těla se stejným číslem.
-   * A `mutate()` by bez fronty vzal obě kopie ze stejného výchozího stavu,
-   * takže druhý zápis by ten první zahodil.
+   * Queues a write behind all previous ones, however they ended. One file, one
+   * `.tmp`, one counter: concurrent writes clobber `.tmp` and produce two bodies
+   * with the same number, and `mutate()` would clone both drafts from the same
+   * state, so the second would discard the first.
    */
   private enqueueWrite<T>(job: () => Promise<T>): Promise<T> {
     const done = this.writes.then(job, job)
-    // Chyba se polyká jen tady, aby nezastavila frontu; volající ji dostane v `done`.
+    // Swallowed only here so it cannot stall the queue; the caller gets it in `done`.
     this.writes = done.then(
       () => undefined,
       () => undefined
@@ -1137,22 +927,17 @@ class Vault {
     return done
   }
 
-  /** Zápis mimo `mutate()` — zakládání, migrace, přepečetění. */
+  /** Writes outside `mutate()` — creation, migration, reseal. */
   private async persist(data: VaultData): Promise<void> {
     return this.enqueueWrite(() => this.writeSealed(data))
   }
 
-  /**
-   * Zapečetí `data` a atomicky je vymění za současný soubor.
-   *
-   * Volá se **jen zevnitř fronty zápisů** (`persist`, `mutate`). Nikdy přímo.
-   */
+  /** Seals `data` and swaps it in atomically. Called **only from the write queue**. */
   private async writeSealed(data: VaultData): Promise<void> {
     if (!this.dek) throw appError('error.vaultLocked')
     if (this.wraps.length === 0) throw appError('error.noUnlockMethod')
 
-    // Čítač roste s každým zápisem. Tady ho jen chrání AAD; porovnat ho s dřív
-    // viděnou hodnotou dělá `recordAnchor` níž, po úspěšném přejmenování.
+    // AAD only protects the counter here; `recordAnchor` stores it after the rename.
     const counter = this.counter + 1
     if (!Number.isSafeInteger(counter)) throw appError('error.vaultCorrupt')
 
@@ -1181,44 +966,24 @@ class Vault {
     }
 
     await fsp.mkdir(path.dirname(this.filePath), { recursive: true })
-    // Záloha předchozí verze, aby přerušený zápis nezničil data.
+    // So an interrupted write cannot destroy the previous version.
     if (fs.existsSync(this.filePath)) {
       await fsp.copyFile(this.filePath, this.backupPath).catch(() => {})
     }
     const tmp = this.filePath + '.tmp'
     await fsp.writeFile(tmp, JSON.stringify(file), { encoding: 'utf8', mode: 0o600 })
     await fsp.rename(tmp, this.filePath)
-    // Až po úspěšném přejmenování. Jinak by paměť tvrdila vyšší číslo, než jaké
-    // je v souboru, a příští zápis by v řadě udělal díru.
+    // Only after a successful rename, or memory would claim a higher number than
+    // the file holds and the next write would leave a gap in the sequence.
     this.counter = counter
     await this.recordAnchor(counter)
   }
 
   /**
-   * Posune kotvu na právě zapsané číslo.
-   *
-   * **Až po úspěšném `rename`, nikdy před ním.** Kotva napřed by po každém
-   * nečistém vypnutí tvrdila, že soubor je starší, než má být, a varování,
-   * které křičí na nevinné, se za týden odklikává poslepu.
-   *
-   * Selhání se polyká. Trezor je v tu chvíli **už zapsaný** — vyhodit chybu by
-   * volajícímu řeklo, že zápis neprošel, a ten by na to reagoval (vrátil změnu
-   * v paměti, ukázal chybu) kvůli něčemu, co se povedlo. Cena je, že na
-   * profilu, kam nejde psát, detekce tiše nefunguje; proto ta zpráva do logu,
-   * ať to jde aspoň zpětně poznat.
-   */
-  /**
-   * Přečte kotvu a porovná ji s číslem z hlavičky.
-   *
-   * Chybějící i nečitelná kotva dají `unknown`, tedy žádné varování. Rozdíl
-   * mezi nimi tu **nezakládá jiné chování** — je v logu a v tom, že parser
-   * nelže o tom, co na disku je.
-   *
-   * A nečitelná kotva se příštím zápisem přepíše. Zní to jako díra (poškoď
-   * kotvu a detekce se resetuje), ale kdo umí kotvu poškodit, umí ji hlavně
-   * smazat, takže odmítnutí zápisu nic nezachrání — jen by z jednoho poškození
-   * udělalo trvale vypnutou detekci, kterou už nic neopraví. Sebeuzdravení je
-   * z těch dvou možností ta lepší.
+   * Compares the anchor with the counter from the header. Missing and unreadable
+   * both give `unknown`, so neither warns. An unreadable anchor is overwritten by
+   * the next write: whoever can corrupt it can delete it, so refusing to write
+   * would only turn one corruption into permanently disabled detection.
    */
   private async readAnchor(fileCounter: number): Promise<GuardVerdict> {
     const read = await readAnchorFile(this.guardPath, this.sealer)
@@ -1229,6 +994,15 @@ class Vault {
     return { kind: 'unknown' }
   }
 
+  /**
+   * **Only after a successful `rename`, never before.** An anchor written first
+   * would claim the file is older than it is after every unclean shutdown, and a
+   * warning that cries wolf gets clicked away blind.
+   *
+   * Failures are swallowed: the vault is **already written**, so throwing would
+   * have the caller roll back over something that succeeded. Detection then
+   * silently stops on an unwritable profile, hence the log line.
+   */
   private async recordAnchor(counter: number): Promise<void> {
     try {
       await writeAnchorFile(this.guardPath, counter, Date.now(), this.sealer)
@@ -1239,16 +1013,9 @@ class Vault {
 }
 
 /**
- * The floor a new master password has to clear.
- *
- * Only length, and only here — the strength estimate next to it is for the
- * meter the user sees, not for a gate. A gate built on a guess refuses
- * passwords that are fine and lets through ones that are not, and the person
- * being refused has no way to argue with it.
- *
- * Reached from `create`, `changePassword` and the new password set during
- * recovery. Never from `unlock`, so raising the floor cannot lock anyone out of
- * a vault they already have.
+ * Length only — the strength estimate next to it drives the meter, not a gate.
+ * Never reached from `unlock`, so raising the floor cannot lock anyone out of a
+ * vault they already have.
  */
 function validatePassword(pw: string): void {
   if (typeof pw !== 'string' || pw.length < MIN_PASSWORD_LENGTH) {
@@ -1257,11 +1024,9 @@ function validatePassword(pw: string): void {
 }
 
 /**
- * Přenese trezor ze složky profilu pod dřívějším názvem aplikace.
- *
- * Electron odvozuje cestu k profilu z `productName`, takže přejmenování
- * projektu jinak vypadá jako ztráta všech uložených připojení. Kopírujeme
- * (nemažeme), aby šlo v případě potíží sáhnout po originálu.
+ * Brings the vault over from the profile directory of an earlier app name:
+ * Electron derives that path from `productName`, so a rename otherwise looks
+ * like losing every saved connection. Copies rather than moves.
  */
 export async function migrateLegacyProfile(legacyNames: string[]): Promise<string | null> {
   if (vault.exists()) return null
@@ -1281,10 +1046,9 @@ export async function migrateLegacyProfile(legacyNames: string[]): Promise<strin
       await fsp.copyFile(legacyBackup, vault.filePath + '.bak').catch(() => {})
     }
     /*
-     * Kotva po jiném trezoru tady nemá co dělat. Sem se dojde jen když
-     * `vault.enc` chybí, jenže smazat trezor a nechat vedle `vault.guard` jde
-     * — a pak by čerstvě přenesený soubor hlásil vrácení proti čítači, který
-     * nikdy nebyl jeho. Kotva patří k souboru, ne ke složce.
+     * The anchor belongs to the file, not the directory: deleting a vault and
+     * leaving `vault.guard` behind would make the freshly copied file report a
+     * rollback against a counter that was never its own.
      */
     await removeAnchorFile(path.join(currentDir, 'vault.guard')).catch(() => {})
     return legacyDir

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Simplixio — Stanislav Opletal <info@simplixio.net>
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { CommandApproval } from '@shared/types'
 import { useT } from '../i18n'
 import { useArmedAfterPaint } from '../armDelay'
@@ -12,21 +12,31 @@ interface Props {
 }
 
 /**
- * Schválení příkazu navrženého AI.
- *
- * Záměrně tu není žádné „schválit vše" ani „zapamatovat" – celý smysl brány je,
- * že každý příkaz vidíš zvlášť. Znění se zobrazuje se zviditelněnými řídicími
- * znaky, aby v něm nešel schovat řádek navíc.
+ * Deliberately offers no "approve all" and no "remember this": the whole point
+ * of the gate is that every AI-proposed command is reviewed on its own, with
+ * control characters made visible so no extra line can hide in it.
  */
 export default function CommandApprovalDialog({ request, onAnswer }: Props) {
   const t = useT()
   const armed = useArmedAfterPaint()
   const [autoShare, setAutoShare] = useState(false)
-  // \n still separates commands: the text is handed to the remote shell as a
-  // script. A bare \r no longer becomes Enter — the exec channel has no PTY and
-  // so no ICRNL — but it is still an invisible byte that changes what runs, so
-  // it stays in the warning.
+  // \n still separates commands: the text runs as a script on the remote shell.
+  // A bare \r no longer becomes Enter (the exec channel has no PTY, so no ICRNL)
+  // but is still an invisible byte that changes what runs, so it stays flagged.
   const multiline = /[\n\r]/.test(request.command)
+
+  // `.command-box` is capped at 220px with `overflow-y: auto`, so a long command
+  // scrolls out of sight behind an easily missed scrollbar while Run stays in the
+  // footer — and the gate is only worth anything if the human sees every byte.
+  // Measured rather than guessed from a character count: the real threshold
+  // depends on font, DPI and how the lines wrap.
+  const boxRef = useRef<HTMLPreElement>(null)
+  const [clipped, setClipped] = useState(false)
+  useEffect(() => {
+    const el = boxRef.current
+    if (!el) return
+    setClipped(el.scrollHeight > el.clientHeight + 1)
+  }, [request.commandVisualized])
 
   return (
     <div className="modal-backdrop">
@@ -49,11 +59,20 @@ export default function CommandApprovalDialog({ request, onAnswer }: Props) {
           </div>
 
           <div>
-            <div className="meta-label">{t('mcp.commandToRun')}</div>
-            <pre className="command-box">{request.commandVisualized}</pre>
+            <div className="meta-label meta-label-row">
+              <span>{t('mcp.commandToRun')}</span>
+              {/* The length of what RUNS, not of the visualised copy: the
+                  control-character glyphs expand the text on screen. */}
+              <span className="meta-count">{t('mcp.totalCount', { count: request.command.length })}</span>
+            </div>
+            <pre className="command-box" ref={boxRef}>
+              {request.commandVisualized}
+            </pre>
           </div>
 
           <div className="note-box">{t('mcp.separateShellWarn')}</div>
+
+          {clipped && <div className="warn-box">{t('mcp.commandClippedWarn')}</div>}
 
           {multiline && <div className="warn-box">{t('mcp.multilineWarn')}</div>}
 

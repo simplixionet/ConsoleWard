@@ -7,7 +7,7 @@ import { useT } from '../i18n'
 
 interface Props {
   snippets: Snippet[]
-  /** Je otevřená a připravená relace, kam lze vkládat? */
+  /** Is there an open, ready session to insert into? */
   canInsert: boolean
   onInsert: (s: Snippet, withEnter: boolean) => void
   onCopy: (s: Snippet) => void

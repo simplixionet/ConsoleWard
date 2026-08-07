@@ -4,14 +4,9 @@
 /**
  * The activity throttle behind auto-lock.
  *
- * A renderer file, but the logic is a pure function over `Date.now()` and a
- * callback, so it needs no DOM — which is the only reason it can be tested at
- * all. The rest of the renderer has no harness.
- *
- * What is at stake: every report re-arms the auto-lock timer in the main
- * process. Report too often and typing costs hundreds of IPC messages; report
- * too rarely — or not at all — and the vault locks with the user's hands on the
- * keyboard.
+ * Every report re-arms the auto-lock timer in the main process. Report too
+ * often and typing costs hundreds of IPC messages; report too rarely — or not
+ * at all — and the vault locks with the user's hands on the keyboard.
  */
 
 import { describe, test, mock } from 'node:test'
@@ -29,8 +24,8 @@ function spy(): { sent: () => number; send: () => void } {
 
 describe('reportActivity', () => {
   test('the first report after a quiet stretch goes straight through', (t) => {
-    // Leading edge: the first event after a pause is the moment the human came
-    // back, and it must not wait for a timer before the lock is deferred.
+    // Leading edge: the first event after a pause is the human coming back, so
+    // deferring the lock must not wait for a timer.
     mock.timers.enable({ apis: ['Date'] })
     t.after(() => mock.timers.reset())
     resetActivityThrottle()
@@ -67,14 +62,12 @@ describe('reportActivity', () => {
   })
 
   test('a clock step backwards does not wedge it shut', (t) => {
-    // Date.now() is wall clock, not monotonic. NTP correcting a drifted
-    // machine, a VM resuming from a snapshot or a timezone change all step it
-    // backwards, and a negative elapsed time is forever below the interval --
-    // so the throttle swallowed every report until the clock caught up. With
-    // nothing reaching the main process the auto-lock timer is never re-armed,
-    // and the vault locks while the user is typing into it.
-    // `setTime` refuses a negative epoch, so the fixture starts far enough in
-    // for a backwards hour to stay positive.
+    // Date.now() is wall clock, not monotonic: NTP, a VM resuming from a
+    // snapshot or a timezone change all step it backwards, and a negative
+    // elapsed time stays below the interval forever — so nothing reaches the
+    // main process, the auto-lock timer is never re-armed, and the vault locks
+    // while the user is typing. `setTime` refuses a negative epoch, hence the
+    // offset start.
     const start = 4 * 60 * 60 * 1000
     mock.timers.enable({ apis: ['Date'], now: start })
     t.after(() => mock.timers.reset())
@@ -84,20 +77,17 @@ describe('reportActivity', () => {
     reportActivity(s.send)
     assert.equal(s.sent(), 1, 'fixture: the first report should go through')
 
-    // The clock jumps back an hour, then the user keeps typing.
     mock.timers.setTime(start - 60 * 60 * 1000)
     reportActivity(s.send)
     assert.equal(s.sent(), 2, 'a backwards clock step silenced the throttle')
 
-    // And it still throttles afterwards rather than reporting every keystroke.
     reportActivity(s.send)
     assert.equal(s.sent(), 2, 'the throttle stopped throttling after the jump')
   })
 
   test('resetting it lets the next report through immediately', (t) => {
     // Called when the vault locks: the keypress that brings the user back must
-    // reach the main process rather than landing inside a window that started
-    // before they walked away.
+    // not land inside a throttle window that opened before they walked away.
     mock.timers.enable({ apis: ['Date'] })
     t.after(() => mock.timers.reset())
     resetActivityThrottle()

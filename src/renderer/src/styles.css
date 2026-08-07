@@ -391,6 +391,22 @@ input.mono {
   font-size: 13px;
   font-weight: 500;
 }
+/*
+  Label on the left, size on the right, sharing the label's baseline.
+  `display: block` on .meta-label above wins on source order otherwise.
+*/
+.meta-label-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+.meta-count {
+  font-variant-numeric: tabular-nums;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-dim);
+}
 .ai-reason {
   background: var(--bg-deep);
   border: 1px solid var(--border);

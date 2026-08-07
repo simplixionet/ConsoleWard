@@ -2,14 +2,11 @@
 // Copyright (C) 2026 Simplixio — Stanislav Opletal <info@simplixio.net>
 
 /**
- * The settings whitelist.
- *
- * `settings:save` used to merge the caller's object straight into the stored
- * settings, so the settings block was whatever the caller said it was. These
- * tests pin the three consequences that had: an unknown key persisted inside
- * the encrypted vault, `mcpPort` reaching the vault without the check
- * `mcp:setPort` performs, and `Number(x) || 0` turning nonsense in
- * `autoLockMinutes` into 0 — this file's encoding for *never lock*.
+ * The settings whitelist. Merging a caller's object straight into the stored
+ * settings has three consequences pinned below: an unknown key persisted in the
+ * encrypted vault, `mcpPort` reaching the vault without the check `mcp:setPort`
+ * performs, and `Number(x) || 0` turning nonsense in `autoLockMinutes` into 0,
+ * the encoding for *never lock*.
  */
 
 import { describe, test, mock } from 'node:test'
@@ -21,7 +18,6 @@ const { sanitizeSettings, DEFAULT_SETTINGS, SETTINGS_LIMITS, SETTINGS_FIELDS } =
   '../src/main/settings.ts'
 )
 
-/** The stored settings a patch is applied on top of. */
 const stored = (): typeof DEFAULT_SETTINGS => ({ ...DEFAULT_SETTINGS })
 
 function throwsWithKey(run: () => unknown, key: string, note = ''): void {
@@ -53,9 +49,8 @@ describe('sanitizeSettings', () => {
   })
 
   test('refuses nonsense instead of inventing a value for it', () => {
-    // `Number('x') || 0` used to land here, and 0 means never lock. Inventing a
-    // value for a field the caller just sent is how auto-lock switched itself
-    // off without anyone choosing that.
+    // `Number('x') || 0` lands on 0, which means never lock — auto-lock
+    // switching itself off without anyone choosing that.
     for (const bad of ['soon', null, undefined, NaN, Infinity, {}, []]) {
       throwsWithKey(
         () => sanitizeSettings(stored(), { autoLockMinutes: bad }),
@@ -77,8 +72,6 @@ describe('sanitizeSettings', () => {
   })
 
   test('refuses an unknown key rather than dropping it', () => {
-    // Dropping is how "the setting did not stick" bugs are born. Refusing costs
-    // nothing: renderer and main ship as one build.
     throwsWithKey(() => sanitizeSettings(stored(), { nonsense: 1 }), 'error.unknownSetting')
     // JSON.parse, not a literal: `{ __proto__: … }` in a literal sets the
     // prototype rather than creating an own property, so Object.keys sees
@@ -112,9 +105,8 @@ describe('sanitizeSettings', () => {
   })
 
   test('never takes the MCP port or the MCP switch from the patch', () => {
-    // This is the finding: the port reached the vault without the validation
-    // mcp:setPort performs. Carrying it over rather than validating it is
-    // stronger -- the channel simply cannot set it.
+    // Carrying the stored value over rather than validating the patched one is
+    // the stronger rule: this channel simply cannot set the port.
     const current = { ...stored(), mcpPort: 7345, mcpEnabled: true }
     const saved = sanitizeSettings(current, { mcpPort: 22, mcpEnabled: false })
     assert.equal(saved.mcpPort, 7345, 'settings:save wrote the MCP port')
@@ -122,8 +114,8 @@ describe('sanitizeSettings', () => {
   })
 
   test('repairs a stored value it would refuse in a patch', () => {
-    // A number the human never typed and cannot see must not make Save
-    // impossible -- but it must not survive either.
+    // A value the human never typed and cannot see must not make Save
+    // impossible, and must not survive either.
     const damaged = { ...stored(), fontSize: 'huge' as never, mcpPort: -1 as never }
     const saved = sanitizeSettings(damaged, { scrollback: 900 })
     assert.equal(saved.fontSize, DEFAULT_SETTINGS.fontSize, 'a damaged stored value survived')
@@ -143,8 +135,8 @@ describe('sanitizeSettings', () => {
   })
 
   test('every Settings field has a decision recorded against it', () => {
-    // The failure a whitelist otherwise introduces: a field is added to the
-    // dialog, nobody adds it here, Save reports success and changes nothing.
+    // The failure a whitelist introduces: a field is added to the dialog,
+    // nobody adds it here, and Save reports success while changing nothing.
     for (const [field, kind] of Object.entries(SETTINGS_FIELDS)) {
       assert.match(kind, /^(saved|elsewhere|unused|derived)$/, `${field} has no decision`)
     }

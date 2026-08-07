@@ -15,7 +15,7 @@ import type {
   SnippetInput
 } from '../shared/types'
 
-/** Odhlašovací funkce pro posluchače událostí. */
+/** Subscribes to an IPC event and returns the unsubscribe function. */
 function on<A extends unknown[]>(channel: string, cb: (...args: A) => void): () => void {
   const listener = (_e: unknown, ...args: unknown[]) => cb(...(args as A))
   ipcRenderer.on(channel, listener)
@@ -57,6 +57,7 @@ const api: AppApi = {
     forget: (hostKey) => ipcRenderer.invoke(CH.hostsForget, hostKey)
   },
   ssh: {
+    list: () => ipcRenderer.invoke(CH.sshList),
     connect: (connectionId) => ipcRenderer.invoke(CH.sshConnect, connectionId),
     write: (sessionId, data) => ipcRenderer.invoke(CH.sshWrite, sessionId, data),
     resize: (sessionId, cols, rows) => ipcRenderer.invoke(CH.sshResize, sessionId, cols, rows),
