@@ -33,8 +33,26 @@ export interface ApprovalHost {
  */
 export const MAX_PENDING_APPROVALS = 3
 
-/** No answer within five minutes: deny, rather than leave the call hanging. */
-export const APPROVAL_TIMEOUT_MS = 5 * 60_000
+/**
+ * No answer within this long: deny, rather than leave the call hanging.
+ *
+ * Fifteen minutes, not the five it was. Five is enough to answer a dialog you
+ * were already looking at, and not enough for what these dialogs actually ask:
+ * read a command you did not write, or scroll through terminal output, decide
+ * what part of it a model may see, and edit it down. Someone doing that
+ * carefully was being denied mid-edit, and the denial reads to the model as a
+ * refusal rather than as a clock running out.
+ *
+ * Fifteen also matches the default auto-lock, which is the real ceiling: a lock
+ * runs `rejectAll()`, so an approval can never outlive the vault it belongs to
+ * however high this goes. Setting it far past the lock would only invent a
+ * timeout nobody ever reaches.
+ *
+ * Waiting no longer costs a client its call — the MCP transport streams and
+ * keeps the connection warm, see the transport comment in mcp.ts — so this is
+ * now bounded by the human, not by whichever timeout expires first.
+ */
+export const APPROVAL_TIMEOUT_MS = 15 * 60_000
 
 /**
  * Quiet tail after the queue drains. Without it a client raises the window again
