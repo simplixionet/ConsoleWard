@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { KnownHost, McpStatus, Settings } from '@shared/types'
 import { api, errorMessage, unwrap } from '../api'
 import { LOCALES, useI18n } from '../i18n'
+import McpClientSetup from './McpClientSetup'
 
 interface Props {
   settings: Settings
@@ -189,15 +190,6 @@ export default function SettingsDialog({
   async function copyToken(): Promise<void> {
     await api.clipboard.write(mcpToken ?? '')
     flash(t('settings.mcpTokenCopied'), 6000)
-  }
-
-  async function copyAddCommand(): Promise<void> {
-    const port = mcpStatus?.port ?? Number(mcpPort)
-    const cmd =
-      `claude mcp add --transport http consoleward http://127.0.0.1:${port}/ ` +
-      `--header "Authorization: Bearer ${mcpToken ?? '<token>'}"`
-    await api.clipboard.write(cmd)
-    flash(t('settings.mcpCommandCopied'), 3000)
   }
 
   return (
@@ -484,20 +476,19 @@ export default function SettingsDialog({
               </label>
 
               <div className="secret-row">
-                <button
-                  type="button"
-                  className="btn small"
-                  disabled={!mcpToken}
-                  onClick={copyAddCommand}
-                >
-                  {t('settings.mcpCopyCommand')}
-                </button>
                 <button type="button" className="btn small danger" onClick={regenerateToken}>
                   {t('settings.mcpRegenerate')}
                 </button>
               </div>
 
               <p className="hint">{t('settings.mcpTokenHint')}</p>
+
+              <McpClientSetup
+                port={mcpStatus?.port ?? Number(mcpPort)}
+                token={mcpToken}
+                tokenVisible={tokenVisible}
+                onCopied={(msg) => flash(msg, 6000)}
+              />
             </>
           )}
 
