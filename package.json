@@ -17,7 +17,8 @@
     "test": "node --experimental-test-module-mocks --import ./test/setup.mts --test test/**/*.test.mts",
     "notice": "node scripts/generate-notice.mjs",
     "notice:dist": "node scripts/generate-notice.mjs --dist",
-    "check:notice": "node scripts/generate-notice.mjs --check"
+    "check:notice": "node scripts/generate-notice.mjs --check",
+    "screenshots": "electron scripts/screenshots/main.js"
   },
   "keywords": [
     "ssh",

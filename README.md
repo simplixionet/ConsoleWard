@@ -71,6 +71,48 @@ or pass vacuously — which is worse than not running it:
 npm run check:i18n-ui  # proves every locale actually renders
 ```
 
+## What it looks like
+
+<p align="center">
+  <img src="docs/screenshots/03-command-approval.png" alt="A command proposed by an AI, shown for approval: the session, the AI's stated reason, the exact command text with a character count, a warning that it runs in its own shell, and Deny / Run the command" width="820">
+</p>
+
+Nothing runs until this dialog is answered. The command is shown exactly as it will
+be sent — control characters made visible, so nothing can hide a second line in it —
+and there is no "approve all" anywhere in the application.
+
+<p align="center">
+  <img src="docs/screenshots/05-output-review.png" alt="Terminal output staged for review before it reaches the AI, with a database URL containing a password highlighted in red and a Redact the selection button" width="820">
+</p>
+
+Output is the other half. The AI asks; you decide what it sees. Anything that looks
+like a credential is highlighted, you can edit or redact any of it, and what you are
+looking at is byte for byte what gets sent.
+
+<p align="center">
+  <img src="docs/screenshots/07-connect-client.png" alt="The AI access settings tab showing per-client connection instructions, with the Claude Desktop configuration filled in and the token masked" width="820">
+</p>
+
+The gateway listens on `127.0.0.1` only and is off until you turn it on. The setup for
+each client is generated with your port and token already in it.
+
+<details>
+<summary>More screens</summary>
+
+| | |
+|---|---|
+| ![The unlock screen](docs/screenshots/01-unlock.png) | ![Connections and an open session](docs/screenshots/02-sessions.png) |
+| Unlocking the vault | Connections and a live session |
+| ![The first step of the share dialog](docs/screenshots/04-output-choose.png) | ![The AI access settings tab](docs/screenshots/06-mcp-gateway.png) |
+| Choosing what to share — there is no "send everything" button | The gateway, its port and its token |
+
+</details>
+
+> Every host, address and credential in these images is invented. They are captured
+> from the real interface by `npm run screenshots`, which runs the application against
+> a stand-in bridge — so they stay honest as the UI changes, and no real session ever
+> ends up in the repository.
+
 ## What it does
 
 - **Encrypted vault** — a single `vault.enc` in the user profile. The contents are
