@@ -9,6 +9,33 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 Nothing yet.
 
+## [1.1.0] — 2026-08-11
+
+### Added
+
+- **Setup for the AI client you actually use.** The gateway settings now build the
+  configuration for Claude Code, Claude Desktop and VS Code (Copilot), with your
+  port and token already in it, and say where each one wants it put. Previously
+  there was one button, and it produced a command only Claude Code understands.
+- Claude Desktop reaches the gateway through `mcp-remote`. It launches local
+  servers as programs and reaches HTTP ones only as Custom Connectors, which want
+  a public address and run their own sign-in, so there is nowhere to put a
+  loopback address or a token. The proxy bridges the two; it needs Node.js, and
+  `npx` fetches it on first run.
+- ChatGPT is listed with the reason it cannot connect. It refuses loopback
+  addresses and requires a server published over HTTPS, so the only way to
+  satisfy it is to put this gateway on the internet behind a tunnel — every
+  session in the vault behind a single token anyone could try. Listening on
+  `127.0.0.1` alone is the first promise this application makes, so there is
+  deliberately no setting for it.
+- Screenshots in the README, and `npm run screenshots` to retake them. They come
+  from the real interface driven by a stand-in bridge, so every host, address and
+  credential in them is invented and none of it came from a real session.
+
+### Changed
+
+- The "copy the Claude Code command" button is gone, replaced by the panel above.
+
 ## [1.0.2] — 2026-08-07
 
 Anyone using the MCP gateway wants this one: before it, taking your time over a
@@ -271,7 +298,8 @@ previous version.
 - **macOS and Linux targets are configured but untested**, and have no icons.
 - ~~**Source comments are in Czech.**~~ Resolved in 1.0.1.
 
-[Unreleased]: https://github.com/simplixionet/ConsoleWard/compare/v1.0.2...HEAD
+[Unreleased]: https://github.com/simplixionet/ConsoleWard/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/simplixionet/ConsoleWard/compare/v1.0.2...v1.1.0
 [1.0.2]: https://github.com/simplixionet/ConsoleWard/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/simplixionet/ConsoleWard/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/simplixionet/ConsoleWard/tree/v1.0.0
