@@ -58,8 +58,17 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Bounded, because "on by default" means everyone: a per-file cap and a total
   cap across the folder, both configurable. A full file starts a new part and
   **says so in a frame** — a security record that stops without saying it
-  stopped is worse than none. Settings → Logs shows what is there, how much disk
-  it uses, opens the folder, exports one and deletes them.
+  stopped is worse than none. The one case where a log genuinely cannot continue
+  is a cap reached while the vault is locked, since a new part needs its own key
+  wrapped by the master; it ends there and its last frame says exactly that,
+  rather than stopping quietly or keeping a key to every log alive in a locked
+  process. Settings → Logs shows what is there, how much disk it uses, opens the
+  folder, exports one and deletes them.
+
+  AI events are flushed as they are recorded rather than buffered like terminal
+  output. A transcript is thousands of chunks a second and batching them is the
+  whole difference; an AI log is a handful of events an hour and each one is the
+  record of a decision, including the ones nobody was asked about.
 
 - **`scripts/decrypt-log.mjs`, and `docs/LOG-FORMAT.md`.** A record kept for the
   case where something went wrong is worth little if the only program that can
@@ -114,9 +123,13 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   the command list that set is nearly complete; it is still not a boundary, and
   says so — writing to `/tmp` and moving the file is two steps, not one.
 
-  The dialog shows where the file **really** lands, not where it was asked to go:
-  `/etc/nginx/../cron.d/x` is `/etc/cron.d/x`, and that difference is the whole
-  question.
+  The dialog shows where the file **really** lands, not where it was asked to go,
+  and the resolved path is what gets written — approving a destination and
+  writing to a different spelling of it would make the dialog a description of
+  some other action. `~` and a relative path are resolved against the session's
+  own directory first, asked of the server, because SFTP does not expand `~` and
+  an unexpanded one is invisible to the destination list: `~/../../etc/cron.d/x`
+  would otherwise have matched no rule at all.
 
 - **Unattended mode.** A switch in the AI access settings that removes the
   approval dialog: commands the AI proposes run immediately and their full
