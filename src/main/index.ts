@@ -54,6 +54,7 @@ import { mcp } from './mcp'
 import { approvals } from './approvals'
 import { readSmallTextFile } from './textFile'
 import { logs } from './logs'
+import { aiLog } from './aiLog'
 
 const isDev = !app.isPackaged
 let mainWindow: BrowserWindow | null = null
@@ -1013,6 +1014,10 @@ if (!gotLock) {
     approvals.rejectAll()
     void mcp.stop()
     ssh.disconnectAll()
+    // Belt and braces: every AI event is already flushed as it is recorded, so
+    // there should be nothing buffered here. `before-quit` is synchronous and
+    // will not wait for this, which is exactly why the flush is not here.
+    void aiLog.closeAll()
     vault.lock()
   })
 }

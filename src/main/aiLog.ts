@@ -55,6 +55,19 @@ class AiLog {
       if (vault.read().settings.aiLog === false) return
       const writer = await this.writerFor(sessionId, sessionName)
       writer.append(JSON.stringify({ at: new Date().toISOString(), ...event }) + '\n')
+      /*
+        Flushed per event, unlike a transcript.
+
+        A transcript is buffered because it is thousands of small chunks a
+        second and the frame overhead would dwarf the content. An AI log is a
+        handful of events an hour, and every one of them is the record of a
+        decision — including, in unattended mode, decisions nobody was asked
+        about. The buffer's timer is unref'd, so a quit inside 750 ms would drop
+        exactly those. One append per event is the cost of the log being worth
+        having, and `run_command` already tells the reader it recorded before it
+        ran.
+      */
+      await writer.flush()
     } catch (err) {
       console.warn('ai log: event not recorded', err)
     }
