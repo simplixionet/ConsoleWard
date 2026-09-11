@@ -45,6 +45,7 @@ import {
   adoptEmbeddedKeys,
   assertKeyUnused,
   generateKey,
+  hasKeysToAdopt,
   importKeyText,
   toKeyMeta
 } from './sshKeys'
@@ -399,6 +400,14 @@ function installGuardSealer(): void {
   })
 }
 
+/** The caps are read from settings at every change; a writer already open keeps the ones it opened with. */
+function applyLogLimits(settings: Settings): void {
+  logs.setLimits({
+    maxFileBytes: (settings.logMaxFileMb ?? 16) * 1024 * 1024,
+    maxTotalBytes: (settings.logMaxTotalMb ?? 512) * 1024 * 1024
+  })
+}
+
 /**
  * Moves key text off connections and into the key library, once, on unlock.
  *
@@ -408,18 +417,16 @@ function installGuardSealer(): void {
  * connection still authenticates from its own key text, and refusing to unlock
  * over a convenience migration would be the worse outcome.
  */
-/** The caps are read from settings at every change; a writer already open keeps the ones it opened with. */
-function applyLogLimits(settings: Settings): void {
-  logs.setLimits({
-    maxFileBytes: (settings.logMaxFileMb ?? 16) * 1024 * 1024,
-    maxTotalBytes: (settings.logMaxTotalMb ?? 512) * 1024 * 1024
-  })
-}
-
 async function moveKeysIntoLibrary(): Promise<void> {
-  // `mutate` always writes, and most unlocks have nothing to move. Checking
-  // first keeps the common case from rewriting the vault for no reason.
-  if (!vault.read().connections.some((c) => c.privateKey && !c.keyId)) return
+  /*
+    `mutate` always writes, and most unlocks have nothing to move. The predicate
+    has to be the migration's OWN — asking only whether key text is present
+    would keep returning true for a key `describeKey` cannot read, which the
+    migration skips on purpose, and every unlock would then re-encrypt the whole
+    vault, roll the backup and bump the counter to move nothing at all. Forever:
+    the condition that triggers it is the one the migration will not clear.
+  */
+  if (!hasKeysToAdopt(vault.read())) return
   try {
     const moved = await vault.mutate(adoptEmbeddedKeys)
     if (moved > 0) console.log(`vault: moved ${moved} key(s) into the key library`)

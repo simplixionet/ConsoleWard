@@ -786,15 +786,20 @@ class McpService {
         try {
           answer = await whileAwaitingHuman(extra, bridge.saveCommand(request, unattended))
         } catch (err) {
-          if (!isQueueFull(err)) throw err
-          return toolError(QUEUE_FULL_MESSAGE)
+          if (isQueueFull(err)) return toolError(QUEUE_FULL_MESSAGE)
+          // Unlike the other two bridge methods, this one writes to the vault,
+          // so it rejects on any write failure and not only on a full queue.
+          // Rethrowing hands the SDK a raw Error whose message it puts straight
+          // in front of the model — an absolute path and a username with it.
+          return toolError(modelErrorFor(err))
         }
 
         await aiLog.record('library', 'Saved commands', {
           kind: 'savedCommand',
           title: request.title,
           body,
-          approved: answer.approved
+          approved: answer.approved,
+          unattended
         })
 
         if (!answer.approved) return toolError('The human did not approve saving this command.')
@@ -933,6 +938,15 @@ class McpService {
           // the dialog a description of some other action.
           await ssh.upload(session_id, resolvedPath, Buffer.from(content, 'utf8'))
         } catch (err) {
+          // Recorded, because SFTP opens with truncate: by the time a write can
+          // fail the destination has already been emptied, and a log that goes
+          // quiet there is quiet about the worst outcome this tool has.
+          await aiLog.record(session_id, name, {
+            kind: 'uploadFailed',
+            path: resolvedPath,
+            bytes,
+            error: modelErrorFor(err)
+          })
           return toolError(modelErrorFor(err))
         }
 

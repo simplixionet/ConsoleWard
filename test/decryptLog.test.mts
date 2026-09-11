@@ -101,7 +101,11 @@ describe('a log ConsoleWard wrote opens without ConsoleWard', () => {
     // Terminal output is not text: it carries escape sequences, and a reader
     // that normalised anything would quietly rewrite the record.
     const master = randomBytes(32)
-    const payload = '[31mred[0m\r\ntab\there\nnon-ascii: příliš žluťoučký\n'
+    // Built from char codes rather than written inline: a raw ESC in the source
+    // makes this file binary to grep and invisible in a diff.
+    const ESC = String.fromCharCode(0x1b)
+    const BEL = String.fromCharCode(0x07)
+    const payload = `${ESC}[31mred${ESC}[0m\r\n${BEL}tab\there\nnon-ascii: příliš žluťoučký\n`
     assert.equal(decrypt(writeLog(master, [payload]), master), payload)
   })
 
@@ -161,6 +165,33 @@ describe('the decryptor refuses what it cannot vouch for', () => {
     const master = randomBytes(32)
     const file = writeLog(master, ['first frame\n'], { tail: Buffer.from([0x00, 0x00]) })
     assert.equal(decrypt(file, master), 'first frame\n', 'the frames before the cut were lost')
+  })
+
+  test('an impossible frame length is damage, not a truncation', () => {
+    /*
+      The ordering the format documents: check the bound BEFORE the short read.
+      A length the writer could never have produced means the file was edited;
+      reading it as a partial write would file the rest of the file away as an
+      ordinary crash and report success.
+    */
+    const master = randomBytes(32)
+    const file = writeLog(master, ['first\n'])
+    const bytes = readFileSync(file)
+    // The length prefix of the first frame, immediately after the header line.
+    bytes.writeUInt32BE(0xfffffff0, bytes.indexOf(0x0a) + 1)
+    writeFileSync(file, bytes)
+
+    assert.match(refusalFor(file, master), /cannot write/)
+  })
+
+  test('a frame length below the minimum is refused too', () => {
+    const master = randomBytes(32)
+    const file = writeLog(master, ['first\n'])
+    const bytes = readFileSync(file)
+    bytes.writeUInt32BE(4, bytes.indexOf(0x0a) + 1)
+    writeFileSync(file, bytes)
+
+    assert.match(refusalFor(file, master), /cannot write/)
   })
 
   test('a file that is not a log at all is named as such', () => {

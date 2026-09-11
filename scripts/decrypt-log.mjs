@@ -33,6 +33,8 @@ const NONCE_BYTES = 12
 const TAG_BYTES = 16
 const LENGTH_BYTES = 4
 const MAX_HEADER_BYTES = 64 * 1024
+const FRAME_OVERHEAD = NONCE_BYTES + TAG_BYTES
+const MAX_FRAME_PAYLOAD_BYTES = 1024 * 1024
 
 function die(message) {
   process.stderr.write(`decrypt-log: ${message}\n`)
@@ -125,7 +127,16 @@ while (at < bytes.length) {
   }
   const length = bytes.readUInt32BE(at)
   const bodyAt = at + LENGTH_BYTES
-  if (length < NONCE_BYTES + TAG_BYTES) die(`frame ${index} declares an impossible length`)
+
+  // Before the short-read check, and the order is the point: a length this
+  // format could never have written is damage, and taking it for a partial
+  // write would file the rest of the file away as an ordinary crash. Both
+  // bounds, not just the lower one — a huge length reads as a truncation too.
+  if (length < FRAME_OVERHEAD || length > FRAME_OVERHEAD + MAX_FRAME_PAYLOAD_BYTES) {
+    die(`frame ${index} declares ${length} bytes, which this format cannot write`)
+  }
+
+  // A frame cut short by a crash mid-append. Everything before it still stands.
   if (bodyAt + length > bytes.length) {
     truncated = true
     break

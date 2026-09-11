@@ -93,10 +93,15 @@ export default function SnippetList({
                     </span>
                     <div className="snip-main">
                       <div className="snip-title">
-                        {s.title}
-                        {/* In the list, not only in a tooltip: the mark is the
-                            reason this entry asks again before it runs, and it
-                            has to be visible at the moment of choosing it. */}
+                        <span className="snip-title-text">{s.title}</span>
+                        {/*
+                          In the list, not only in a tooltip: the mark is the
+                          reason this entry asks again before it runs, and it has
+                          to be visible at the moment of choosing it. Outside the
+                          truncating span, because the title is what a model
+                          chooses and a long one would otherwise push the mark
+                          out of the row entirely.
+                        */}
                         {s.origin === 'ai' && <span className="badge ai">{t('snip.byAi')}</span>}
                       </div>
                       <div className="snip-preview">{firstLine(s.body)}</div>

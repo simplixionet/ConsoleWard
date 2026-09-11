@@ -29,8 +29,16 @@ mock.module('../src/main/vault.ts', {
   exports: { newId: (): string => `id-${++nextId}` }
 })
 
-const { adoptEmbeddedKeys, assertKeyUnused, describeKey, generateKey, toKeyMeta, KeyParseError } =
-  await import('../src/main/sshKeys.ts')
+const {
+  adoptEmbeddedKeys,
+  assertKeyUnused,
+  describeKey,
+  generateKey,
+  hasKeysToAdopt,
+  importKeyText,
+  toKeyMeta,
+  KeyParseError
+} = await import('../src/main/sshKeys.ts')
 
 type Conn = Record<string, unknown>
 
@@ -107,6 +115,58 @@ describe('describeKey', () => {
         `${JSON.stringify(junk.slice(0, 20))} did not report itself unreadable`
       )
     }
+  })
+})
+
+describe('importKeyText routes a .ppk to the PPK parser', () => {
+  /*
+    The detection regex had `d{1,2}` where it meant `\\d{1,2}` — a lost
+    backslash — so every real .ppk fell through to ssh2, which cannot read the
+    format, and came back "unreadable". The whole import path was dead and every
+    test in ppkParser.test.mts still passed, because they call parsePpk directly.
+
+    So this asserts the routing rather than the parsing: a v2 file reaches the
+    parser and comes back with the version-specific message. Nothing else in the
+    module can produce that.
+  */
+  const V2_HEADER = [
+    'PuTTY-User-Key-File-2: ssh-ed25519',
+    'Encryption: none',
+    'Comment: from an older PuTTYgen',
+    'Public-Lines: 1',
+    'AAAAC3NzaC1lZDI1NTE5AAAAIHqWeRtYuIoPaSdFgHjKlZxCvBnMqWeRtYuIoPaSdFgH',
+    'Private-Lines: 1',
+    'AAAAIHqWeRtYuIoPaSdFgHjKlZxCvBnMqWeRtYuIoPaSdFgH',
+    'Private-MAC: 00'
+  ].join('\n')
+
+  test('a v2 file is recognised as PuTTY format, not reported as unreadable', () => {
+    assert.throws(
+      () => importKeyText(V2_HEADER),
+      (err: unknown) => (err as { key?: string }).key === 'error.ppkOldVersion',
+      'a .ppk never reached the PPK parser — check the detection regex'
+    )
+  })
+
+  test('CRLF line endings are recognised too, which is what PuTTYgen writes on Windows', () => {
+    assert.throws(
+      () => importKeyText(V2_HEADER.split('\n').join('\r\n')),
+      (err: unknown) => (err as { key?: string }).key === 'error.ppkOldVersion',
+      'a Windows-written .ppk was not recognised'
+    )
+  })
+
+  test('an OpenSSH key still goes the ordinary way', () => {
+    const key = ed25519()
+    assert.equal(importKeyText(key).privateKey, key, 'an OpenSSH key was routed through the PPK path')
+  })
+
+  test('text that merely mentions PuTTY is not a .ppk', () => {
+    assert.throws(
+      () => importKeyText('# exported from PuTTY-User-Key-File-3 by hand\nnot a key'),
+      (err: unknown) => err instanceof KeyParseError && err.kind === 'unreadable',
+      'the detection fires on a mention rather than on a header line'
+    )
   })
 })
 
@@ -236,6 +296,54 @@ describe('the migration off connections', () => {
     assert.equal(adoptEmbeddedKeys(data), 1)
     assert.equal(adoptEmbeddedKeys(data), 0)
     assert.equal((data as unknown as { keys: unknown[] }).keys.length, 1)
+  })
+
+  test('the "is there anything to do" check agrees with the migration itself', () => {
+    /*
+      These two drifted apart and the cost was severe: the caller asked only
+      whether key text was present, which stays true for a key describeKey
+      cannot read — and the migration skips exactly those. So every unlock
+      re-encrypted the whole vault, rolled the backup and bumped the counter to
+      move nothing, for ever, because the condition that triggered it was the
+      one the migration would never clear.
+    */
+    const cases: [string, Conn[]][] = [
+      ['nothing at all', []],
+      ['a key worth moving', [conn({ privateKey: ed25519() })]],
+      ['a key that will not parse', [conn({ privateKey: 'not a key at all' })]],
+      ['a connection already pointing at one', [conn({ privateKey: ed25519(), keyId: 'k1' })]],
+      ['a password connection', [conn({ authKind: 'password', password: 'x' })]],
+      [
+        'one movable among several that are not',
+        [
+          conn({ seed: 1, privateKey: 'junk' }),
+          conn({ seed: 2, privateKey: ed25519() }),
+          conn({ seed: 3, authKind: 'agent' })
+        ]
+      ]
+    ]
+
+    for (const [what, connections] of cases) {
+      const probe = vaultWith(structuredClone(connections))
+      const run = vaultWith(structuredClone(connections))
+      assert.equal(
+        hasKeysToAdopt(probe),
+        adoptEmbeddedKeys(run) > 0,
+        `the check and the migration disagree about "${what}"`
+      )
+    }
+  })
+
+  test('a vault whose only embedded key is unreadable never asks to be rewritten', () => {
+    const data = vaultWith([conn({ privateKey: 'not a key at all' })])
+    assert.equal(hasKeysToAdopt(data), false, 'this is the unlock-forever loop')
+  })
+
+  test('after the migration there is nothing left to do', () => {
+    const data = vaultWith([conn({ privateKey: ed25519() })])
+    assert.equal(hasKeysToAdopt(data), true)
+    adoptEmbeddedKeys(data)
+    assert.equal(hasKeysToAdopt(data), false, 'the migration did not clear its own trigger')
   })
 
   test('a connection that already points at a key is left alone', () => {

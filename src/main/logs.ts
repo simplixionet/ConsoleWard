@@ -147,6 +147,7 @@ export class LogWriter {
     // the caller was told the file was finished with.
     this.closed = true
     await this.flush()
+    this.store.handOver(this.id, null)
   }
 
   private write(payload: string): Promise<void> {
@@ -223,21 +224,33 @@ export class LogWriter {
       )
     } catch (err) {
       console.warn('logs: cannot start a new part, ending the log here:', err)
-      await this.seal(
-        `\n[consoleward] size limit reached, and a new part could not be started ` +
-          `(the vault is locked). Nothing after this point was recorded.\n`
-      )
+      // Closed before the explanation is attempted. If sealing also fails — the
+      // disk that refused the new file will likely refuse this too — the writer
+      // must still stop, or every flush retries the same doomed roll-over.
       this.closed = true
+      this.store.handOver(this.id, null)
+      try {
+        await this.seal(
+          `\n[consoleward] size limit reached, and a new part could not be started ` +
+            `(the vault is locked). Nothing after this point was recorded.\n`
+        )
+      } catch (sealErr) {
+        console.warn('logs: could not record why the log ended:', sealErr)
+      }
       return false
     }
 
     // Written before the handover, so the old file's last frame points forward.
     await this.seal(`\n[consoleward] size limit reached — continues in part ${next}\n`)
 
+    const previousId = this.id
     this.file = fresh
     this.part = next
     this.index = 0
     this.bytesWritten = (await fsp.stat(this.file.filePath)).size
+    // The old file is finished with and the new one is now the live one, so a
+    // delete or a cap eviction aims at the right file from here on.
+    this.store.handOver(previousId, { id: this.id, writer: this })
 
     const head = Buffer.from(`[consoleward] continued from part ${next - 1}\n`)
     await this.writeFrame(head, false)
@@ -261,6 +274,16 @@ export class LogWriter {
 class LogStore {
   private directory: string | null = null
   private limits: LogLimits = { maxFileBytes: 16 * 1024 * 1024, maxTotalBytes: 512 * 1024 * 1024 }
+  /**
+   * Log ids a writer is still appending to.
+   *
+   * Unlinking one of these does not free it: the writer's next `appendFile` with
+   * flag 'a' recreates the path with frame bytes and no header line, and from
+   * then on `describe` refuses it — so it is invisible to the listing, excluded
+   * from the total cap, unreachable from Delete all, and still growing. A file
+   * nobody can see or remove is the one outcome the log manager exists to avoid.
+   */
+  private live = new Map<string, LogWriter>()
 
   setDirectory(dir: string): void {
     this.directory = dir
@@ -291,9 +314,16 @@ class LogStore {
    * after this point works from the file key held in the returned writer.
    */
   async open(kind: LogKind, sessionId: string, label: string): Promise<LogWriter> {
-    await this.enforceTotalCap()
     const file = await this.createFile(kind, sessionId, label, 1)
-    return new LogWriter(this, file, this.limits, kind, 1)
+    const writer = new LogWriter(this, file, this.limits, kind, 1)
+    this.live.set(path.basename(file.filePath, EXTENSION), writer)
+    return writer
+  }
+
+  /** Called by a writer as it hands over to a new part, and again when it closes. */
+  handOver(previousId: string, next: { id: string; writer: LogWriter } | null): void {
+    this.live.delete(previousId)
+    if (next) this.live.set(next.id, next.writer)
   }
 
   /** Also used by a roll-over, which is why it is not private. */
@@ -303,6 +333,11 @@ class LogStore {
     label: string,
     part: number
   ): Promise<{ filePath: string; header: LogHeader; fileKey: Buffer }> {
+    // Here rather than in `open`: a roll-over creates a file too, and a session
+    // left running overnight rolls over many times. Enforcing only on open let
+    // one long session carry the folder past its cap with nothing to pull it
+    // back until some unrelated session happened to start.
+    await this.enforceTotalCap()
     const master = await this.masterKey()
     const created = createLogFile({
       sessionId,
@@ -385,7 +420,15 @@ class LogStore {
   }
 
   async remove(id: string): Promise<void> {
-    await fsp.rm(this.filePathFor(id), { force: true })
+    const filePath = this.filePathFor(id)
+    // Closed before the unlink, or the writer recreates the path on its next
+    // flush as a headerless file nothing can read, list or delete again.
+    const writer = this.live.get(id)
+    if (writer) {
+      this.live.delete(id)
+      await writer.close()
+    }
+    await fsp.rm(filePath, { force: true })
   }
 
   async purge(): Promise<number> {
@@ -416,6 +459,10 @@ class LogStore {
 
     for (const file of [...files].reverse()) {
       if (total <= this.limits.maxTotalBytes) break
+      // Never the log of a session that is still running: evicting it would end
+      // a record in progress to make room, and the oldest-first order means the
+      // candidates are finished sessions anyway.
+      if (this.live.has(file.id)) continue
       await this.remove(file.id)
       total -= file.bytes
       console.warn(`logs: removed ${file.id} to stay under the total size limit`)

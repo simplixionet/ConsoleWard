@@ -129,8 +129,24 @@ function under(path: string, dir: string): boolean {
 }
 
 /**
+ * Parents whose immediate children are somebody's home directory.
+ *
+ * `/home` is the obvious one and for a long time it was the only one, which was
+ * a structural hole rather than a missing constant: the accounts that matter
+ * most here are exactly the ones that do not live there. postgres is
+ * `/var/lib/postgresql`, git is `/var/lib/git` or `/srv/git`, jenkins is
+ * `/var/lib/jenkins`, www-data is `/var/www`. An `authorized_keys` under any of
+ * them is a way onto the machine as that service.
+ *
+ * Erring wide is the cheap direction: a wrong guess costs one dialog, and a
+ * missed one is a key nobody was shown.
+ */
+const HOME_PARENTS = ['/home', '/var/lib', '/srv', '/opt', '/export/home', '/Users']
+
+/**
  * The part of `path` below a home directory, leading slash and all, or null when
- * it is not in one. `~`, `~deploy`, `/root` and `/home/<user>` are all homes.
+ * it is not in one. `~`, `~deploy`, `/root` and a child of any `HOME_PARENTS`
+ * entry are all homes.
  *
  * So is a relative path: an SFTP session opens in the login home, so a bare
  * `.ssh/authorized_keys` lands there. Reading it that way is a guess, and it is
@@ -142,13 +158,16 @@ function homeTail(path: string): string | null {
     return slash === -1 ? '' : path.slice(slash)
   }
   if (under(path, '/root')) return path.slice('/root'.length)
-  if (path.startsWith('/home/')) {
-    // /home is not a home directory; /home/deploy is.
-    const rest = path.slice('/home/'.length)
+
+  for (const parent of HOME_PARENTS) {
+    if (!path.startsWith(parent + '/')) continue
+    // The parent is not a home directory; a child of it is.
+    const rest = path.slice(parent.length + 1)
     const slash = rest.indexOf('/')
     if (slash === -1) return rest === '' ? null : ''
     return rest.slice(slash)
   }
+
   if (path.startsWith('/')) return null
   return path === '.' ? '' : '/' + path
 }
@@ -168,7 +187,15 @@ const LOGIN_FILES = new Set([
   '.zlogin'
 ])
 
-/** Every directory on a default PATH, root's included. */
+/**
+ * Every directory on a default PATH, root's included.
+ *
+ * `~/bin` and `~/.local/bin` are deliberately absent although the stock
+ * `.profile` does put them on PATH. They are on PATH for one user, and writing
+ * there already requires being that user — so there is no privilege to gain,
+ * while `bin/deploy.sh` is what an ordinary deploy uploads. A rule that fires on
+ * everyday work is a rule people switch the whole list off for.
+ */
 const PATH_DIRS = ['/bin', '/sbin', '/usr/bin', '/usr/sbin', '/usr/local/bin', '/usr/local/sbin']
 
 const ACCOUNT_FILES = ['/etc/passwd', '/etc/shadow', '/etc/group', '/etc/gshadow']
@@ -226,6 +253,34 @@ const RULES: readonly PathRule[] = [
     id: 'exec.path',
     matches: (p) => PATH_DIRS.some((dir) => under(p, dir)),
     what: 'a directory on PATH, where a file becomes a command'
+  },
+  {
+    id: 'exec.boot',
+    /*
+      Runs as root with no further command, which is the line this list draws.
+      `/etc/init.d` is still live on anything with a sysvinit compatibility
+      layer, `/etc/rc.local` is read at boot on most distributions, and
+      `/etc/update-motd.d` runs on every interactive SSH login — that last one is
+      the quiet one, because nothing about the path suggests it executes.
+    */
+    matches: (p) =>
+      under(p, '/etc/init.d') ||
+      under(p, '/etc/rc.local') ||
+      under(p, '/etc/update-motd.d') ||
+      under(p, '/etc/network/if-up.d') ||
+      /^\/etc\/rc[0-9S]\.d(\/|$)/.test(p),
+    what: 'a boot or login script directory, where a file runs as root with nothing else needed'
+  },
+  {
+    id: 'access.auth',
+    /*
+      PAM decides what counts as a successful login, so a file in /etc/pam.d is
+      an authentication decision. ld.so.preload is the sharper one: it injects a
+      library into every dynamically linked program on the box, root's included,
+      and takes effect on the next execve with no restart of anything.
+    */
+    matches: (p) => under(p, '/etc/pam.d') || p === '/etc/ld.so.preload' || under(p, '/etc/ld.so.conf.d'),
+    what: 'an authentication or loader configuration, which changes what every program does'
   },
   {
     id: 'web.root',

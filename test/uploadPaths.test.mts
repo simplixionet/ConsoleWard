@@ -322,6 +322,68 @@ describe('every rule can be explained to the human it interrupts', () => {
 // What this is not
 // --------------------------------------------------------------------------
 
+describe('homes that are not under /home', () => {
+  test('a service account keeps its keys somewhere else entirely', () => {
+    /*
+      The accounts that matter most here are exactly the ones not under /home.
+      postgres is /var/lib/postgresql, jenkins is /var/lib/jenkins, git is
+      /srv/git, www-data is /var/www. Recognising only /home and /root was a
+      structural gap, not a missing constant.
+    */
+    flagged('/var/lib/postgresql/.ssh/authorized_keys', 'access.sshKeys')
+    flagged('/var/lib/jenkins/.ssh/authorized_keys', 'access.sshKeys')
+    flagged('/srv/git/.ssh/id_ed25519', 'access.sshKeys')
+    flagged('/opt/gitlab/.ssh/authorized_keys', 'access.sshKeys')
+    flagged('/export/home/deploy/.ssh/authorized_keys', 'access.sshKeys')
+  })
+
+  test('a login file in a service account home runs at its next login too', () => {
+    flagged('/var/lib/postgresql/.bashrc', 'exec.loginShell')
+  })
+
+  test('the parent itself is not a home, and neither is its ordinary content', () => {
+    // Erring wide costs a dialog; erring wide on everything costs the list.
+    ordinary('/var/lib/postgresql/data/pg_hba.conf')
+    ordinary('/var/lib/docker/overlay2/x')
+    ordinary('/srv/app/releases/2026-09-11/config.yml')
+    ordinary('/opt/app/bin/run')
+  })
+})
+
+describe('what runs with no further command', () => {
+  test('boot and login script directories', () => {
+    // /etc/update-motd.d is the quiet one: nothing about the path says it runs,
+    // and it runs on every interactive SSH login.
+    flagged('/etc/init.d/app', 'exec.boot')
+    flagged('/etc/rc.local', 'exec.boot')
+    flagged('/etc/rc3.d/S99app', 'exec.boot')
+    flagged('/etc/rcS.d/S01x', 'exec.boot')
+    flagged('/etc/update-motd.d/99-hello', 'exec.boot')
+    flagged('/etc/network/if-up.d/route', 'exec.boot')
+  })
+
+  test('authentication and the dynamic loader', () => {
+    // ld.so.preload is the sharpest entry on the whole list: a library injected
+    // into every dynamically linked program, root's included, on the next exec.
+    flagged('/etc/pam.d/sshd', 'access.auth')
+    flagged('/etc/ld.so.preload', 'access.auth')
+    flagged('/etc/ld.so.conf.d/local.conf', 'access.auth')
+  })
+
+  test('a per-user bin directory is deliberately NOT on the list', () => {
+    /*
+      The stock .profile does put ~/bin and ~/.local/bin on PATH. Both are on it
+      for one user, and writing there already requires being that user — so
+      there is no privilege to gain, while `bin/deploy.sh` is what an ordinary
+      deploy uploads. A rule that fires on everyday work is a rule people switch
+      the whole list off for.
+    */
+    ordinary('bin/deploy.sh')
+    ordinary('~/bin/deploy.sh')
+    ordinary('~/.local/bin/tool')
+  })
+})
+
 describe('the list is a destination check, not a boundary', () => {
   test('anything deliberate walks straight past it', () => {
     /*

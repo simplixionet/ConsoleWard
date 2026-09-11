@@ -24,11 +24,13 @@ export default function KeyManager({ keys, onChanged }: Props) {
   const [renaming, setRenaming] = useState<string | null>(null)
   const [draftName, setDraftName] = useState('')
   const [shown, setShown] = useState<string | null>(null)
+  const [confirming, setConfirming] = useState<string | null>(null)
   const [copied, setCopied] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   async function remove(key: SshKeyMeta): Promise<void> {
     setError(null)
+    setConfirming(null)
     try {
       unwrap(await api.keys.remove(key.id))
       onChanged()
@@ -123,10 +125,31 @@ export default function KeyManager({ keys, onChanged }: Props) {
             >
               {t('common.rename')}
             </button>
-            <button className="btn small danger" onClick={() => void remove(k)}>
+            <button className="btn small danger" onClick={() => setConfirming(k.id)}>
               {t('common.delete')}
             </button>
           </div>
+
+          {/*
+            Four small adjacent buttons, and one of them destroys a key whose
+            private half — for a generated one — exists nowhere else. Every other
+            destructive action in this application asks first; this one did not.
+          */}
+          {confirming === k.id && (
+            <div className="form-error key-confirm">
+              {t(k.origin === 'generated' ? 'keys.deleteGenerated' : 'keys.deleteImported', {
+                name: k.name
+              })}
+              <div className="key-actions">
+                <button className="btn small danger" onClick={() => void remove(k)}>
+                  {t('common.delete')}
+                </button>
+                <button className="btn small" onClick={() => setConfirming(null)}>
+                  {t('common.cancel')}
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       ))}
 

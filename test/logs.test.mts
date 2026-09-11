@@ -317,6 +317,76 @@ describe('the paths that run while something is already wrong', () => {
     }
   })
 
+  test('deleting a log whose writer is open does not resurrect it headerless', async () => {
+    /*
+      Unlinking a path a writer still holds does not free it: the next append
+      with flag 'a' recreates it with frame bytes and no header line, and from
+      then on describe() refuses it — invisible to the listing, excluded from
+      the total cap, unreachable from Delete all, and still growing.
+    */
+    const writer = await logs.open('transcript', 'sess-del', 'web01')
+    writer.append('before the delete\n')
+    await writer.flush()
+
+    await logs.remove(writer.id)
+    writer.append('after the delete\n')
+    await writer.close()
+
+    assert.deepEqual(readdirSync(dir), [], 'the deleted log came back as a file nothing can read')
+    assert.deepEqual(await logs.list(), [])
+    assert.equal(await logs.totalBytes(), 0)
+  })
+
+  test('purge cannot leave a live log behind', async () => {
+    const a = await logs.open('transcript', 'sess-p1', 'web01')
+    const b = await logs.open('transcript', 'sess-p2', 'db')
+    a.append('one\n')
+    b.append('two\n')
+    await a.flush()
+    await b.flush()
+
+    assert.equal(await logs.purge(), 2)
+    a.append('still writing\n')
+    b.append('still writing\n')
+    await a.close()
+    await b.close()
+
+    assert.deepEqual(readdirSync(dir), [], 'Delete all left a file that keeps growing')
+  })
+
+  test('the total cap is enforced on a roll-over, not only when a session opens', async () => {
+    /*
+      One session left running overnight rolls over many times. Enforcing only
+      on open let it carry the folder past its cap with nothing to pull it back
+      until some unrelated session happened to start.
+
+      The total cap has a 1 MiB floor in setLimits, so the numbers here are
+      above it — a smaller cap silently becomes 1 MiB and the test proves nothing.
+    */
+    const CAP = 2 * 1024 * 1024
+    logs.setLimits({ maxFileBytes: 128 * 1024, maxTotalBytes: CAP })
+
+    const old = await logs.open('transcript', 'sess-old', 'older')
+    old.append('x'.repeat(1024 * 1024))
+    await old.close()
+
+    const writer = await logs.open('transcript', 'sess-long', 'web01')
+    for (let i = 0; i < 24; i += 1) writer.append('y'.repeat(100 * 1024))
+    await writer.close()
+
+    const total = await logs.totalBytes()
+    // One part's worth of slack: the eviction runs as a part is created, so the
+    // part being written is always over the line by the time it closes.
+    assert.ok(
+      total <= CAP + 256 * 1024,
+      `one long session carried the folder to ${total} bytes against a ${CAP} cap`
+    )
+    assert.ok(
+      !(await logs.list()).some((f) => f.label === 'older'),
+      'the finished log was kept while the live session grew past the cap'
+    )
+  })
+
   test('a file that is not a log is skipped by the listing, not fatal', async () => {
     await fsp.writeFile(path.join(dir, 'transcript-junk.cwlog'), 'not json at all')
     const writer = await logs.open('transcript', 'sess-ok', 'web01')

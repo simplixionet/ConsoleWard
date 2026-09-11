@@ -604,7 +604,14 @@ export default function SettingsDialog({
           <button className="btn" onClick={onClose}>
             {t('common.close')}
           </button>
-          {(tab === 'general' || tab === 'security' || tab === 'logs') && (
+          {/*
+            'mcp' belongs here and did not before 1.2: the unattended-mode and
+            guard switches live on that tab and write to `draft`, so without a
+            Save the user toggled the gate, saw the panel change colour, closed
+            the dialog and lost it. The direction that matters is turning the
+            gate back ON.
+          */}
+          {(tab === 'general' || tab === 'security' || tab === 'logs' || tab === 'mcp') && (
             <button className="btn primary" onClick={save}>
               {t('common.save')}
             </button>

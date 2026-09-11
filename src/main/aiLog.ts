@@ -30,10 +30,23 @@ export type AiEvent =
   | { kind: 'shared'; origin: string; chars: number; edited: boolean }
   | { kind: 'withheld'; origin: string; reason: string }
   | { kind: 'readTerminal'; reason: string; chars: number }
-  | { kind: 'savedCommand'; title: string; body: string; approved: boolean }
+  /**
+   * `unattended` carries what `approved` cannot. In unattended mode the bridge
+   * returns `approved: true` after writing with nobody asked, so without this
+   * the one record of an unreviewed write into the command library reads
+   * exactly like one a human clicked through — and that library is run later,
+   * out of context, which is the whole reason the mark on it is load-bearing.
+   */
+  | { kind: 'savedCommand'; title: string; body: string; approved: boolean; unattended: boolean }
   /** Content included: a file that landed unattended is the record's whole point. */
   | { kind: 'uploaded'; path: string; bytes: number; content: string; unattended: boolean }
   | { kind: 'uploadDenied'; path: string; bytes: number }
+  /**
+   * SFTP opens with truncate, so a write that fails part way has already
+   * emptied the destination. An upload that left no entry at all was the one
+   * case where the log went quiet exactly when it mattered.
+   */
+  | { kind: 'uploadFailed'; path: string; bytes: number; error: string }
 
 interface OpenLog {
   writer: LogWriter
@@ -43,6 +56,16 @@ interface OpenLog {
 
 class AiLog {
   private open = new Map<string, OpenLog>()
+  /**
+   * Sessions whose log has been closed. Without this a stray event after the
+   * close — a share dialog answered as the connection dropped — calls
+   * `logs.open` again and creates a second file for a session that has ended,
+   * under a map entry no close path will ever reach.
+   *
+   * One short string per session per run of the application, so it is bounded
+   * by how many sessions a person opens before quitting.
+   */
+  private finished = new Set<string>()
 
   /**
    * Records one event. Never throws and never rejects: an audit trail that can
@@ -52,6 +75,7 @@ class AiLog {
   async record(sessionId: string, sessionName: string, event: AiEvent): Promise<void> {
     try {
       if (!logs.configured) return
+      if (this.finished.has(sessionId)) return
       if (vault.read().settings.aiLog === false) return
       const writer = await this.writerFor(sessionId, sessionName)
       writer.append(JSON.stringify({ at: new Date().toISOString(), ...event }) + '\n')
@@ -99,6 +123,7 @@ class AiLog {
   }
 
   async close(sessionId: string): Promise<void> {
+    this.finished.add(sessionId)
     const entry = this.open.get(sessionId)
     if (!entry) return
     this.open.delete(sessionId)

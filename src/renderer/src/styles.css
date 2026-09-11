@@ -898,9 +898,23 @@ input.mono {
 .snip-title {
   font-size: 13px;
   font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+/* The title truncates; anything beside it does not. */
+.snip-title-text {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.snip-title .badge {
+  flex: none;
+}
+.key-confirm {
+  width: 100%;
+  margin-top: 8px;
 }
 .snip-preview {
   font-family: var(--font-mono);

@@ -4,6 +4,7 @@
 import type { UploadApproval } from '@shared/types'
 import { useT } from '../i18n'
 import { useArmedAfterPaint } from '../armDelay'
+import { useClippedBox } from '../useClipped'
 
 interface Props {
   request: UploadApproval
@@ -21,6 +22,10 @@ export default function UploadApprovalDialog({ request, onAnswer }: Props) {
   const t = useT()
   const armed = useArmedAfterPaint()
   const rewritten = request.resolvedPath !== request.path.trim()
+  // The preview is 40 lines; the box shows about nine of them. Saying "only the
+  // beginning is shown" is not enough on its own — that text appears only when
+  // the CONTENT was truncated, and the box clips what did arrive as well.
+  const [previewRef, previewClipped] = useClippedBox<HTMLPreElement>(request.preview)
 
   return (
     <div className="modal-backdrop">
@@ -54,6 +59,12 @@ export default function UploadApprovalDialog({ request, onAnswer }: Props) {
             )}
           </div>
 
+          {/*
+            The rule's own wording carries the headline. "This destination
+            grants access" was written for ~/.ssh and is simply false of cron,
+            of PATH and of a web root — and a warning that does not describe what
+            is in front of the reader teaches them to skim the next one.
+          */}
           {request.flagged && (
             <div className="warn-box danger-box">
               <b>{t('mcp.uploadFlaggedLead')}</b>{' '}
@@ -67,10 +78,18 @@ export default function UploadApprovalDialog({ request, onAnswer }: Props) {
           </div>
 
           <div>
-            <div className="meta-label">{t('mcp.uploadContent')}</div>
-            <pre className="command-box">{request.preview}</pre>
+            <div className="meta-label meta-label-row">
+              <span>{t('mcp.uploadContent')}</span>
+              <span className="meta-count">{t('mcp.uploadBytes', { count: request.bytes })}</span>
+            </div>
+            <pre className="command-box" ref={previewRef}>
+              {request.preview}
+            </pre>
             {request.previewTruncated && (
               <div className="warn-box">{t('mcp.uploadPreviewWarn')}</div>
+            )}
+            {previewClipped && !request.previewTruncated && (
+              <div className="warn-box">{t('mcp.previewClippedWarn')}</div>
             )}
           </div>
 

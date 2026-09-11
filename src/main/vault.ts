@@ -55,7 +55,25 @@ const MAXMEM = 320 * 1024 * 1024
  */
 const KDF_ACCEPTED = { minN: 1 << 17, maxN: 1 << 18, r: 8, p: 1, keylen: 32, minSaltBytes: 16 }
 
-const VAULT_VERSION = 3 as const
+/**
+ * 4 since 1.2, and the bump is a fence rather than a format change: the body is
+ * byte-for-byte what version 3 held, plus `keys[]`.
+ *
+ * What it stops is a downgrade. A 1.1 build opens a version-3 file happily, and
+ * its `normalizeData` does not know `keys[]` — so it reads the vault, drops the
+ * field, and writes it back without. Every key-based connection then points at
+ * a key that is gone, silently, with the only copy of a generated key's private
+ * half destroyed. Refusing to open the file is a far better failure: the user
+ * sees "unsupported vault", installs the newer build again and loses nothing.
+ *
+ * A version-3 file stays version 3 until something writes to it, which is
+ * exactly when `keys[]` first appears — so the fence engages at the moment it
+ * starts being needed and not before.
+ */
+const VAULT_VERSION = 4 as const
+
+/** Every version this build can read. Anything else is refused, not guessed at. */
+const READABLE_VERSIONS = [1, 2, 3, 4] as const
 
 /** Penalty after the first wrong password, doubling with each further one. */
 const UNLOCK_BASE_DELAY_MS = 250
@@ -99,8 +117,14 @@ interface VaultFileV2 {
   wraps: KeyWrap[]
 }
 
+/**
+ * Versions 3 and 4 share this shape exactly. 4 differs only in the number, which
+ * is a fence against an older build rather than a format change — see
+ * `VAULT_VERSION`. One interface, because two identical ones would invite
+ * someone to change a field in only one of them.
+ */
 interface VaultFileV3 {
-  version: 3
+  version: 3 | 4
   cipher: 'aes-256-gcm'
   /** Rises with every write. AAD protects it; `vaultGuard` compares it. */
   counter: number
@@ -521,6 +545,15 @@ class Vault {
     // plaintext recovery key, which is stored nowhere. A failed write must lock —
     // `adopt()` has already set `dek`, `wraps` and `data`, so `isUnlocked()`
     // would stay true behind the lock screen, and SSH and MCP both hang on it.
+    /*
+      v2 needs this: its body carried no AAD over the header, so it is a real
+      format change and the `.bak` left behind is a copy in the old format under
+      the same secrets. v3 does not — it is the same bytes under a different
+      number — so it is deliberately NOT migrated here. It converts on the first
+      ordinary write, which is the same write that first stores `keys[]`, and
+      rewriting every vault on unlock to change one integer would spend the
+      riskiest operation this file performs on nothing.
+    */
     if (file.version === 2) {
       try {
         await this.persist(this.data!)
@@ -742,7 +775,7 @@ class Vault {
     }
     if (
       file.cipher !== 'aes-256-gcm' ||
-      (file.version !== 1 && file.version !== 2 && file.version !== 3)
+      !(READABLE_VERSIONS as readonly number[]).includes(file.version)
     ) {
       throw appError('error.vaultUnsupported')
     }
@@ -759,22 +792,29 @@ class Vault {
     } else {
       for (const wrap of file.wraps) assertKdf(wrap?.kdf)
     }
-    // The v3 header goes into AAD, so anything unencodable must not get past here.
-    if (file.version === 3) assertHeaderShape(file)
+    // From v3 on the header goes into AAD, so anything unencodable must not get
+    // past here. `!== 2` and `!== 1`, not `=== 3`: the version bump to 4 must not
+    // quietly drop this check the way it nearly dropped the AAD and the counter.
+    if (file.version !== 1 && file.version !== 2) assertHeaderShape(file)
     return file
   }
 
   /**
-   * Decrypts the body with the DEK and takes the state into memory. In v3 the
-   * AAD binding makes any header edit fail the tag; v2 has none and cannot,
+   * Decrypts the body with the DEK and takes the state into memory. From v3 on,
+   * the AAD binding makes any header edit fail the tag; v2 has none and cannot,
    * which is why `version` is itself in the AAD — rewriting a v3 header to
    * `version: 2` to skip AAD ends in `error.decryptFailed`.
+   *
+   * The test names the ONE version without AAD rather than listing the ones
+   * with it. Written as `=== 3` it silently stopped applying the AAD the moment
+   * VAULT_VERSION moved to 4, and every vault this build wrote failed to open
+   * again — so the next bump must not be able to do that twice.
    */
   private adopt(file: VaultFileV2 | VaultFileV3, dek: Buffer): void {
     let plaintext: string
     try {
       const decipher = createDecipheriv('aes-256-gcm', dek, Buffer.from(file.iv, 'base64'))
-      if (file.version === 3) decipher.setAAD(headerAad(file))
+      if (file.version !== 2) decipher.setAAD(headerAad(file))
       decipher.setAuthTag(Buffer.from(file.tag, 'base64'))
       plaintext = Buffer.concat([
         decipher.update(Buffer.from(file.data, 'base64')),
@@ -787,8 +827,11 @@ class Vault {
 
     this.dek = dek
     this.wraps = file.wraps
-    // v2 has no counter; there is nothing to continue from until the first v3 write.
-    this.counter = file.version === 3 ? file.counter : 0
+    // v2 has no counter; there is nothing to continue from until the first
+    // counter-bearing write. Every version from 3 on carries one — testing
+    // `!== 2` rather than `=== 3` so the next format bump cannot silently reset
+    // the counter and, with it, the rollback anchor.
+    this.counter = file.version === 2 ? 0 : file.counter
     this.data = normalizeData(JSON.parse(plaintext) as Partial<VaultData>)
   }
 

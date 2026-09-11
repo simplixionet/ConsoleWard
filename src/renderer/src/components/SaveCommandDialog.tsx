@@ -4,6 +4,7 @@
 import type { SaveCommandApproval } from '@shared/types'
 import { useT } from '../i18n'
 import { useArmedAfterPaint } from '../armDelay'
+import { useClippedBox } from '../useClipped'
 
 interface Props {
   request: SaveCommandApproval
@@ -25,6 +26,9 @@ interface Props {
 export default function SaveCommandDialog({ request, onAnswer }: Props) {
   const t = useT()
   const armed = useArmedAfterPaint()
+  // Same reason as the run dialog: what is stored is what runs later, and the
+  // box hides anything past its cap behind a scrollbar in the footer's shadow.
+  const [bodyRef, bodyClipped] = useClippedBox<HTMLPreElement>(request.bodyVisualized)
 
   return (
     <div className="modal-backdrop">
@@ -35,13 +39,21 @@ export default function SaveCommandDialog({ request, onAnswer }: Props) {
 
         <div className="modal-body">
           <div className="approval-meta">
+            {/*
+              Both come from the model and both are capped on the way into the
+              vault — 120 and 60 characters. Showing the raw value would put a
+              different string in front of the human than the one that gets
+              stored, and a long one would push the rest of the dialog off screen.
+            */}
             <div>
               <span className="meta-label">{t('mcp.saveName')}</span>
-              <span className="meta-value">{request.title}</span>
+              <span className="meta-value">{request.title.trim().slice(0, 120)}</span>
             </div>
             <div>
               <span className="meta-label">{t('conn.folder')}</span>
-              <span className="meta-value">{request.folder || t('mcp.saveNoFolder')}</span>
+              <span className="meta-value">
+                {request.folder?.trim().slice(0, 60) || t('mcp.saveNoFolder')}
+              </span>
             </div>
           </div>
 
@@ -57,7 +69,10 @@ export default function SaveCommandDialog({ request, onAnswer }: Props) {
                 {t('mcp.totalCount', { count: request.body.length })}
               </span>
             </div>
-            <pre className="command-box">{request.bodyVisualized}</pre>
+            <pre className="command-box" ref={bodyRef}>
+              {request.bodyVisualized}
+            </pre>
+            {bodyClipped && <div className="warn-box">{t('mcp.previewClippedWarn')}</div>}
           </div>
 
           {request.note && (

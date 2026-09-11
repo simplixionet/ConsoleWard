@@ -119,7 +119,7 @@ export function importKeyText(text: string, passphrase?: string): ImportedKey {
 }
 
 function looksLikePpk(text: string): boolean {
-  return /^PuTTY-User-Key-File-d{1,2}:/m.test(text.slice(0, 200))
+  return /^PuTTY-User-Key-File-\d{1,2}:/m.test(text.slice(0, 200))
 }
 
 /**
@@ -189,16 +189,9 @@ export function adoptEmbeddedKeys(data: VaultData): number {
   let moved = 0
 
   for (const conn of data.connections) {
-    if (!conn.privateKey || conn.keyId) continue
-
-    let facts: KeyFacts
-    try {
-      facts = describeKey(conn.privateKey, conn.passphrase)
-    } catch {
-      // Including an encrypted key whose passphrase the connection does not
-      // hold: it still authenticates, it just cannot be described yet.
-      continue
-    }
+    const movable = movableKey(conn)
+    if (!movable) continue
+    const { facts, privateKey } = movable
 
     const existing = data.keys.find((k) => k.fingerprint === facts.fingerprint)
     if (existing) {
@@ -207,7 +200,7 @@ export function adoptEmbeddedKeys(data: VaultData): number {
       const key: SshKey = {
         id: newId(),
         name: keyNameFor(conn, facts, data.keys),
-        privateKey: conn.privateKey,
+        privateKey,
         passphrase: conn.passphrase,
         keyType: facts.keyType,
         publicKey: facts.publicKey,
@@ -225,6 +218,34 @@ export function adoptEmbeddedKeys(data: VaultData): number {
   }
 
   return moved
+}
+
+/**
+ * What `adoptEmbeddedKeys` would move this connection's key as, or null when it
+ * would leave it alone.
+ *
+ * Split out so the caller's "is there anything to do" check cannot drift from
+ * the migration's own rules. It did: asking only whether `privateKey` was set
+ * kept saying yes for a key `describeKey` cannot read, which the migration
+ * skips on purpose — so every unlock re-encrypted the whole vault to move
+ * nothing, for ever, because the condition that triggered it was the one the
+ * migration would never clear.
+ */
+function movableKey(conn: Connection): { facts: KeyFacts; privateKey: string } | null {
+  const privateKey = conn.privateKey
+  if (!privateKey || conn.keyId) return null
+  try {
+    return { facts: describeKey(privateKey, conn.passphrase), privateKey }
+  } catch {
+    // Including an encrypted key whose passphrase the connection does not hold:
+    // it still authenticates, it just cannot be described yet.
+    return null
+  }
+}
+
+/** Whether `adoptEmbeddedKeys` would move anything. Same rules, by construction. */
+export function hasKeysToAdopt(data: VaultData): boolean {
+  return data.connections.some((conn) => movableKey(conn) !== null)
 }
 
 /** The key's own comment first — it is usually `user@host` and says more than the connection's name. */
