@@ -31,14 +31,25 @@ export const DEFAULT_SETTINGS: Settings = {
   // Both defaults point the same way: the gate is on, and the net under it is
   // on too. Turning either off has to be something a person did on purpose.
   dangerousMode: false,
-  dangerousGuard: true
+  dangerousGuard: true,
+  // Off even when unattended mode is on: writing a file is not the same trade
+  // as running a command that echoes into a session somebody can read back.
+  dangerousUpload: false,
+  // On, because the contents are ciphertext under a key in the vault. The two
+  // caps below are what makes that default defensible rather than a disk leak.
+  sessionLogs: true,
+  aiLog: true,
+  logMaxFileMb: 16,
+  logMaxTotalMb: 512
 }
 
 /** Inclusive bounds, in the units the settings dialog shows. */
 export const SETTINGS_LIMITS = {
   autoLockMinutes: { min: 0, max: 24 * 60 },
   fontSize: { min: 8, max: 32 },
-  scrollback: { min: 500, max: 200_000 }
+  scrollback: { min: 500, max: 200_000 },
+  logMaxFileMb: { min: 1, max: 256 },
+  logMaxTotalMb: { min: 16, max: 10_240 }
 } as const
 
 /**
@@ -64,6 +75,11 @@ export const SETTINGS_FIELDS: Record<
   mcpPort: 'elsewhere',
   dangerousMode: 'saved',
   dangerousGuard: 'saved',
+  dangerousUpload: 'saved',
+  sessionLogs: 'saved',
+  aiLog: 'saved',
+  logMaxFileMb: 'saved',
+  logMaxTotalMb: 'saved',
   aiModel: 'unused',
   aiEffort: 'unused',
   hasAiApiKey: 'derived'
@@ -161,7 +177,26 @@ export function sanitizeSettings(current: Settings, patch: unknown): Settings {
     mcpEnabled: flag(current.mcpEnabled, 'mcpEnabled', false),
     mcpPort: port(current.mcpPort),
     dangerousMode: flag(current.dangerousMode, 'dangerousMode', DEFAULT_SETTINGS.dangerousMode),
-    dangerousGuard: flag(current.dangerousGuard, 'dangerousGuard', DEFAULT_SETTINGS.dangerousGuard)
+    dangerousGuard: flag(current.dangerousGuard, 'dangerousGuard', DEFAULT_SETTINGS.dangerousGuard),
+    dangerousUpload: flag(
+      current.dangerousUpload,
+      'dangerousUpload',
+      DEFAULT_SETTINGS.dangerousUpload
+    ),
+    sessionLogs: flag(current.sessionLogs, 'sessionLogs', DEFAULT_SETTINGS.sessionLogs),
+    aiLog: flag(current.aiLog, 'aiLog', DEFAULT_SETTINGS.aiLog),
+    logMaxFileMb: whole(
+      current.logMaxFileMb,
+      'logMaxFileMb',
+      SETTINGS_LIMITS.logMaxFileMb,
+      DEFAULT_SETTINGS.logMaxFileMb
+    ),
+    logMaxTotalMb: whole(
+      current.logMaxTotalMb,
+      'logMaxTotalMb',
+      SETTINGS_LIMITS.logMaxTotalMb,
+      DEFAULT_SETTINGS.logMaxTotalMb
+    )
   }
 
   if (has(incoming, 'autoLockMinutes')) {
@@ -191,6 +226,19 @@ export function sanitizeSettings(current: Settings, patch: unknown): Settings {
   }
   if (has(incoming, 'dangerousGuard')) {
     next.dangerousGuard = flag(incoming.dangerousGuard, 'dangerousGuard')
+  }
+  if (has(incoming, 'dangerousUpload')) {
+    next.dangerousUpload = flag(incoming.dangerousUpload, 'dangerousUpload')
+  }
+  // Same rule as above: switching a log off is a decision, so a non-boolean
+  // fails rather than being read as one direction or the other.
+  if (has(incoming, 'sessionLogs')) next.sessionLogs = flag(incoming.sessionLogs, 'sessionLogs')
+  if (has(incoming, 'aiLog')) next.aiLog = flag(incoming.aiLog, 'aiLog')
+  if (has(incoming, 'logMaxFileMb')) {
+    next.logMaxFileMb = whole(incoming.logMaxFileMb, 'logMaxFileMb', SETTINGS_LIMITS.logMaxFileMb)
+  }
+  if (has(incoming, 'logMaxTotalMb')) {
+    next.logMaxTotalMb = whole(incoming.logMaxTotalMb, 'logMaxTotalMb', SETTINGS_LIMITS.logMaxTotalMb)
   }
   return next
 }

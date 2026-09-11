@@ -1360,6 +1360,49 @@ input.mono {
   user-select: text;
 }
 
+/* The AI mark. Distinct from .badge.ok, which reads as reassurance. */
+.badge.ai {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.keys-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+/* A key row carries four buttons and a public key, so it stacks instead. */
+.key-row {
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+.key-main {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+.key-main .host-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.key-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.pubkey {
+  width: 100%;
+  margin-top: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  resize: vertical;
+  word-break: break-all;
+}
+
 .toast {
   position: fixed;
   bottom: 42px;

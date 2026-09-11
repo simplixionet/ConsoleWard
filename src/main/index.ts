@@ -18,22 +18,42 @@ import { contentSecurityPolicy } from '../shared/csp'
 import type {
   ConnectionInput,
   ConnectionMeta,
+  KeyGenerateInput,
+  KeyImportInput,
   KnownHost,
+  LogFileInfo,
   Result,
   Settings,
   Snippet,
   SnippetInput,
+  SshKey,
+  SshKeyMeta,
   VaultStatus
 } from '../shared/types'
-import type { CommandApproval, McpStatus, ShareRequest } from '../shared/types'
+import type {
+  CommandApproval,
+  McpStatus,
+  SaveCommandApproval,
+  ShareRequest,
+  UploadApproval
+} from '../shared/types'
 import { appError, currentLocale, initI18n, setLocale, t } from './i18n'
 import { readPrefs, writePrefs } from './prefs'
+import type { VaultData } from './vault'
 import { migrateLegacyProfile, newId, vault } from './vault'
+import {
+  adoptEmbeddedKeys,
+  assertKeyUnused,
+  generateKey,
+  importKeyText,
+  toKeyMeta
+} from './sshKeys'
 import { DEFAULT_SETTINGS, sanitizeSettings } from './settings'
 import { ssh } from './ssh'
 import { mcp } from './mcp'
 import { approvals } from './approvals'
 import { readSmallTextFile } from './textFile'
+import { logs } from './logs'
 
 const isDev = !app.isPackaged
 let mainWindow: BrowserWindow | null = null
@@ -176,6 +196,11 @@ function registerMcpBridge(): void {
     sendCommand: (req: CommandApproval) =>
       mainWindow?.webContents.send(CH.mcpCommandRequestEvent, req),
 
+    sendSaveCommand: (req: SaveCommandApproval) =>
+      mainWindow?.webContents.send(CH.mcpSaveCommandRequestEvent, req),
+
+    sendUpload: (req: UploadApproval) => mainWindow?.webContents.send(CH.mcpUploadRequestEvent, req),
+
     sendShare: (req: ShareRequest) => mainWindow?.webContents.send(CH.mcpShareRequestEvent, req),
 
     // Raising is the queue's call, not the tool's: one raise per request means
@@ -189,7 +214,49 @@ function registerMcpBridge(): void {
     }
   })
 
-  mcp.bind(approvals)
+  /*
+    The queue answers the two questions it owns; saving needs a third step the
+    queue must not have, because it writes to the vault and `approvals.ts`
+    deliberately knows nothing about either Electron or the vault.
+  */
+  mcp.bind({
+    askCommand: (req) => approvals.askCommand(req),
+    askShare: (req) => approvals.askShare(req),
+    askUpload: (req) => approvals.askUpload(req),
+    saveCommand: async (req, skipApproval) => {
+      if (!skipApproval) {
+        const answer = await approvals.askSaveCommand(req)
+        if (!answer.approved) return { approved: false }
+      }
+      await saveAiSnippet(req)
+      return { approved: true }
+    }
+  })
+}
+
+/**
+ * Writes a model-proposed command into the library, through the same rules
+ * `snip:save` uses — including the newline normalisation, because a CRLF
+ * reaching a shell as `^M` is no less of a problem for having come from an AI.
+ */
+async function saveAiSnippet(req: SaveCommandApproval): Promise<void> {
+  await vault.mutate((data) => {
+    const now = Date.now()
+    data.snippets.push({
+      id: newId(),
+      title: req.title.trim().slice(0, 120),
+      body: normalizeNewlines(req.body),
+      note: req.note?.trim().slice(0, 500) || undefined,
+      // A model-supplied folder places the entry wherever it likes, including
+      // one the user trusts — so the dialog shows it, and the length is capped
+      // here rather than letting a folder name become a paragraph.
+      folder: req.folder?.trim().slice(0, 60) || undefined,
+      kind: 'command',
+      origin: 'ai',
+      createdAt: now,
+      updatedAt: now
+    })
+  })
 }
 
 /* ---------------------------------------------------------------- helpers */
@@ -230,6 +297,8 @@ function toMeta(c: {
   port: number
   username: string
   authKind: ConnectionMeta['authKind']
+  keyId?: string
+  logTranscript?: boolean
   password?: string
   privateKey?: string
   passphrase?: string
@@ -246,6 +315,8 @@ function toMeta(c: {
     port: c.port,
     username: c.username,
     authKind: c.authKind,
+    keyId: c.keyId,
+    logTranscript: c.logTranscript,
     hasPassword: Boolean(c.password),
     hasPrivateKey: Boolean(c.privateKey),
     hasPassphrase: Boolean(c.passphrase),
@@ -255,6 +326,22 @@ function toMeta(c: {
     createdAt: c.createdAt,
     updatedAt: c.updatedAt
   }
+}
+
+/**
+ * Same three-state rule as the secrets, plus a check: an id that names no key
+ * would leave the connection unable to authenticate, and the failure would only
+ * show up at the next connect.
+ */
+function applyKeyId(
+  data: VaultData,
+  current: string | undefined,
+  incoming: string | undefined
+): string | undefined {
+  if (incoming === undefined) return current
+  if (incoming === '') return undefined
+  if (!data.keys.some((k) => k.id === incoming)) throw appError('error.keyMissing')
+  return incoming
 }
 
 /** `ConnectionInput` secrets: `undefined` keeps, `''` clears, anything else replaces. */
@@ -311,6 +398,35 @@ function installGuardSealer(): void {
   })
 }
 
+/**
+ * Moves key text off connections and into the key library, once, on unlock.
+ *
+ * It runs through `vault.mutate`, which clones, writes and only then adopts —
+ * so a failed write leaves the vault exactly as it was rather than half
+ * migrated. A failure is logged and not rethrown: the vault is open, every
+ * connection still authenticates from its own key text, and refusing to unlock
+ * over a convenience migration would be the worse outcome.
+ */
+/** The caps are read from settings at every change; a writer already open keeps the ones it opened with. */
+function applyLogLimits(settings: Settings): void {
+  logs.setLimits({
+    maxFileBytes: (settings.logMaxFileMb ?? 16) * 1024 * 1024,
+    maxTotalBytes: (settings.logMaxTotalMb ?? 512) * 1024 * 1024
+  })
+}
+
+async function moveKeysIntoLibrary(): Promise<void> {
+  // `mutate` always writes, and most unlocks have nothing to move. Checking
+  // first keeps the common case from rewriting the vault for no reason.
+  if (!vault.read().connections.some((c) => c.privateKey && !c.keyId)) return
+  try {
+    const moved = await vault.mutate(adoptEmbeddedKeys)
+    if (moved > 0) console.log(`vault: moved ${moved} key(s) into the key library`)
+  } catch (err) {
+    console.warn('vault: key migration failed, connections keep their own keys:', err)
+  }
+}
+
 /* --------------------------------------------------------------------- IPC */
 
 function registerIpc(): void {
@@ -338,6 +454,8 @@ function registerIpc(): void {
   handle(CH.vaultUnlock, async (pw: string) => {
     await vault.unlock(pw)
     resetAutoLock()
+    applyLogLimits(vault.read().settings)
+    await moveKeysIntoLibrary()
     await syncMcp()
     return null
   })
@@ -347,6 +465,8 @@ function registerIpc(): void {
   handle(CH.vaultUnlockWithRecovery, async (recoveryKey: string, newPassword: string) => {
     const fresh = await vault.unlockWithRecovery(recoveryKey, newPassword)
     resetAutoLock()
+    applyLogLimits(vault.read().settings)
+    await moveKeysIntoLibrary()
     await syncMcp()
     return fresh
   })
@@ -393,9 +513,18 @@ function registerIpc(): void {
         existing.port = Number(input.port)
         existing.username = input.username.trim()
         existing.authKind = input.authKind
+        existing.keyId = applyKeyId(data, existing.keyId, input.keyId)
+        existing.logTranscript = input.logTranscript === undefined ? existing.logTranscript : Boolean(input.logTranscript)
         existing.password = applySecret(existing.password, input.password)
         existing.privateKey = applySecret(existing.privateKey, input.privateKey)
         existing.passphrase = applySecret(existing.passphrase, input.passphrase)
+        // Moving to a library key retires the copy this connection carried.
+        // Leaving it behind would keep a private key in the vault that nothing
+        // reads and no screen ever shows again.
+        if (existing.keyId) {
+          existing.privateKey = undefined
+          existing.passphrase = undefined
+        }
         existing.agentSocket = input.agentSocket?.trim() || undefined
         existing.folder = input.folder?.trim() || undefined
         existing.notes = input.notes ?? undefined
@@ -410,6 +539,8 @@ function registerIpc(): void {
         port: Number(input.port),
         username: input.username.trim(),
         authKind: input.authKind,
+        keyId: applyKeyId(data, undefined, input.keyId),
+        logTranscript: input.logTranscript === undefined ? undefined : Boolean(input.logTranscript),
         password: input.password || undefined,
         privateKey: input.privateKey || undefined,
         passphrase: input.passphrase || undefined,
@@ -444,6 +575,82 @@ function registerIpc(): void {
     })
   )
 
+  /* ssh keys */
+  handle(CH.keyList, (): SshKeyMeta[] => {
+    const data = vault.read()
+    return data.keys
+      .map((k) => toKeyMeta(k, data.connections))
+      .sort((a, b) => collator().compare(a.name, b.name))
+  })
+
+  handle(CH.keyImport, async (input: KeyImportInput): Promise<SshKeyMeta> => {
+    if (!input?.name?.trim()) throw appError('error.fillName')
+    const facts = importKeyText(input.privateKey ?? '', input.passphrase)
+    return vault.mutate((data) => {
+      // One entry per key is the point of the library, so a re-import is an
+      // error rather than a second copy that quietly diverges from the first.
+      const clash = data.keys.find((k) => k.fingerprint === facts.fingerprint)
+      if (clash) throw appError('error.keyDuplicate', { name: clash.name })
+
+      const key: SshKey = {
+        id: newId(),
+        name: input.name.trim(),
+        privateKey: facts.privateKey,
+        passphrase: input.passphrase || undefined,
+        keyType: facts.keyType,
+        publicKey: facts.publicKey,
+        fingerprint: facts.fingerprint,
+        origin: 'imported',
+        createdAt: Date.now()
+      }
+      data.keys.push(key)
+      return toKeyMeta(key, data.connections)
+    })
+  })
+
+  handle(CH.keyGenerate, async (input: KeyGenerateInput): Promise<SshKeyMeta> => {
+    if (!input?.name?.trim()) throw appError('error.fillName')
+    if (input.type !== 'ed25519' && input.type !== 'rsa') throw appError('error.invalidKind')
+    // RSA 4096 takes seconds; generating before the write keeps that time out
+    // of the vault's write queue, which every other mutation waits behind.
+    const generated = generateKey(input.type, input.passphrase)
+    return vault.mutate((data) => {
+      const key: SshKey = {
+        id: newId(),
+        name: input.name.trim(),
+        privateKey: generated.privateKey,
+        passphrase: input.passphrase || undefined,
+        keyType: generated.facts.keyType,
+        publicKey: generated.facts.publicKey,
+        fingerprint: generated.facts.fingerprint,
+        origin: 'generated',
+        createdAt: Date.now()
+      }
+      data.keys.push(key)
+      return toKeyMeta(key, data.connections)
+    })
+  })
+
+  handle(CH.keyRename, async (id: string, name: string): Promise<SshKeyMeta> => {
+    if (!name?.trim()) throw appError('error.fillName')
+    return vault.mutate((data) => {
+      const key = data.keys.find((k) => k.id === id)
+      if (!key) throw appError('error.keyMissing')
+      key.name = name.trim()
+      return toKeyMeta(key, data.connections)
+    })
+  })
+
+  handle(CH.keyRemove, async (id: string) => {
+    await vault.mutate((data) => {
+      const idx = data.keys.findIndex((k) => k.id === id)
+      if (idx < 0) throw appError('error.keyMissing')
+      assertKeyUnused(data, id)
+      data.keys.splice(idx, 1)
+    })
+    return null
+  })
+
   /* commands and notes */
   handle(CH.snipList, (): Snippet[] =>
     [...vault.read().snippets].sort((a, b) => collator().compare(a.title, b.title))
@@ -467,6 +674,9 @@ function registerIpc(): void {
         existing.note = input.note?.trim() || undefined
         existing.folder = input.folder?.trim() || undefined
         existing.kind = input.kind
+        // A human opened this, read the body and saved it. That is exactly what
+        // the mark exists to force, so it has served its purpose and goes.
+        existing.origin = 'human'
         existing.updatedAt = now
         return existing
       }
@@ -478,6 +688,7 @@ function registerIpc(): void {
         note: input.note?.trim() || undefined,
         folder: input.folder?.trim() || undefined,
         kind: input.kind,
+        origin: 'human',
         createdAt: now,
         updatedAt: now
       }
@@ -524,6 +735,7 @@ function registerIpc(): void {
       data.settings = sanitizeSettings(data.settings, patch)
       return data.settings
     })
+    applyLogLimits(saved)
     resetAutoLock()
     return { ...saved, hasAiApiKey: Boolean(vault.read().aiApiKey) }
   })
@@ -608,6 +820,46 @@ function registerIpc(): void {
     return res.filePath
   })
 
+  /* logs */
+  handle(CH.logList, (): Promise<LogFileInfo[]> => logs.list())
+
+  handle(CH.logSize, (): Promise<number> => logs.totalBytes())
+
+  /*
+    The one place a log becomes plaintext. The warning belongs on the button
+    that calls this, not on the switch that started the logging — this is where
+    the decision is actually made.
+  */
+  handle(CH.logExport, async (id: string): Promise<string | null> => {
+    if (!mainWindow) return null
+    const decrypted = await logs.decrypt(id)
+    const res = await dialog.showSaveDialog(mainWindow, {
+      title: t('dialog.saveFile'),
+      defaultPath: `${decrypted.info.kind}-${new Date(decrypted.info.createdAt)
+        .toISOString()
+        .slice(0, 19)
+        .replace(/[:T]/g, '-')}.txt`,
+      filters: [{ name: t('dialog.textFile'), extensions: ['txt'] }]
+    })
+    if (res.canceled || !res.filePath) return null
+    const banner = decrypted.truncated ? `${t('logs.truncatedNote')}\n\n` : ''
+    await fsp.writeFile(res.filePath, banner + decrypted.text, { encoding: 'utf8', mode: 0o600 })
+    return res.filePath
+  })
+
+  handle(CH.logRemove, async (id: string) => {
+    await logs.remove(id)
+    return null
+  })
+
+  handle(CH.logPurge, (): Promise<number> => logs.purge())
+
+  handle(CH.logReveal, async () => {
+    await fsp.mkdir(logs.dir, { recursive: true })
+    await shell.openPath(logs.dir)
+    return null
+  })
+
   /* MCP */
   handle(CH.mcpStatus, (): McpStatus => mcp.status())
 
@@ -641,6 +893,16 @@ function registerIpc(): void {
 
   handle(CH.mcpAnswerCommand, (id: string, approved: boolean, autoShare: boolean) => {
     approvals.answerCommand(id, approved, autoShare)
+    return null
+  })
+
+  handle(CH.mcpAnswerSaveCommand, (id: string, approved: boolean) => {
+    approvals.answerSaveCommand(id, approved)
+    return null
+  })
+
+  handle(CH.mcpAnswerUpload, (id: string, approved: boolean) => {
+    approvals.answerUpload(id, approved)
     return null
   })
 
@@ -709,6 +971,8 @@ if (!gotLock) {
     if (migratedFrom) console.log('Vault migrated from legacy profile directory:', migratedFrom)
 
     await initI18n()
+
+    logs.setDirectory(path.join(app.getPath('userData'), 'logs'))
 
     installGuardSealer()
 

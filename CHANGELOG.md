@@ -7,7 +7,116 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [1.2.0] — 2026-09-11
+
 ### Added
+
+- **An SSH key library.** A key is now an object the vault owns rather than text
+  copied into every connection that uses it. One key can sign in to five
+  servers, rotating it is one edit instead of five, and nothing has to tell you
+  those five copies were ever the same key. Connections reference a key by id;
+  the editor picks one from a list.
+
+  Import OpenSSH PEM, or **generate** an Ed25519 or RSA 4096 keypair in the app —
+  two buttons and no bit-count decision, because that is not a question the
+  dialog can answer better than we can. The public half is shown and copyable,
+  so the step every user needs (getting it into `authorized_keys`) is one the
+  application can finally help with. The private half is shown nowhere: a
+  screenshot of that dialog cannot compromise anything.
+
+  Existing vaults migrate on unlock. Key text already on a connection moves into
+  the library, deduplicated **by fingerprint** rather than by string — the same
+  key exported twice differs in whitespace and comment, and comparing text would
+  leave you with five entries for one key, which is the thing this exists to
+  stop. A key that will not parse is left exactly where it is and keeps working.
+
+- **`.ppk` import, format 3.** What current PuTTYgen writes, encrypted or not,
+  including the Argon2id case — Node 24 ships `crypto.argon2Sync`, so this
+  costs no dependency. Format 2 is refused by version number, before any
+  parsing: it is the older format and the workaround is one step in PuTTYgen.
+
+  A `.ppk` is a file somebody sent you and the parser is written that way. Every
+  length it reads is bounded, the MAC is verified with `timingSafeEqual` before
+  anything from the private half is trusted, and an Argon2 cost stated by the
+  file — 4 GiB of memory, or a memory and pass count that are each legal and
+  ruinous together — is refused **before** it is paid. The keys are converted to
+  OpenSSH on the way in, so the vault holds one format and the connect path has
+  one parser.
+
+- **Encrypted session logs, on by default.** A full transcript per session, and
+  a record of everything the AI did. Both encrypted at rest under a key the
+  vault holds, which is what makes the default defensible: the old objection to
+  transcripts was that they are a plaintext copy of everything the vault
+  protects, sitting beside it readable by any process. Ciphertext answers that.
+
+  Each file generates its own key, wrapped by the master and stored in its
+  header — the same envelope shape the vault itself uses. Three things follow:
+  a session keeps writing through a vault lock (they outlive one whenever
+  `disconnectOnLock` is off), rotating the master rewrites headers rather than
+  files, and one leaked file key exposes one session rather than the archive.
+
+  Bounded, because "on by default" means everyone: a per-file cap and a total
+  cap across the folder, both configurable. A full file starts a new part and
+  **says so in a frame** — a security record that stops without saying it
+  stopped is worse than none. Settings → Logs shows what is there, how much disk
+  it uses, opens the folder, exports one and deletes them.
+
+- **`scripts/decrypt-log.mjs`, and `docs/LOG-FORMAT.md`.** A record kept for the
+  case where something went wrong is worth little if the only program that can
+  open it is the one that was there when it happened. The format is documented
+  well enough to write a reader from, and the script in this repository is
+  exactly that — plain Node, no dependencies, written from the document rather
+  than from the writer's source. `test/decryptLog.test.mts` runs it against real
+  files the application produced, which is what stops the two drifting apart.
+
+  The format is framed AEAD: a plaintext header line, then
+  `[u32 length][12B nonce][ciphertext][16B tag]`. The nonce is the frame index
+  rather than random bytes, which removes the birthday argument instead of
+  bounding it and puts the index in the file — the only place it is recorded,
+  and what makes a missing or reordered frame visible. The AAD binds each frame
+  to its file and its position, so one lifted from another log fails its tag
+  even under the same key.
+
+  What it does **not** do is written down rather than left to be discovered: a
+  clean cut off the end is invisible, and `label` and `createdAt` sit outside
+  the AAD. Tests pin both, so the format cannot quietly start claiming more.
+
+- **`save_command`**, so a sequence worked out once can be kept. The AI proposes
+  a command for your library; it does not run, and a human approves the text
+  with control characters made visible, exactly as the run dialog does.
+
+  Anything stored this way is **marked as AI-written and confirms before it ever
+  runs**, whatever its length. That is not decoration. A single-line snippet you
+  typed goes straight to the shell, which is right — you wrote it. One a model
+  wrote was read once, at save time, and is run later out of that context, so
+  without the mark a useful-now, harmful-later suggestion reaches your shell
+  with no dialog at all, days after the only review it ever got. Unattended mode
+  skips the save approval like every other one, which is precisely what makes
+  the mark load-bearing rather than a nicety.
+
+  The model cannot read, edit or delete what is already in the library. Listing
+  it would hand over hostnames in comments, internal paths and the shape of your
+  infrastructure — none of which the gateway sends today, and `list_sessions`
+  goes to some lengths to withhold an address.
+
+- **`upload_file`**, over SFTP rather than a here-doc: escaping file content
+  against a remote shell is how file content becomes commands. You see the
+  destination and the content before anything lands, and the model cannot read a
+  file back.
+
+  **Uploads have their own switch**, off even while unattended mode is on.
+  Running a command you read about afterwards is not the same trade as letting
+  an agent write files to the box: a file lands once and is then run by
+  something else, at a time nobody is watching. With that switch on an ordinary
+  destination is written without asking — and a **sensitive** one still stops.
+  Keys, `authorized_keys`, cron, sudoers, systemd, login scripts, anything on
+  `PATH`, the web roots. A path is structured where shell text is not, so unlike
+  the command list that set is nearly complete; it is still not a boundary, and
+  says so — writing to `/tmp` and moving the file is two steps, not one.
+
+  The dialog shows where the file **really** lands, not where it was asked to go:
+  `/etc/nginx/../cron.d/x` is `/etc/cron.d/x`, and that difference is the whole
+  question.
 
 - **Unattended mode.** A switch in the AI access settings that removes the
   approval dialog: commands the AI proposes run immediately and their full
@@ -43,6 +152,18 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - The README and the application description now say "by default" where they
   promised approval unconditionally.
+- The connection editor's private-key box is gone, replaced by a picker over the
+  key library. A connection that still carries its own key says so and keeps
+  working; choosing a library key retires the copy it was carrying, rather than
+  leaving a private key in the vault that nothing reads and no screen shows.
+
+### Security
+
+- Every path through the MCP tools now reaches the AI log, including the ones
+  where nobody was asked. In unattended mode the echo into the terminal was the
+  only trace a command ran, and it died with the tab. That mode is a statement
+  about trust — the agent works on its own and you read the record afterwards —
+  so the record had to exist before the trade was a trade.
 
 ## [1.1.0] — 2026-08-11
 

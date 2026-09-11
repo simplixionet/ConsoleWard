@@ -18,10 +18,28 @@ export const CH = {
   connRemove: 'conn:remove',
   connDuplicate: 'conn:duplicate',
 
+  keyList: 'key:list',
+  keyImport: 'key:import',
+  keyGenerate: 'key:generate',
+  keyRename: 'key:rename',
+  keyRemove: 'key:remove',
+
   snipList: 'snip:list',
   snipSave: 'snip:save',
   snipRemove: 'snip:remove',
   snipDuplicate: 'snip:duplicate',
+
+  mcpSaveCommandRequestEvent: 'mcp:saveCommandRequest',
+  mcpAnswerSaveCommand: 'mcp:answerSaveCommand',
+  mcpUploadRequestEvent: 'mcp:uploadRequest',
+  mcpAnswerUpload: 'mcp:answerUpload',
+
+  logList: 'log:list',
+  logSize: 'log:size',
+  logExport: 'log:export',
+  logRemove: 'log:remove',
+  logPurge: 'log:purge',
+  logReveal: 'log:reveal',
 
   settingsGet: 'settings:get',
   settingsSave: 'settings:save',

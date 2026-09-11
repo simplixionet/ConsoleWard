@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Simplixio — Stanislav Opletal <info@simplixio.net>
 
-import { useState } from 'react'
-import type { AuthKind, ConnectionInput, ConnectionMeta } from '@shared/types'
+import { useEffect, useState } from 'react'
+import type { AuthKind, ConnectionInput, ConnectionMeta, SshKeyMeta } from '@shared/types'
 import { api, errorMessage, unwrap } from '../api'
 import { useT } from '../i18n'
+import KeyEditor from './KeyEditor'
 
 interface Props {
   /** null = new connection */
@@ -29,22 +30,36 @@ export default function ConnectionEditor({ connection, onSaved, onCancel }: Prop
   const [folder, setFolder] = useState(connection?.folder ?? '')
   const [notes, setNotes] = useState(connection?.notes ?? '')
   const [agentSocket, setAgentSocket] = useState(connection?.agentSocket ?? '')
+  const [logTranscript, setLogTranscript] = useState(connection?.logTranscript !== false)
 
   const [password, setPassword] = useState('')
-  const [privateKey, setPrivateKey] = useState('')
-  const [passphrase, setPassphrase] = useState('')
-  const [keyFileName, setKeyFileName] = useState<string | null>(null)
+
+  const [keys, setKeys] = useState<SshKeyMeta[]>([])
+  const [keyId, setKeyId] = useState(connection?.keyId ?? '')
+  const [addingKey, setAddingKey] = useState(false)
 
   const [clearPassword, setClearPassword] = useState(false)
-  const [clearKey, setClearKey] = useState(false)
-  const [clearPassphrase, setClearPassphrase] = useState(false)
 
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const keptPassword = !isNew && connection.hasPassword && !clearPassword && !password
-  const keptKey = !isNew && connection.hasPrivateKey && !clearKey && !privateKey
-  const keptPassphrase = !isNew && connection.hasPassphrase && !clearPassphrase && !passphrase
+  /**
+   * Key text still on the connection, from a vault written before the key
+   * library — or one the migration could not parse. It keeps authenticating, so
+   * the editor says so rather than showing an empty picker that looks broken.
+   */
+  const legacyKey = !isNew && connection.hasPrivateKey && !connection.keyId
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        setKeys(unwrap(await api.keys.list()))
+      } catch (err) {
+        setError(errorMessage(err))
+      }
+    })()
+  }, [])
 
   /** undefined = leave unchanged, '' = delete, anything else = the new value */
   function secret(value: string, clear: boolean): string | undefined {
@@ -53,28 +68,11 @@ export default function ConnectionEditor({ connection, onSaved, onCancel }: Prop
     return undefined
   }
 
-  async function loadKeyFile(): Promise<void> {
-    try {
-      const file = unwrap(await api.dialog.readTextFile(t('conn.privateKey')))
-      if (!file) return
-      if (file.content.includes('PuTTY-User-Key-File')) {
-        setError(t('conn.ppkError'))
-        return
-      }
-      setPrivateKey(file.content)
-      setKeyFileName(file.name)
-      setClearKey(false)
-      setError(null)
-    } catch (err) {
-      setError(errorMessage(err))
-    }
-  }
-
   async function submit(event: React.FormEvent): Promise<void> {
     event.preventDefault()
     setError(null)
 
-    if (authKind === 'key' && !privateKey && !keptKey) {
+    if (authKind === 'key' && !keyId && !legacyKey) {
       setError(t('conn.keyRequired'))
       return
     }
@@ -89,9 +87,9 @@ export default function ConnectionEditor({ connection, onSaved, onCancel }: Prop
       folder,
       notes,
       agentSocket,
-      password: secret(password, clearPassword),
-      privateKey: secret(privateKey, clearKey),
-      passphrase: secret(passphrase, clearPassphrase)
+      keyId,
+      logTranscript,
+      password: secret(password, clearPassword)
     }
 
     setBusy(true)
@@ -199,64 +197,27 @@ export default function ConnectionEditor({ connection, onSaved, onCancel }: Prop
           )}
 
           {authKind === 'key' && (
-            <>
-              <label>
-                {t('conn.privateKey')}
-                <div className="secret-row">
-                  <button type="button" className="btn small" onClick={loadKeyFile}>
-                    {t('conn.loadFromFile')}
-                  </button>
-                  {keyFileName && <span className="badge ok">{keyFileName}</span>}
-                  {keptKey && !keyFileName && (
-                    <span className="badge ok">{t('conn.keyStored')}</span>
-                  )}
-                  {keptKey && !keyFileName && (
-                    <button type="button" className="btn small" onClick={() => setClearKey(true)}>
-                      {t('common.delete')}
-                    </button>
-                  )}
-                  {clearKey && <span className="badge warn">{t('conn.willBeDeleted')}</span>}
-                </div>
-                <textarea
-                  rows={5}
-                  value={privateKey}
-                  onChange={(e) => {
-                    setPrivateKey(e.target.value)
-                    setClearKey(false)
-                    setKeyFileName(null)
-                  }}
-                  placeholder={
-                    keptKey ? t('conn.keyStoredPlaceholder') : t('conn.keyPlaceholder')
-                  }
-                  spellCheck={false}
-                />
-              </label>
-
-              <label>
-                {t('conn.passphrase')} <span className="hint">{t('conn.passphraseHint')}</span>
-                <div className="secret-row">
-                  <input
-                    type="password"
-                    value={passphrase}
-                    onChange={(e) => {
-                      setPassphrase(e.target.value)
-                      setClearPassphrase(false)
-                    }}
-                    placeholder={keptPassphrase ? t('conn.passphraseStored') : ''}
-                  />
-                  {keptPassphrase && (
-                    <button
-                      type="button"
-                      className="btn small"
-                      onClick={() => setClearPassphrase(true)}
-                    >
-                      {t('common.delete')}
-                    </button>
-                  )}
-                  {clearPassphrase && <span className="badge warn">{t('conn.willBeDeleted')}</span>}
-                </div>
-              </label>
-            </>
+            <label>
+              {t('conn.key')}
+              <div className="secret-row">
+                <select value={keyId} onChange={(e) => setKeyId(e.target.value)}>
+                  <option value="">
+                    {legacyKey ? t('conn.keyOnConnection') : t('conn.keyNone')}
+                  </option>
+                  {keys.map((k) => (
+                    <option key={k.id} value={k.id}>
+                      {k.name} · {k.keyType}
+                    </option>
+                  ))}
+                </select>
+                <button type="button" className="btn small" onClick={() => setAddingKey(true)}>
+                  {t('keys.add')}
+                </button>
+              </div>
+              <span className="hint">
+                {legacyKey && !keyId ? t('conn.keyLegacyHint') : t('conn.keyHint')}
+              </span>
+            </label>
           )}
 
           {authKind === 'agent' && (
@@ -269,6 +230,16 @@ export default function ConnectionEditor({ connection, onSaved, onCancel }: Prop
               />
             </label>
           )}
+
+          <label className="checkbox-label">
+            <input
+              type="checkbox"
+              checked={logTranscript}
+              onChange={(e) => setLogTranscript(e.target.checked)}
+            />
+            {t('conn.transcript')}
+          </label>
+          <span className="hint">{t('conn.transcriptHint')}</span>
 
           <label>
             {t('conn.notes')}
@@ -292,6 +263,17 @@ export default function ConnectionEditor({ connection, onSaved, onCancel }: Prop
           </button>
         </div>
       </form>
+
+      {addingKey && (
+        <KeyEditor
+          onSaved={(key) => {
+            setKeys((prev) => [...prev, key])
+            setKeyId(key.id)
+            setAddingKey(false)
+          }}
+          onCancel={() => setAddingKey(false)}
+        />
+      )}
     </div>
   )
 }

@@ -36,6 +36,7 @@ mock.module('../src/main/vault.ts', {
 })
 mock.module('../src/main/ssh.ts', {
   exports: {
+    UPLOAD_MAX_BYTES: 1024 * 1024,
     ssh: {
       isReady: () => true,
       title: () => 'web01',

@@ -8,11 +8,15 @@ import type {
   CommandApproval,
   ConnectionInput,
   HostKeyPrompt,
+  KeyGenerateInput,
+  KeyImportInput,
   McpStatus,
+  SaveCommandApproval,
   SessionInfo,
   Settings,
   ShareRequest,
-  SnippetInput
+  SnippetInput,
+  UploadApproval
 } from '../shared/types'
 
 /** Subscribes to an IPC event and returns the unsubscribe function. */
@@ -42,11 +46,26 @@ const api: AppApi = {
     remove: (id) => ipcRenderer.invoke(CH.connRemove, id),
     duplicate: (id) => ipcRenderer.invoke(CH.connDuplicate, id)
   },
+  keys: {
+    list: () => ipcRenderer.invoke(CH.keyList),
+    import: (input: KeyImportInput) => ipcRenderer.invoke(CH.keyImport, input),
+    generate: (input: KeyGenerateInput) => ipcRenderer.invoke(CH.keyGenerate, input),
+    rename: (id, name) => ipcRenderer.invoke(CH.keyRename, id, name),
+    remove: (id) => ipcRenderer.invoke(CH.keyRemove, id)
+  },
   snippets: {
     list: () => ipcRenderer.invoke(CH.snipList),
     save: (input: SnippetInput) => ipcRenderer.invoke(CH.snipSave, input),
     remove: (id) => ipcRenderer.invoke(CH.snipRemove, id),
     duplicate: (id) => ipcRenderer.invoke(CH.snipDuplicate, id)
+  },
+  logs: {
+    list: () => ipcRenderer.invoke(CH.logList),
+    size: () => ipcRenderer.invoke(CH.logSize),
+    export: (id) => ipcRenderer.invoke(CH.logExport, id),
+    remove: (id) => ipcRenderer.invoke(CH.logRemove, id),
+    purge: () => ipcRenderer.invoke(CH.logPurge),
+    reveal: () => ipcRenderer.invoke(CH.logReveal)
   },
   settings: {
     get: () => ipcRenderer.invoke(CH.settingsGet),
@@ -85,8 +104,13 @@ const api: AppApi = {
     regenerateToken: () => ipcRenderer.invoke(CH.mcpRegenerateToken),
     answerCommand: (id, approved, autoShare) =>
       ipcRenderer.invoke(CH.mcpAnswerCommand, id, approved, autoShare),
+    answerSaveCommand: (id, approved) =>
+      ipcRenderer.invoke(CH.mcpAnswerSaveCommand, id, approved),
+    answerUpload: (id, approved) => ipcRenderer.invoke(CH.mcpAnswerUpload, id, approved),
     answerShare: (id, shared, text) => ipcRenderer.invoke(CH.mcpAnswerShare, id, shared, text),
     onCommandRequest: (cb) => on<[CommandApproval]>(CH.mcpCommandRequestEvent, cb),
+    onSaveCommandRequest: (cb) => on<[SaveCommandApproval]>(CH.mcpSaveCommandRequestEvent, cb),
+    onUploadRequest: (cb) => on<[UploadApproval]>(CH.mcpUploadRequestEvent, cb),
     onShareRequest: (cb) => on<[ShareRequest]>(CH.mcpShareRequestEvent, cb),
     onStatus: (cb) => on<[McpStatus]>(CH.mcpStatusEvent, cb)
   },

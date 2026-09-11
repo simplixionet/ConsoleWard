@@ -23,7 +23,7 @@ import { promisify } from 'node:util'
 import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
-import type { Connection, KnownHost, Settings, Snippet } from '../shared/types'
+import type { Connection, KnownHost, Settings, Snippet, SshKey } from '../shared/types'
 import { MIN_PASSWORD_LENGTH } from '../shared/passwordStrength'
 import { appError } from './i18n'
 import { DEFAULT_SETTINGS } from './settings'
@@ -114,15 +114,28 @@ export interface VaultData {
   connections: Connection[]
   knownHosts: KnownHost[]
   snippets: Snippet[]
+  /** SSH keys, referenced by `Connection.keyId`. Private halves live here and nowhere else. */
+  keys: SshKey[]
   settings: Settings
   /** Bearer token for the local MCP server. */
   mcpToken?: string
+  /**
+   * Wraps every log file's own key. Generated on the first log and never
+   * rotated with the DEK: rotating it would orphan every existing log.
+   */
+  logKey?: string
   /** Encrypted along with the rest of the vault; reserved for phase 2. */
   aiApiKey?: string
 }
 
 function emptyData(): VaultData {
-  return { connections: [], knownHosts: [], snippets: [], settings: { ...DEFAULT_SETTINGS } }
+  return {
+    connections: [],
+    knownHosts: [],
+    snippets: [],
+    keys: [],
+    settings: { ...DEFAULT_SETTINGS }
+  }
 }
 
 /** Fills in missing collections — vaults from earlier versions may not have them. */
@@ -131,8 +144,10 @@ function normalizeData(parsed: Partial<VaultData>): VaultData {
     connections: parsed.connections ?? [],
     knownHosts: parsed.knownHosts ?? [],
     snippets: parsed.snippets ?? [],
+    keys: parsed.keys ?? [],
     settings: { ...DEFAULT_SETTINGS, ...(parsed.settings ?? {}) },
     mcpToken: parsed.mcpToken,
+    logKey: parsed.logKey,
     aiApiKey: parsed.aiApiKey
   }
 }

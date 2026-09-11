@@ -7,7 +7,12 @@
  * Nothing here imports Electron, deliberately: the gate has to be testable.
  */
 
-import type { CommandApproval, ShareRequest } from '../shared/types'
+import type {
+  CommandApproval,
+  SaveCommandApproval,
+  ShareRequest,
+  UploadApproval
+} from '../shared/types'
 
 export interface CommandAnswer {
   approved: boolean
@@ -19,9 +24,19 @@ export interface ShareAnswer {
   text: string
 }
 
+export interface SaveCommandAnswer {
+  approved: boolean
+}
+
+export interface UploadAnswer {
+  approved: boolean
+}
+
 /** `index.ts` supplies the Electron calls. */
 export interface ApprovalHost {
   sendCommand: (req: CommandApproval) => void
+  sendSaveCommand: (req: SaveCommandApproval) => void
+  sendUpload: (req: UploadApproval) => void
   sendShare: (req: ShareRequest) => void
   /** Restore, show, focus and — on Windows — flash the frame. */
   raiseWindow: () => void
@@ -80,6 +95,8 @@ interface Pending<T> {
 export class ApprovalQueue {
   private host: ApprovalHost | null = null
   private commands = new Map<string, Pending<CommandAnswer>>()
+  private saves = new Map<string, Pending<SaveCommandAnswer>>()
+  private uploads = new Map<string, Pending<UploadAnswer>>()
   private shares = new Map<string, Pending<ShareAnswer>>()
   /** -Infinity, not 0: a zero clock would swallow the first raise, the one that matters. */
   private lastRaiseAt = Number.NEGATIVE_INFINITY
@@ -89,7 +106,7 @@ export class ApprovalQueue {
   }
 
   size(): number {
-    return this.commands.size + this.shares.size
+    return this.commands.size + this.saves.size + this.uploads.size + this.shares.size
   }
 
   async askCommand(req: CommandApproval): Promise<CommandAnswer> {
@@ -103,6 +120,53 @@ export class ApprovalQueue {
       this.host?.sendCommand(req)
       if (raise) this.raise()
     })
+  }
+
+  /**
+   * Counted against the same cap as a command. Saving is rarer than running, so
+   * a fourth dialog type is unlikely to be what exhausts the queue — but it is
+   * the reason reading, editing and deleting are not three more.
+   */
+  async askSaveCommand(req: SaveCommandApproval): Promise<SaveCommandAnswer> {
+    this.admit()
+    const raise = this.shouldRaise()
+    return new Promise<SaveCommandAnswer>((resolve) => {
+      const timer = setTimeout(() => {
+        if (this.saves.delete(req.id)) resolve({ approved: false })
+      }, APPROVAL_TIMEOUT_MS)
+      this.saves.set(req.id, { resolve, timer })
+      this.host?.sendSaveCommand(req)
+      if (raise) this.raise()
+    })
+  }
+
+  answerSaveCommand(id: string, approved: boolean): void {
+    const pending = this.saves.get(id)
+    if (!pending) return
+    this.saves.delete(id)
+    clearTimeout(pending.timer)
+    pending.resolve({ approved: Boolean(approved) })
+  }
+
+  async askUpload(req: UploadApproval): Promise<UploadAnswer> {
+    this.admit()
+    const raise = this.shouldRaise()
+    return new Promise<UploadAnswer>((resolve) => {
+      const timer = setTimeout(() => {
+        if (this.uploads.delete(req.id)) resolve({ approved: false })
+      }, APPROVAL_TIMEOUT_MS)
+      this.uploads.set(req.id, { resolve, timer })
+      this.host?.sendUpload(req)
+      if (raise) this.raise()
+    })
+  }
+
+  answerUpload(id: string, approved: boolean): void {
+    const pending = this.uploads.get(id)
+    if (!pending) return
+    this.uploads.delete(id)
+    clearTimeout(pending.timer)
+    pending.resolve({ approved: Boolean(approved) })
   }
 
   async askShare(req: ShareRequest): Promise<ShareAnswer> {
@@ -145,6 +209,16 @@ export class ApprovalQueue {
       p.resolve({ approved: false, autoShare: false })
     }
     this.commands.clear()
+    for (const [, p] of this.saves) {
+      clearTimeout(p.timer)
+      p.resolve({ approved: false })
+    }
+    this.saves.clear()
+    for (const [, p] of this.uploads) {
+      clearTimeout(p.timer)
+      p.resolve({ approved: false })
+    }
+    this.uploads.clear()
     for (const [, p] of this.shares) {
       clearTimeout(p.timer)
       p.resolve({ shared: false, text: '' })
