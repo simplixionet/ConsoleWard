@@ -6,8 +6,11 @@
 
 <p align="center">
   An encrypted SSH client whose defining feature is a <strong>human-held gate</strong>:
-  an AI assistant can propose commands and ask for terminal output, but nothing runs
-  and nothing leaves the machine without an explicit human approval.
+  an AI assistant can propose commands and ask for terminal output, but by default
+  nothing runs and nothing leaves the machine without an explicit human approval.
+  <br>
+  <sub>The gate can be switched off deliberately — see
+  <a href="#unattended-mode">unattended mode</a>.</sub>
 </p>
 
 <p align="center">
@@ -79,7 +82,9 @@ npm run check:i18n-ui  # proves every locale actually renders
 
 Nothing runs until this dialog is answered. The command is shown exactly as it will
 be sent — control characters made visible, so nothing can hide a second line in it —
-and there is no "approve all" anywhere in the application.
+and there is no "approve all": the dialog never remembers a previous yes. (There is a
+separate, deliberate switch that removes the dialog entirely — see
+[unattended mode](#unattended-mode).)
 
 <p align="center">
   <img src="docs/screenshots/05-output-review.png" alt="Terminal output staged for review before it reaches the AI, with a database URL containing a password highlighted in red and a Redact the selection button" width="820">
@@ -246,6 +251,30 @@ claude mcp add --transport http consoleward http://127.0.0.1:7345/ --header "Aut
 The approval dialog shows the command's **literal text with control characters made
 visible**, so an extra line cannot hide in it. There is no "approve all" and no
 "remember" — you see every command separately. That is the entire point of the gate.
+
+### Unattended mode
+
+All of the above describes the default, and the default is the product. There is
+also a switch that removes it.
+
+With **unattended mode** on, commands the AI proposes run immediately and their full
+output goes back unedited. It is off until you turn it on, it is never implied by
+enabling the gateway, and the server tells the connected model which of the two modes
+it is in — a model told a human is reading its proposals behaves differently from one
+that knows nobody is, and telling it the wrong thing would be a lie to the party least
+able to check.
+
+Underneath it sits a short list of irreversible commands — `rm -rf /`, `mkfs`,
+`shutdown`, `DROP DATABASE` and a dozen more — which are refused and written into the
+session so you can see them later. That list is **a seatbelt, not a lock**, and the
+settings say so: it reads the command text, so it stops a mistake and not an intention.
+`/bin/rm`, a downloaded script and a plain `dd` all walk past it unchanged. It can be
+switched off too, which leaves nothing at all in the path.
+
+Worth being explicit about what the mode costs, because it is not only "you stop
+reading commands": terminal output shapes what the AI proposes next, so a compromised
+server can reach your shell without a person in between. With the gate on that is the
+attack the approval dialog exists to stop.
 
 Sharing takes two deliberate steps, and **there is no "send everything" button**.
 

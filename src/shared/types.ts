@@ -110,6 +110,19 @@ export interface Settings {
   disconnectOnLock: boolean
   fontSize: number
   scrollback: number
+  /**
+   * Run what the AI proposes without asking, and hand back the whole output.
+   *
+   * The approval dialog is what this application is for, so switching it off is
+   * a separate, deliberate decision with its own warnings — never a side effect
+   * of enabling the gateway.
+   */
+  dangerousMode?: boolean
+  /**
+   * While dangerousMode is on, still refuse the destructive list. On by default;
+   * see src/shared/dangerousCommands.ts for what it does and does not catch.
+   */
+  dangerousGuard?: boolean
   /** Local MCP server for AI clients. Off by default. */
   mcpEnabled?: boolean
   mcpPort?: number
@@ -189,6 +202,16 @@ export interface CommandApproval {
   /** Control characters made visible, so an extra line cannot hide in it. */
   commandVisualized: string
   reason: string
+  /**
+   * Set when unattended mode was on and the destructive list matched — which is
+   * the only reason this dialog appears in that mode at all. The dialog leads
+   * with it and highlights the span.
+   */
+  flagged?: {
+    id: string
+    what: string
+    span: { start: number; end: number } | null
+  }
 }
 
 /** AI request for output — the human picks exactly what gets sent. */

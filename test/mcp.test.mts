@@ -15,6 +15,7 @@
 import { describe, test, mock } from 'node:test'
 import assert from 'node:assert/strict'
 import { MAX_SCAN_CHARS } from '../src/shared/secretPatterns.ts'
+import type { CommandApproval } from '../src/shared/types.ts'
 
 mock.module('electron', { exports: { app: { getPath: () => '' } } })
 
@@ -57,6 +58,33 @@ const PREVIEW = 'last twenty lines'
  */
 let executed: string[] = []
 
+
+/**
+ * The gate reads its state from the vault on every call, so the tests have to
+ * own it. Locked is the safe answer and the one the older tests below rely on
+ * without saying so, which is why unattended mode has to be switched on
+ * explicitly and switched off again after.
+ */
+const vaultState = {
+  unlocked: true,
+  settings: { dangerousMode: false, dangerousGuard: true } as Record<string, unknown>
+}
+
+function unattended(dangerous: boolean, guard = true): void {
+  vaultState.settings.dangerousMode = dangerous
+  vaultState.settings.dangerousGuard = guard
+}
+
+mock.module('../src/main/vault.ts', {
+  exports: {
+    vault: {
+      isUnlocked: (): boolean => vaultState.unlocked,
+      read: () => ({ settings: vaultState.settings, mcpToken: 'x' }),
+      mutate: async (): Promise<void> => {}
+    }
+  }
+})
+
 mock.module('../src/main/ssh.ts', {
   exports: {
     ssh: {
@@ -73,7 +101,7 @@ mock.module('../src/main/ssh.ts', {
   }
 })
 
-const { mcp, outputNeedsReview } = await import('../src/main/mcp.ts')
+const { mcp, outputNeedsReview, instructionsFor } = await import('../src/main/mcp.ts')
 
 const JWT =
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.' +
@@ -399,3 +427,186 @@ describe('outputNeedsReview: what revokes the tick', () => {
     assert.equal(outputNeedsReview(ran(LS_LA, { truncated: false })), false, 'complete output')
   })
 })
+
+// --------------------------------------------------------------------------
+// Unattended mode
+//
+// The gate is the product, so switching it off has to be provable in both
+// directions: nothing is asked, and the one thing still standing actually
+// stands. `executed` is the assertion that matters throughout — a refusal that
+// returns an error while the command ran anyway would pass every check made on
+// the return value alone.
+// --------------------------------------------------------------------------
+
+describe('unattended mode', () => {
+  const noAsk: McpBridgeSpy = {
+    commands: 0,
+    shares: 0
+  }
+
+  /** The last approval handed to the bridge, so its contents can be asserted. */
+  let seen: Partial<CommandApproval> = {}
+
+  function bindCounting(): void {
+    noAsk.commands = 0
+    noAsk.shares = 0
+    mcp.bind({
+      askCommand: async (req) => {
+        noAsk.commands++
+        seen = req
+        return { approved: true, autoShare: false }
+      },
+      askShare: async (req) => {
+        noAsk.shares++
+        return { shared: true, text: req.text }
+      }
+    })
+  }
+
+  test('with the gate on, the human is still asked', async (t) => {
+    t.after(() => unattended(false))
+    unattended(false)
+    bindCounting()
+    executed = []
+
+    await toolHandler('run_command')(
+      { session_id: 's1', command: 'uptime', reason: 'checking' },
+      {}
+    )
+    assert.equal(noAsk.commands, 1, 'the approval dialog was skipped with the gate on')
+  })
+
+  test('with the gate off, nothing is asked and the command runs', async (t) => {
+    t.after(() => unattended(false))
+    unattended(true)
+    bindCounting()
+    executed = []
+    run = ran('up 9 days')
+
+    const result = await toolHandler('run_command')(
+      { session_id: 's1', command: 'uptime', reason: 'checking' },
+      {}
+    )
+    assert.equal(noAsk.commands, 0, 'a dialog was raised in unattended mode')
+    assert.equal(noAsk.shares, 0, 'the output was put to a human in unattended mode')
+    assert.deepEqual(executed, ['uptime'], 'the command did not reach the server')
+    assert.match(result.content[0].text, /up 9 days/, 'the output did not come back')
+  })
+
+  test('the destructive list escalates to the human rather than refusing', async (t) => {
+    // Unattended mode is a statement about trust, not supervision: the list
+    // does not veto, it decides the few cases where a person should look.
+    t.after(() => unattended(false))
+    unattended(true, true)
+    bindCounting()
+    executed = []
+
+    await toolHandler('run_command')(
+      { session_id: 's1', command: 'rm -rf /', reason: 'cleaning up' },
+      {}
+    )
+    assert.equal(
+      noAsk.commands,
+      1,
+      'a destructive command ran unattended instead of being put to the human'
+    )
+    assert.deepEqual(executed, ['rm -rf /'], 'approving it did not lead to it running')
+    assert.equal(seen.flagged?.id, 'rm.recursiveRoot', 'the dialog was not told which rule fired')
+    assert.ok(seen.flagged?.span, 'no span to highlight, so the reader has to hunt for it')
+  })
+
+  test('the highlight lands on the destructive half, not the harmless one', async (t) => {
+    // The whole value of the span is that it points at the reason. Pointing at
+    // `df -h` would be worse than pointing at nothing.
+    t.after(() => unattended(false))
+    unattended(true, true)
+    bindCounting()
+    executed = []
+
+    await toolHandler('run_command')(
+      { session_id: 's1', command: 'df -h && rm -rf /etc', reason: 'checking' },
+      {}
+    )
+    assert.equal(noAsk.commands, 1, 'a destructive second half ran with nobody asked')
+
+    const span = seen.flagged?.span
+    assert.ok(span, 'no span for a chained command')
+    const marked = (seen.commandVisualized ?? '').slice(span.start, span.end)
+    assert.match(marked, /rm -rf \/etc/, `highlighted the wrong part: ${JSON.stringify(marked)}`)
+  })
+
+  test('denying a flagged command tells the model it was singled out', async (t) => {
+    t.after(() => unattended(false))
+    unattended(true, true)
+    noAsk.commands = 0
+    executed = []
+    mcp.bind({
+      askCommand: async (req) => {
+        noAsk.commands++
+        seen = req
+        return { approved: false, autoShare: false }
+      },
+      askShare: async (req) => ({ shared: true, text: req.text })
+    })
+
+    const result = await toolHandler('run_command')(
+      { session_id: 's1', command: 'rm -rf /', reason: 'cleaning up' },
+      {}
+    )
+    assert.equal(result.isError, true, 'a denial was not reported as an error')
+    assert.match(result.content[0].text, /rm\.recursiveRoot/, 'the model is not told which rule')
+    assert.deepEqual(executed, [], 'a denied command ran anyway')
+  })
+
+  test('with the list switched off as well, the same command runs', async (t) => {
+    // The setting exists, so it has to actually do the thing it says.
+    t.after(() => unattended(false))
+    unattended(true, false)
+    bindCounting()
+    executed = []
+    run = ran('')
+
+    await toolHandler('run_command')(
+      { session_id: 's1', command: 'rm -rf /', reason: 'cleaning up' },
+      {}
+    )
+    assert.deepEqual(executed, ['rm -rf /'], 'the list still refused after being switched off')
+  })
+
+  test('read_terminal hands back the whole thing with nobody asked', async (t) => {
+    t.after(() => unattended(false))
+    unattended(true)
+    bindCounting()
+
+    const result = await toolHandler('read_terminal')(
+      { session_id: 's1', reason: 'checking' },
+      {}
+    )
+    assert.equal(noAsk.shares, 0, 'a share dialog was raised in unattended mode')
+    assert.match(result.content[0].text, /last twenty lines/, 'the output did not come back')
+  })
+
+  test('the model is told which mode it is in, and not told otherwise', () => {
+    // The instructions are the only way a client learns whether a person is
+    // between it and the shell. Saying a human approves everything while
+    // nobody does is a falsehood told to the party least able to check it.
+    const gated = instructionsFor({ dangerous: false, guard: true })
+    assert.match(gated, /A human approves every command/, 'the gated promise went missing')
+
+    const open = instructionsFor({ dangerous: true, guard: true })
+    assert.ok(
+      !open.includes('A human approves every command'),
+      'unattended mode still claims a human approves every command'
+    )
+    assert.match(open, /RUN IMMEDIATELY/, 'the model is not told commands run unchecked')
+    assert.match(open, /catches accidents, not intent/, 'the list is oversold to the model')
+
+    const bare = instructionsFor({ dangerous: true, guard: false })
+    assert.match(bare, /Nothing is checked/, 'the model is not told the list is off')
+  })
+})
+
+interface McpBridgeSpy {
+  commands: number
+  shares: number
+}

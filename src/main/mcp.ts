@@ -3,10 +3,22 @@
 
 /**
  * Local MCP server: an AI client sees session names, proposes commands and reads
- * output only through a gate a human holds. Invariants — 127.0.0.1 only, never
- * 0.0.0.0; bearer token plus Host/Origin DNS-rebinding protection; off unless
- * enabled and unlocked; no "approve all"; addresses, usernames and passwords
- * never reach the model.
+ * output through a gate a human holds.
+ *
+ * Invariants that hold in every mode — 127.0.0.1 only, never 0.0.0.0; bearer
+ * token plus Host/Origin DNS-rebinding protection; off unless enabled and
+ * unlocked; addresses, usernames and passwords never reach the model.
+ *
+ * The gate itself is NOT one of them any more. `dangerousMode` in the settings
+ * removes the approval dialog and returns output unedited, leaving the
+ * destructive list in `dangerousCommands.ts` — itself switchable — as the only
+ * thing in the path. Both default off and on respectively, both have to be
+ * changed by hand, and `instructionsFor` tells the model which of the two
+ * worlds it is in, because a model told a human is reading its proposals
+ * behaves differently from one that knows nobody is.
+ *
+ * There is still no "approve all" while the gate is on: the choice is the gate
+ * or no gate, never a dialog that remembers a previous yes.
  */
 
 import {
@@ -23,6 +35,7 @@ import { z } from 'zod'
 import type { CommandApproval, McpStatus, ShareRequest } from '../shared/types'
 import type { RunResult } from './ssh'
 import { scanSecrets } from '../shared/secretPatterns'
+import { deniedAfterFlag, matchDangerous } from '../shared/dangerousCommands'
 import { isQueueFull, MAX_PENDING_APPROVALS } from './approvals'
 import { visualizeControlChars } from './ansi'
 import { ssh } from './ssh'
@@ -128,6 +141,21 @@ export async function whileAwaitingHuman<T>(
 const BUSY_MESSAGE =
   `ConsoleWard is already handling ${MAX_INFLIGHT_REQUESTS} requests and will not start ` +
   'another. This one was not queued. Let the earlier ones finish and send it again.'
+
+/**
+ * Whether the approval gate is currently switched off, and whether the list is
+ * still under it.
+ *
+ * Read per call rather than captured at start-up: the settings dialog can move
+ * either of these while a client is connected, and the value that matters is
+ * the one at the moment the command arrives. A locked vault has no settings to
+ * read and no sessions to run on, so it reports the safe answer.
+ */
+function gateState(): { dangerous: boolean; guard: boolean } {
+  if (!vault.isUnlocked()) return { dangerous: false, guard: true }
+  const s = vault.read().settings
+  return { dangerous: s.dangerousMode === true, guard: s.dangerousGuard !== false }
+}
 
 class McpService {
   private http: HttpServer | null = null
@@ -365,13 +393,15 @@ class McpService {
     const server = new McpServer(
       { name: 'consoleward', version: '0.1.0' },
       {
-        instructions: [
-          'Access to the SSH sessions of ConsoleWard.',
-          'Server addresses, usernames and passwords are not available and never will be.',
-          'A human approves every command, and decides what part of its output reaches you — sometimes in advance, sometimes only after seeing it. Respect a refusal and do not retry it in a different shape.',
-          'Whatever output you receive may be trimmed or edited by the human, so never assume you are seeing everything.',
-          'Commands run in their own channel, not in the terminal the human is looking at: a fresh non-interactive shell in the home directory, with no terminal and no state carried over from your previous calls.'
-        ].join(' ')
+        /*
+          Written from the gate's actual state, not from what the product is
+          usually true of. The old text promised "a human approves every
+          command" unconditionally; with dangerous mode on, that sentence is a
+          falsehood told to the party least able to check it, and a model that
+          believes a person is reading its proposals behaves differently from
+          one that knows nobody is.
+        */
+        instructions: instructionsFor(gateState())
       }
     )
 
@@ -420,6 +450,11 @@ class McpService {
         } catch (err) {
           return toolError(modelErrorFor(err))
         }
+
+        // Unattended: the output goes back whole, with no one deciding what
+        // part of it should. The session is still echoed to the terminal, so a
+        // person returning to the window can at least see what was read.
+        if (gateState().dangerous) return sharedResult(preview)
 
         let answer: { shared: boolean; text: string }
         try {
@@ -470,6 +505,53 @@ class McpService {
         if (!ssh.isReady(session_id)) return toolError('The session does not exist or is not ready.')
         if (!command.trim()) return toolError('Empty command.')
 
+        const gate = gateState()
+        /*
+          Unattended mode is a statement about trust, not about supervision: the
+          AI works on its own and the human reads the record afterwards. The list
+          is not a wall across that — it decides the few cases where working on
+          its own stops being reasonable, and escalates those to the ordinary
+          dialog with the offending span highlighted.
+
+          A refusal was the first shape this took, and it was the wrong one. It
+          left the model arguing with a regular expression and the human unable
+          to say yes to something they would have approved in a second.
+        */
+        const hit = gate.dangerous && gate.guard ? matchDangerous(command) : null
+        /*
+          The span is translated here, into coordinates over the visualised text
+          the dialog actually renders. Visualising is a per-character
+          substitution, so it composes: visualising the three pieces and joining
+          them gives the same string as visualising the whole, and the lengths of
+          the first two pieces are the offsets the renderer needs. Doing it there
+          instead would mean shipping the raw command and the visualiser to the
+          renderer, for a highlight.
+        */
+        const flagged = hit
+          ? {
+              id: hit.id,
+              what: hit.what,
+              span: hit.span
+                ? {
+                    start: visualizeControlChars(command.slice(0, hit.span.start)).length,
+                    end:
+                      visualizeControlChars(command.slice(0, hit.span.start)).length +
+                      visualizeControlChars(command.slice(hit.span.start, hit.span.end)).length
+                  }
+                : null
+            }
+          : null
+
+        if (gate.dangerous && !flagged) {
+          let ran: RunResult
+          try {
+            ran = await ssh.runOnce(session_id, command)
+          } catch (err) {
+            return toolError(modelErrorFor(err))
+          }
+          return sharedResult(ran.output, ran)
+        }
+
         let approval: { approved: boolean; autoShare: boolean }
         try {
           approval = await whileAwaitingHuman(
@@ -480,7 +562,8 @@ class McpService {
               sessionName: ssh.title(session_id),
               command,
               commandVisualized: visualizeControlChars(command),
-              reason
+              reason,
+              ...(flagged ? { flagged } : {})
             })
           )
         } catch (err) {
@@ -488,7 +571,14 @@ class McpService {
           return toolError(QUEUE_FULL_MESSAGE)
         }
 
-        if (!approval.approved) return toolError('The human did not approve the command.')
+        if (!approval.approved) {
+      // A flagged command earns a more specific answer than the generic
+      // refusal: the model should learn it was singled out for review, which is
+      // the difference between rewording it and not sending it again.
+      return toolError(
+        flagged ? deniedAfterFlag(flagged) : 'The human did not approve the command.'
+      )
+    }
 
         let result: RunResult
         try {
@@ -610,6 +700,42 @@ export const MODEL_ERRORS = new Map<string, string>([
  * The fallback names nothing: an unmapped error may carry a local path or a
  * server's own words. Read defensively — a `SyntaxError` has no `key` at all.
  */
+/**
+ * What the model is told about the gate it is behind. Fixed English throughout.
+ *
+ * The unattended wording is deliberately blunt. A model that knows nothing will
+ * stop it is the one that should be most careful, and telling it otherwise
+ * would be both untrue and counterproductive.
+ */
+export function instructionsFor(state: { dangerous: boolean; guard: boolean }): string {
+  const common = [
+    'Access to the SSH sessions of ConsoleWard.',
+    'Server addresses, usernames and passwords are not available and never will be.',
+    'Commands run in their own channel, not in the terminal the human is looking at: a fresh non-interactive shell in the home directory, with no terminal and no state carried over from your previous calls.'
+  ]
+
+  if (!state.dangerous) {
+    return [
+      common[0],
+      common[1],
+      'A human approves every command, and decides what part of its output reaches you — sometimes in advance, sometimes only after seeing it. Respect a refusal and do not retry it in a different shape.',
+      'Whatever output you receive may be trimmed or edited by the human, so never assume you are seeing everything.',
+      common[2]
+    ].join(' ')
+  }
+
+  return [
+    common[0],
+    common[1],
+    'The human has switched off the approval step. Commands you propose RUN IMMEDIATELY on a real machine, and you receive the output in full. Nobody is reading these first, so there is no one to catch a mistake before it lands.',
+    state.guard
+      ? 'A short list of irreversible commands is still shown to the human for approval rather than running straight away — the destination or the offending part is highlighted for them. That list catches accidents, not intent, and it is not permission to try things: anything it does not recognise runs with nobody looking.'
+      : 'Nothing is checked. Every command you send runs exactly as written.',
+    'Prefer reading over writing, make one change at a time, and say what you are about to do before you do it. If a command would be hard to undo, ask the human instead of running it.',
+    common[2]
+  ].join(' ')
+}
+
 export function modelErrorFor(err: unknown): string {
   const key = (err as { key?: unknown } | null | undefined)?.key
   const mapped = typeof key === 'string' ? MODEL_ERRORS.get(key) : undefined

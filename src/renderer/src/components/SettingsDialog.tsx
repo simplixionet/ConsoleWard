@@ -430,6 +430,48 @@ export default function SettingsDialog({
 
               {mcpStatus?.error && <div className="form-error">{mcpStatus.error}</div>}
 
+              {/*
+                Switching the gate off is the one setting here that changes what
+                the product IS, so it states the consequence rather than naming
+                the feature. Off by default, and the net under it defaults on —
+                both have to be turned off by hand, one at a time.
+              */}
+              <div className={draft.dangerousMode === true ? 'danger-panel on' : 'danger-panel'}>
+                <div className="meta-label">{t('settings.dangerousTitle')}</div>
+
+                <label className="checkbox-label">
+                  <input
+                    type="checkbox"
+                    checked={draft.dangerousMode === true}
+                    onChange={(e) => setDraft({ ...draft, dangerousMode: e.target.checked })}
+                  />
+                  {t('settings.dangerousToggle')}
+                </label>
+
+                {draft.dangerousMode !== true ? (
+                  <p className="hint">{t('settings.dangerousOffNote')}</p>
+                ) : (
+                  <>
+                    <div className="warn-box danger-box">{t('settings.dangerousWhatChanges')}</div>
+
+                    <label className="checkbox-label">
+                      <input
+                        type="checkbox"
+                        checked={draft.dangerousGuard !== false}
+                        onChange={(e) => setDraft({ ...draft, dangerousGuard: e.target.checked })}
+                      />
+                      {t('settings.dangerousGuard')}
+                    </label>
+
+                    {draft.dangerousGuard !== false ? (
+                      <p className="hint">{t('settings.dangerousGuardOn')}</p>
+                    ) : (
+                      <div className="warn-box danger-box">{t('settings.dangerousGuardOff')}</div>
+                    )}
+                  </>
+                )}
+              </div>
+
               <div className="grid-3">
                 <label>
                   {t('settings.mcpPort')}
