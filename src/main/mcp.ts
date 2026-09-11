@@ -847,20 +847,30 @@ class McpService {
 
         /*
           Resolved against the server's own answer for `.`, before the list runs
-          and before the dialog renders. SFTP does not expand `~`, and an
-          unexpanded one is invisible to the destination list:
+          and before the dialog renders.
+
+          Two things make this load-bearing rather than tidy. SFTP does not
+          expand `~` — to sftp-server it is an ordinary directory name — and an
+          unexpanded one is invisible to the destination list, so
           `~/../../etc/cron.d/x` matches nothing at all, which is exactly the
-          case that list exists for.
+          case that list exists for. A relative path has the same problem for the
+          same reason, and `normaliseRemotePath` deliberately leaves one relative
+          because it cannot know what it is relative TO. Here we do: the SFTP
+          session starts in that directory, so prefixing it is what the server
+          would have done anyway.
         */
         let resolvedPath: string
         try {
-          resolvedPath = normaliseRemotePath(path, await ssh.remoteHome(session_id))
+          const home = await ssh.remoteHome(session_id)
+          const once = normaliseRemotePath(path, home)
+          resolvedPath = once.startsWith('/') ? once : normaliseRemotePath(`${home}/${once}`, home)
         } catch (err) {
           return toolError(modelErrorFor(err))
         }
         if (!resolvedPath.startsWith('/')) {
+          // `..` climbing past the root is the only way left to get here.
           return toolError(
-            'That path does not resolve to an absolute path on the server. Give an absolute one.'
+            'That path does not resolve to somewhere on the server. Give an absolute one.'
           )
         }
         const sensitive = matchSensitivePath(resolvedPath)

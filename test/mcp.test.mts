@@ -426,6 +426,30 @@ describe('upload_file asks before it writes', () => {
     assert.ok(seen[0].flagged, 'a path that reaches cron through ~ was not flagged')
   })
 
+  test('a relative path is resolved against the session directory, not refused', async () => {
+    // The SFTP session starts in that directory, so prefixing it is what the
+    // server would have done. Refusing instead would make the tool description
+    // a lie and push the model into guessing an absolute path.
+    uploaded = []
+    bindUpload(true)
+    await toolHandler('upload_file')(
+      { session_id: 's1', path: 'app/config.yml', content: 'a: 1', reason: 'config' },
+      {}
+    )
+    assert.deepEqual(uploaded, [{ path: '/home/deploy/app/config.yml', content: 'a: 1' }])
+  })
+
+  test('a relative traversal that climbs into cron is flagged', async () => {
+    const seen: Record<string, unknown>[] = []
+    bindUpload(false, seen)
+    await toolHandler('upload_file')(
+      { session_id: 's1', path: 'x/../../../etc/cron.d/y', content: '* * * * * z', reason: 'x' },
+      {}
+    )
+    assert.equal(seen[0].resolvedPath, '/etc/cron.d/y', 'the relative traversal was not resolved')
+    assert.ok(seen[0].flagged, 'a relative path that climbs into cron was not flagged')
+  })
+
   test('a ~ traversal is flagged even with both unattended switches on', async () => {
     uploaded = []
     unattended(true)
