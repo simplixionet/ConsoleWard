@@ -170,6 +170,21 @@ class SshManager {
     this.emit?.data(session.id, Buffer.from(block, 'utf8').toString('base64'))
   }
 
+  /**
+   * Writes a refused command into the session the human can come back to.
+   *
+   * With the approval dialog switched off the terminal is the only record that
+   * anything was attempted, so a refusal has to leave a mark there as well as
+   * in the answer the model gets. Display only, like `echo`: never through
+   * appendBuffer, or the model could read its own refusal back later as though
+   * the shell had produced it.
+   */
+  echoRefusal(sessionId: string, commandVisualized: string, ruleId: string): void {
+    const session = this.sessions.get(sessionId)
+    if (!session) return
+    this.echo(session, `${t('term.refusedHeader')}\r\n$ ${commandVisualized}\r\n[${ruleId}]`)
+  }
+
   async connect(connectionId: string): Promise<string> {
     const data = vault.read()
     const conn = data.connections.find((c) => c.id === connectionId)

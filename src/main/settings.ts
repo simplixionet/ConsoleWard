@@ -27,7 +27,11 @@ export const DEFAULT_SETTINGS: Settings = {
   fontSize: 14,
   scrollback: 5000,
   mcpEnabled: false,
-  mcpPort: DEFAULT_MCP_PORT
+  mcpPort: DEFAULT_MCP_PORT,
+  // Both defaults point the same way: the gate is on, and the net under it is
+  // on too. Turning either off has to be something a person did on purpose.
+  dangerousMode: false,
+  dangerousGuard: true
 }
 
 /** Inclusive bounds, in the units the settings dialog shows. */
@@ -58,6 +62,8 @@ export const SETTINGS_FIELDS: Record<
   scrollback: 'saved',
   mcpEnabled: 'elsewhere',
   mcpPort: 'elsewhere',
+  dangerousMode: 'saved',
+  dangerousGuard: 'saved',
   aiModel: 'unused',
   aiEffort: 'unused',
   hasAiApiKey: 'derived'
@@ -153,7 +159,9 @@ export function sanitizeSettings(current: Settings, patch: unknown): Settings {
     ),
     // Never from the patch: see `elsewhere` above.
     mcpEnabled: flag(current.mcpEnabled, 'mcpEnabled', false),
-    mcpPort: port(current.mcpPort)
+    mcpPort: port(current.mcpPort),
+    dangerousMode: flag(current.dangerousMode, 'dangerousMode', DEFAULT_SETTINGS.dangerousMode),
+    dangerousGuard: flag(current.dangerousGuard, 'dangerousGuard', DEFAULT_SETTINGS.dangerousGuard)
   }
 
   if (has(incoming, 'autoLockMinutes')) {
@@ -171,6 +179,18 @@ export function sanitizeSettings(current: Settings, patch: unknown): Settings {
   }
   if (has(incoming, 'scrollback')) {
     next.scrollback = whole(incoming.scrollback, 'scrollback', SETTINGS_LIMITS.scrollback)
+  }
+  /*
+    No default on this path, unlike the block above: `flag` throws on anything
+    that is not a boolean. A patch carrying `"false"` or `0` has to fail rather
+    than be coerced, because the direction a wrong reading falls in is straight
+    through the approval gate.
+  */
+  if (has(incoming, 'dangerousMode')) {
+    next.dangerousMode = flag(incoming.dangerousMode, 'dangerousMode')
+  }
+  if (has(incoming, 'dangerousGuard')) {
+    next.dangerousGuard = flag(incoming.dangerousGuard, 'dangerousGuard')
   }
   return next
 }

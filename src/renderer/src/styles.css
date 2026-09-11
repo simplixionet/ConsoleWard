@@ -447,6 +447,31 @@ input.mono {
   unicode-bidi: plaintext;
   direction: ltr;
 }
+/*
+  The unattended-mode block. Quiet until it is switched on, then it carries the
+  same red the approval dialog uses — the point is that a glance at this tab
+  tells you which mode the machine is in.
+*/
+.danger-panel {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+/* .checkbox-label is align-self:end for the settings grid; inside this
+   column that pushes it to the right edge, away from its own label. */
+.danger-panel label.checkbox-label {
+  align-self: start;
+  padding-bottom: 0;
+}
+
+.danger-panel.on {
+  border-color: rgba(255, 107, 107, 0.55);
+  background: #14090b;
+}
+
 .danger-box {
   background: rgba(255, 107, 107, 0.09);
   border-color: rgba(255, 107, 107, 0.35);

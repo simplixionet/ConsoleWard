@@ -110,6 +110,19 @@ export interface Settings {
   disconnectOnLock: boolean
   fontSize: number
   scrollback: number
+  /**
+   * Run what the AI proposes without asking, and hand back the whole output.
+   *
+   * The approval dialog is what this application is for, so switching it off is
+   * a separate, deliberate decision with its own warnings — never a side effect
+   * of enabling the gateway.
+   */
+  dangerousMode?: boolean
+  /**
+   * While dangerousMode is on, still refuse the destructive list. On by default;
+   * see src/shared/dangerousCommands.ts for what it does and does not catch.
+   */
+  dangerousGuard?: boolean
   /** Local MCP server for AI clients. Off by default. */
   mcpEnabled?: boolean
   mcpPort?: number
