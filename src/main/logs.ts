@@ -182,7 +182,11 @@ export class LogWriter {
     })
 
     if (mayRoll && this.bytesWritten + frame.length > this.limits.maxFileBytes) {
-      await this.rollOver()
+      const rolled = await this.rollOver()
+      // A roll-over needs the master to wrap the new file's key, and the master
+      // is in the vault — which may have locked since this session started. The
+      // log ends there rather than writing on unbounded, and it ends saying so.
+      if (!rolled) return
       return this.writeFrame(payload, false)
     }
 
@@ -195,25 +199,62 @@ export class LogWriter {
    * Starts a new file rather than renaming one with an open handle, and says so
    * in both: the old file ends with a note and the new one starts with it, so a
    * reader holding either half knows the other exists.
+   *
+   * Returns false when the new file could not be created — which in practice
+   * means one thing. A new part needs its own key wrapped by the master, the
+   * master lives in the vault, and a session outlives a vault lock whenever
+   * `disconnectOnLock` is off. Holding the master here instead would keep a key
+   * that opens *every* log alive inside a locked process, which is the trade
+   * rule 1 refuses. So the log ends at the cap, and the last thing in it says
+   * why: a record that stops without saying it stopped is the outcome rule 2
+   * exists to prevent, and "the vault was locked" is exactly what the person
+   * reading it later needs to know.
    */
-  private async rollOver(): Promise<void> {
+  private async rollOver(): Promise<boolean> {
     const next = this.part + 1
-    const notice = Buffer.from(`\n[consoleward] size limit reached — continues in part ${next}\n`)
-    const tail = encodeFrame({
-      fileKey: this.file.fileKey,
-      header: this.file.header,
-      index: this.index,
-      payload: notice
-    })
-    await fsp.appendFile(this.file.filePath, tail, { mode: FILE_MODE })
 
-    this.file = await this.store.createFile(this.kind, this.file.header.sessionId, baseLabel(this.file.header.label), next)
+    let fresh: { filePath: string; header: LogHeader; fileKey: Buffer }
+    try {
+      fresh = await this.store.createFile(
+        this.kind,
+        this.file.header.sessionId,
+        baseLabel(this.file.header.label),
+        next
+      )
+    } catch (err) {
+      console.warn('logs: cannot start a new part, ending the log here:', err)
+      await this.seal(
+        `\n[consoleward] size limit reached, and a new part could not be started ` +
+          `(the vault is locked). Nothing after this point was recorded.\n`
+      )
+      this.closed = true
+      return false
+    }
+
+    // Written before the handover, so the old file's last frame points forward.
+    await this.seal(`\n[consoleward] size limit reached — continues in part ${next}\n`)
+
+    this.file = fresh
     this.part = next
     this.index = 0
     this.bytesWritten = (await fsp.stat(this.file.filePath)).size
 
     const head = Buffer.from(`[consoleward] continued from part ${next - 1}\n`)
     await this.writeFrame(head, false)
+    return true
+  }
+
+  /** A last frame in the current file, appended past the cap on purpose. */
+  private async seal(text: string): Promise<void> {
+    const frame = encodeFrame({
+      fileKey: this.file.fileKey,
+      header: this.file.header,
+      index: this.index,
+      payload: Buffer.from(text)
+    })
+    await fsp.appendFile(this.file.filePath, frame, { mode: FILE_MODE })
+    this.index += 1
+    this.bytesWritten += frame.length
   }
 }
 

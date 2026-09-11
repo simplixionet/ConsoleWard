@@ -191,6 +191,34 @@ describe('the caps hold, and say so', () => {
     assert.ok(text.includes('z'.repeat(600 * 1024)), 'the oversized append was lost')
   })
 
+  test('a roll-over the vault cannot serve ends the log saying so', async () => {
+    /*
+      A new part needs its own key wrapped by the master, and the master is in
+      the vault — which a long session outlives whenever disconnectOnLock is off.
+      Holding the master in the writer instead would keep a key that opens every
+      log alive inside a locked process, so the log ends here rather than
+      writing on. What it must not do is end quietly.
+    */
+    logs.setLimits({ maxFileBytes: 64 * 1024 })
+    const writer = await logs.open('transcript', 'sess-locked', 'web01')
+    writer.append('before the lock\n')
+    await writer.flush()
+
+    vaultState.logKey = undefined
+    vaultState.persistWrites = false
+    writer.append('y'.repeat(80 * 1024))
+    await writer.close()
+
+    const files = await readAll()
+    assert.equal(files.length, 1, 'a part was created without a key the vault holds')
+    assert.match(
+      files[0].text,
+      /a new part could not be started \(the vault is locked\)/,
+      'the log stopped without saying it had stopped'
+    )
+    assert.match(files[0].text, /before the lock/, 'the frames written before the lock were lost')
+  })
+
   test('the total cap removes the oldest logs when a new one opens', async () => {
     logs.setLimits({ maxFileBytes: 64 * 1024, maxTotalBytes: 1024 * 1024 })
     for (let i = 0; i < 4; i += 1) {

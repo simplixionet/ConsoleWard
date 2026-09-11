@@ -109,6 +109,14 @@ you will get this answer:
   what survives in a locked process opens one session rather than the archive —
   and that session's own credentials are live in the same process anyway.
 
+  The cost of keeping it that way: **a log that fills its size cap while the
+  vault is locked ends there.** A new part needs its own key wrapped by the
+  master, and the master is the thing deliberately not held. The log does not
+  stop quietly — its last frame says the cap was reached and a new part could
+  not be started because the vault was locked — but everything after that point
+  is not recorded. Raising the per-file cap is the answer if this ever bites;
+  holding the master in the writer is not.
+
 - **Translations are machine-produced.** The 81 security-critical strings are
   checked mechanically for placeholder integrity and were read by a human for
   dropped negations, but they have not had a native review. A weakened warning
