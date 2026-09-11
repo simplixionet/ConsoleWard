@@ -101,6 +101,14 @@ looking at is byte for byte what gets sent.
 The gateway listens on `127.0.0.1` only and is off until you turn it on. The setup for
 each client is generated with your port and token already in it.
 
+<p align="center">
+  <img src="docs/screenshots/08-key-library.png" alt="The SSH keys tab: two keys with their type and SHA256 fingerprint, one showing which connections use it, and one with its public key expanded" width="820">
+</p>
+
+Keys belong to the vault, not to one connection. The public half is shown and copyable
+so you can install it; the private half has no button anywhere, because a screenshot of
+this screen should not be able to compromise anything.
+
 <details>
 <summary>More screens</summary>
 
@@ -110,6 +118,8 @@ each client is generated with your port and token already in it.
 | Unlocking the vault | Connections and a live session |
 | ![The first step of the share dialog](docs/screenshots/04-output-choose.png) | ![The AI access settings tab](docs/screenshots/06-mcp-gateway.png) |
 | Choosing what to share — there is no "send everything" button | The gateway, its port and its token |
+| ![The logs settings tab](docs/screenshots/09-session-logs.png) | |
+| What is recorded, what it costs in disk, and how to read or delete it | |
 
 </details>
 

@@ -66,15 +66,21 @@ class AiLog {
     if (existing) return existing.writer
 
     const opening = logs.open('ai', sessionId, sessionName)
-    this.open.set(sessionId, { writer: null as unknown as LogWriter, opening })
+    const entry: OpenLog = { writer: null as unknown as LogWriter, opening }
+    this.open.set(sessionId, entry)
     try {
       const writer = await opening
-      this.open.set(sessionId, { writer, opening: null })
+      // Only if this entry is still the live one. A session closing while the
+      // file was being created already took it out of the map and closed the
+      // writer; re-adding it here would leave a closed writer behind for a
+      // session that has ended, and nothing would ever remove it.
+      if (this.open.get(sessionId) === entry) this.open.set(sessionId, { writer, opening: null })
+      else await writer.close()
       return writer
     } catch (err) {
       // Dropped rather than cached: the next event tries again, which matters
       // when the failure was a locked vault during the first call.
-      this.open.delete(sessionId)
+      if (this.open.get(sessionId) === entry) this.open.delete(sessionId)
       throw err
     }
   }

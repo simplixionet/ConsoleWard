@@ -164,6 +164,11 @@ label.checkbox-label {
 label.checkbox-label input {
   width: auto;
 }
+/* In a column the end-alignment above has nothing to line up with. */
+label.checkbox-label.stacked {
+  align-self: start;
+  padding-bottom: 0;
+}
 
 .hint {
   color: var(--text-dim);

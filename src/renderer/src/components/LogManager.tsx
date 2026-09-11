@@ -75,7 +75,7 @@ export default function LogManager({ draft, onChange }: Props) {
 
   return (
     <div className="host-list">
-      <label className="checkbox-label">
+      <label className="checkbox-label stacked">
         <input
           type="checkbox"
           checked={draft.sessionLogs !== false}
@@ -85,7 +85,7 @@ export default function LogManager({ draft, onChange }: Props) {
       </label>
       <span className="hint">{t('logs.transcriptsHint')}</span>
 
-      <label className="checkbox-label">
+      <label className="checkbox-label stacked">
         <input
           type="checkbox"
           checked={draft.aiLog !== false}
