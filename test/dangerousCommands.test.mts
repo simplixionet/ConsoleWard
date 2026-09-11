@@ -16,7 +16,7 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 
-const { matchDangerous, refusalFor, DANGEROUS_PATTERNS } = await import(
+const { matchDangerous, deniedAfterFlag, DANGEROUS_PATTERNS } = await import(
   '../src/shared/dangerousCommands.ts'
 )
 
@@ -89,14 +89,32 @@ describe('the destructive list catches what cannot be undone', () => {
     blocked('find /var/www -name "*.log" -delete', 'find.delete')
   })
 
-  test('every rule names itself, so a refusal can be acted on', () => {
+  test('every rule names itself, so an escalation can be explained', () => {
     for (const p of DANGEROUS_PATTERNS) {
       assert.match(p.id, /^[a-z]+\.[a-zA-Z]+$/, `${p.id} is not a stable dotted id`)
       assert.ok(p.what.length > 10, `${p.id} has no readable description`)
     }
-    const text = refusalFor({ id: 'rm.recursiveRoot', what: 'deleting everything' })
-    assert.match(text, /rm\.recursiveRoot/, 'the refusal does not say which rule fired')
-    assert.match(text, /not a negotiation/, 'the refusal invites the model to retry')
+    const text = deniedAfterFlag({
+      id: 'rm.recursiveRoot',
+      what: 'deleting everything',
+      span: null
+    })
+    assert.match(text, /rm\.recursiveRoot/, 'the denial does not say which rule fired')
+    assert.match(text, /shown to/, 'the model is not told a human saw it')
+    assert.match(text, /Do not rephrase/, 'the denial invites the model to try again')
+  })
+
+  test('a match says where it is, so the dialog can point at it', () => {
+    // The span is the whole reason the human can answer quickly rather than
+    // re-reading a command they did not write.
+    const command = 'df -h && rm -rf /etc'
+    const hit = matchDangerous(command)
+    assert.ok(hit?.span, 'no span, so the dialog can only describe the problem')
+    assert.match(
+      command.slice(hit.span.start, hit.span.end),
+      /rm -rf \/etc/,
+      'the span points somewhere other than the destructive part'
+    )
   })
 })
 

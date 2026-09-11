@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Simplixio — Stanislav Opletal <info@simplixio.net>
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { CommandApproval } from '@shared/types'
 import { useT } from '../i18n'
 import { useArmedAfterPaint } from '../armDelay'
@@ -38,6 +38,32 @@ export default function CommandApprovalDialog({ request, onAnswer }: Props) {
     setClipped(el.scrollHeight > el.clientHeight + 1)
   }, [request.commandVisualized])
 
+  /*
+    The flagged span, rendered rather than described.
+
+    In unattended mode this dialog only appears because the destructive list
+    matched, so the first question the reader has is "which part". Answering it
+    with a sentence makes them find it themselves in a command they did not
+    write; answering it with a highlight costs one span.
+
+    The offsets arrive already translated into `commandVisualized` coordinates.
+    They cannot be computed here: the visualiser substitutes glyphs and shifts
+    everything after them, and it lives in the main process — which is also the
+    only side that has the raw command to measure against.
+  */
+  function flaggedBody(): ReactNode {
+    const span = request.flagged?.span
+    if (!span) return request.commandVisualized
+    const text = request.commandVisualized
+    return (
+      <>
+        {text.slice(0, span.start)}
+        <mark className="danger-span">{text.slice(span.start, span.end)}</mark>
+        {text.slice(span.end)}
+      </>
+    )
+  }
+
   return (
     <div className="modal-backdrop">
       <div className="modal wide-modal danger-modal">
@@ -66,9 +92,15 @@ export default function CommandApprovalDialog({ request, onAnswer }: Props) {
               <span className="meta-count">{t('mcp.totalCount', { count: request.command.length })}</span>
             </div>
             <pre className="command-box" ref={boxRef}>
-              {request.commandVisualized}
+              {flaggedBody()}
             </pre>
           </div>
+
+          {request.flagged && (
+            <div className="warn-box danger-box">
+              <b>{t('mcp.flaggedLead')}</b> {t('mcp.flaggedBody', { what: request.flagged.what })}
+            </div>
+          )}
 
           <div className="note-box">{t('mcp.separateShellWarn')}</div>
 

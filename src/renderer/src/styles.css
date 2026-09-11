@@ -452,6 +452,19 @@ input.mono {
   same red the approval dialog uses — the point is that a glance at this tab
   tells you which mode the machine is in.
 */
+/*
+  The span that stopped an otherwise unattended command. Has to read as "look
+  here" against the command box's own red, so it inverts rather than tints —
+  a lighter shade of the surrounding warning would disappear into it.
+*/
+.danger-span {
+  background: rgba(255, 107, 107, 0.9);
+  color: #14090b;
+  border-radius: 3px;
+  padding: 1px 2px;
+  font-weight: 600;
+}
+
 .danger-panel {
   border: 1px solid var(--border);
   border-radius: 8px;

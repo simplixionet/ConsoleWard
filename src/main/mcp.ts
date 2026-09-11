@@ -35,7 +35,7 @@ import { z } from 'zod'
 import type { CommandApproval, McpStatus, ShareRequest } from '../shared/types'
 import type { RunResult } from './ssh'
 import { scanSecrets } from '../shared/secretPatterns'
-import { matchDangerous, refusalFor } from '../shared/dangerousCommands'
+import { deniedAfterFlag, matchDangerous } from '../shared/dangerousCommands'
 import { isQueueFull, MAX_PENDING_APPROVALS } from './approvals'
 import { visualizeControlChars } from './ansi'
 import { ssh } from './ssh'
@@ -506,20 +506,43 @@ class McpService {
         if (!command.trim()) return toolError('Empty command.')
 
         const gate = gateState()
-        if (gate.dangerous) {
-          /*
-            The blocklist runs first and is the only thing between this call and
-            the shell. It is a denylist over shell text, so it stops the typo and
-            not the intent — see dangerousCommands.ts. Refusals are echoed into
-            the session as well as returned, because with no dialog the terminal
-            is the only record a person can come back to.
-          */
-          const hit = gate.guard ? matchDangerous(command) : null
-          if (hit) {
-            ssh.echoRefusal(session_id, visualizeControlChars(command), hit.id)
-            return toolError(refusalFor(hit))
-          }
+        /*
+          Unattended mode is a statement about trust, not about supervision: the
+          AI works on its own and the human reads the record afterwards. The list
+          is not a wall across that — it decides the few cases where working on
+          its own stops being reasonable, and escalates those to the ordinary
+          dialog with the offending span highlighted.
 
+          A refusal was the first shape this took, and it was the wrong one. It
+          left the model arguing with a regular expression and the human unable
+          to say yes to something they would have approved in a second.
+        */
+        const hit = gate.dangerous && gate.guard ? matchDangerous(command) : null
+        /*
+          The span is translated here, into coordinates over the visualised text
+          the dialog actually renders. Visualising is a per-character
+          substitution, so it composes: visualising the three pieces and joining
+          them gives the same string as visualising the whole, and the lengths of
+          the first two pieces are the offsets the renderer needs. Doing it there
+          instead would mean shipping the raw command and the visualiser to the
+          renderer, for a highlight.
+        */
+        const flagged = hit
+          ? {
+              id: hit.id,
+              what: hit.what,
+              span: hit.span
+                ? {
+                    start: visualizeControlChars(command.slice(0, hit.span.start)).length,
+                    end:
+                      visualizeControlChars(command.slice(0, hit.span.start)).length +
+                      visualizeControlChars(command.slice(hit.span.start, hit.span.end)).length
+                  }
+                : null
+            }
+          : null
+
+        if (gate.dangerous && !flagged) {
           let ran: RunResult
           try {
             ran = await ssh.runOnce(session_id, command)
@@ -539,7 +562,8 @@ class McpService {
               sessionName: ssh.title(session_id),
               command,
               commandVisualized: visualizeControlChars(command),
-              reason
+              reason,
+              ...(flagged ? { flagged } : {})
             })
           )
         } catch (err) {
@@ -547,7 +571,14 @@ class McpService {
           return toolError(QUEUE_FULL_MESSAGE)
         }
 
-        if (!approval.approved) return toolError('The human did not approve the command.')
+        if (!approval.approved) {
+      // A flagged command earns a more specific answer than the generic
+      // refusal: the model should learn it was singled out for review, which is
+      // the difference between rewording it and not sending it again.
+      return toolError(
+        flagged ? deniedAfterFlag(flagged) : 'The human did not approve the command.'
+      )
+    }
 
         let result: RunResult
         try {
@@ -698,8 +729,8 @@ export function instructionsFor(state: { dangerous: boolean; guard: boolean }): 
     common[1],
     'The human has switched off the approval step. Commands you propose RUN IMMEDIATELY on a real machine, and you receive the output in full. Nobody is reading these first, so there is no one to catch a mistake before it lands.',
     state.guard
-      ? 'A short list of irreversible commands is still refused automatically. It catches accidents, not intent, and it is not permission to try things: anything it misses runs.'
-      : 'Nothing is refused automatically. Every command you send runs exactly as written.',
+      ? 'A short list of irreversible commands is still shown to the human for approval rather than running straight away — the destination or the offending part is highlighted for them. That list catches accidents, not intent, and it is not permission to try things: anything it does not recognise runs with nobody looking.'
+      : 'Nothing is checked. Every command you send runs exactly as written.',
     'Prefer reading over writing, make one change at a time, and say what you are about to do before you do it. If a command would be hard to undo, ask the human instead of running it.',
     common[2]
   ].join(' ')

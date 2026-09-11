@@ -202,6 +202,16 @@ export interface CommandApproval {
   /** Control characters made visible, so an extra line cannot hide in it. */
   commandVisualized: string
   reason: string
+  /**
+   * Set when unattended mode was on and the destructive list matched — which is
+   * the only reason this dialog appears in that mode at all. The dialog leads
+   * with it and highlights the span.
+   */
+  flagged?: {
+    id: string
+    what: string
+    span: { start: number; end: number } | null
+  }
 }
 
 /** AI request for output — the human picks exactly what gets sent. */

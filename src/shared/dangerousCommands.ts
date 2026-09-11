@@ -4,9 +4,11 @@
 /**
  * The blocklist behind unattended mode.
  *
- * WHAT THIS IS: a typo catcher. It stops the handful of commands whose damage
- * nobody can undo, so a model that has misread the room does not take the
- * machine with it.
+ * WHAT THIS IS: a second pair of eyes. Unattended mode means the AI works on
+ * its own; this list decides the handful of cases where that stops being
+ * reasonable and a person should look. A hit does not refuse the command — it
+ * raises the ordinary approval dialog, with the offending span highlighted, and
+ * the human decides. Everything the list does not recognise runs untouched.
  *
  * WHAT THIS IS NOT: a security boundary. A denylist over shell text cannot be
  * one. `/bin/rm` is not `rm`; `bash -c "…"` hides its argument; a script fetched
@@ -161,6 +163,14 @@ export const DANGEROUS_PATTERNS: readonly DangerousPattern[] = [
 export interface DangerousMatch {
   id: string
   what: string
+  /**
+   * Where it sits in the ORIGINAL command, for the dialog to highlight.
+   *
+   * Null when only the normalised form matched — a line continuation, say. The
+   * dialog then names the rule without pointing at anything, which is honest;
+   * highlighting the wrong span would be worse than highlighting nothing.
+   */
+  span: { start: number; end: number } | null
 }
 
 /**
@@ -178,17 +188,36 @@ export function matchDangerous(command: string): DangerousMatch | null {
     // Fresh lastIndex each time: a /g pattern reused across calls resumes
     // mid-string and skips a match the next caller depends on.
     re.lastIndex = 0
-    if (re.test(text)) return { id, what }
+    if (!re.test(text)) continue
+
+    // Decided on the normalised text, located in the text the human will read.
+    // The two can disagree, and when they do there is nothing to point at.
+    re.lastIndex = 0
+    const inOriginal = re.exec(command)
+    return {
+      id,
+      what,
+      span: inOriginal
+        ? { start: inOriginal.index, end: inOriginal.index + inOriginal[0].length }
+        : null
+    }
   }
   return null
 }
 
-/** What the model is told when a rule refuses it. Fixed English by design. */
-export function refusalFor(match: DangerousMatch): string {
+/**
+ * What the model is told when a human, having been shown a flagged command,
+ * says no. Fixed English by design.
+ *
+ * Worth more than the generic denial: the model learns that this particular
+ * command was singled out for review rather than caught by a mood, which is the
+ * difference between rewording it and not sending it again.
+ */
+export function deniedAfterFlag(match: DangerousMatch): string {
   return (
-    `Refused by ConsoleWard's destructive-command list (${match.id}): ${match.what}. ` +
-    'Unattended mode is on, so no human saw this. The list guards against accidents ' +
-    'and is not a negotiation — do not rephrase the command to get around it. Ask the ' +
-    'human to run it themselves, or to approve it with unattended mode switched off.'
+    `The human declined. Unattended mode is on, but this command matched ` +
+    `ConsoleWard's destructive list (${match.id}: ${match.what}), so it was shown to ` +
+    'them for approval instead of running. They said no. Do not rephrase it to avoid ' +
+    'the match — ask them what they would rather do.'
   )
 }

@@ -20,15 +20,21 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   able to check it, and a model that knows nobody is reading its proposals
   behaves differently from one that believes otherwise.
 - **A destructive-command list** under unattended mode, on by default and
-  switchable. It refuses `rm -rf /`, `mkfs`, writes to block devices,
-  `shutdown`, piping a download into a shell, user deletion, firewall flushes,
-  `DROP DATABASE`, log and history erasure, force pushes and `find -delete`.
-  Refusals are written into the session as well as returned, because with no
-  dialog the terminal is the only record left.
+  switchable. `rm -rf /`, `mkfs`, writes to block devices, `shutdown`, piping a
+  download into a shell, user deletion, firewall flushes, `DROP DATABASE`, log
+  and history erasure, force pushes and `find -delete` do not run straight
+  away: they stop and wait for you in the ordinary approval dialog, **with the
+  part that triggered it highlighted**. Everything the list does not recognise
+  runs without asking.
+
+  It escalates rather than refuses, and the difference matters. A refusal leaves
+  the model arguing with a regular expression and the human unable to say yes to
+  something they would have approved in a second; an escalation puts the one
+  decision that needs a person in front of one.
 
   It is a seatbelt, not a lock, and the settings say so: it reads the command
-  text, so it stops a mistake and not an intention. `/bin/rm`, a downloaded
-  script and a plain `dd` all pass unchanged. The rules are anchored to the
+  text, so it catches a mistake and not an intention. `/bin/rm`, a downloaded
+  script and a plain `dd` go straight through. The rules are anchored to the
   start of a command, so `grep shutdown /var/log/syslog` is ordinary work and
   not an order to power the machine off — a list that fires on those is a list
   people switch off, and a switched-off list protects nothing.
