@@ -42,7 +42,16 @@ In scope, and most interesting first:
   approval, or `read_terminal` return content the human did not release, is the
   most serious class of bug this project has.
 - **Vault cryptography.** Key derivation, envelope wrapping, the GCM tag as the
-  only verifier, the v1→v3 and v2→v3 migrations.
+  only verifier, the v1→v3 and v2→v3 migrations, and the migration that moves key
+  text off connections into the key library.
+- **The log format.** `docs/LOG-FORMAT.md` is a public promise: nonce reuse, an
+  AAD that fails to bind a frame to its file or its position, a reader that can
+  be made to allocate or to accept a spliced frame. It is documented as
+  tamper-*evident*, not tamper-proof — see "Known and accepted".
+- **The `.ppk` parser.** It runs on a file somebody sent the user, before
+  anything is known about it. Unbounded reads, an Argon2 cost taken from the
+  file and paid before it is checked, a MAC comparison that is not constant
+  time, or trusting the private blob before the MAC verifies.
 - **Host key verification.** Anything that lets a changed fingerprint through
   without explicit acceptance, or that overwrites a stored fingerprint on
   rejection.
@@ -50,8 +59,13 @@ In scope, and most interesting first:
   on `Host` and `Origin`, behaviour when the vault locks.
 - **Renderer isolation.** Anything that gets a secret into the renderer process,
   or escapes the context isolation / sandbox.
-- **Secret leakage.** Credentials in logs, in crash output, in the terminal
-  buffer handed to an AI, or in the `.bak` file.
+- **Secret leakage.** Credentials in crash output, in the terminal buffer handed
+  to an AI, or in the `.bak` file. Session logs are encrypted at rest; a path
+  that writes one in the clear, or leaves a file key where the vault does not
+  protect it, is in scope.
+- **The upload destination list.** A path that reaches `~/.ssh`, cron, systemd,
+  sudoers or anything on `PATH` without stopping for a human while unattended
+  uploads are on — including through `..` or an unexpanded `~`.
 
 Out of scope:
 
@@ -79,10 +93,38 @@ you will get this answer:
   point on. What it cannot undo is a copy someone already took together with the
   matching secret — they have read what was in that copy. This was a real
   finding, fixed on 2026-08-05; before that, revocation revoked nothing at all.
-- **Translations are machine-produced.** The 81 security-critical strings are
-  checked mechanically for placeholder integrity and were read by a human for
-  dropped negations, but they have not had a native review. A weakened warning
-  in a non-English locale is a real bug and worth reporting.
+- **The log format is tamper-evident, not tamper-proof.** A frame edited,
+  reordered, or lifted in from another log is caught — by its tag and by the
+  index in its nonce. **Deleting frames cleanly off the end is not**, because
+  nothing in the file records how many there should be, and that looks exactly
+  like the crash-mid-write case a reader has to tolerate. `label` and
+  `createdAt` sit outside the AAD and can be edited in place. Both are stated in
+  `docs/LOG-FORMAT.md` and pinned by tests that fail if the format ever starts
+  claiming more.
+
+- **A log file's key stays in memory through a vault lock.** It is resolved once
+  when the session opens and held by the writer, because sessions outlive a lock
+  whenever `disconnectOnLock` is off and a log that stopped at lock time would
+  miss exactly the period worth having. It is a per-file key, not the master, so
+  what survives in a locked process opens one session rather than the archive —
+  and that session's own credentials are live in the same process anyway.
+
+  The cost of keeping it that way: **a log that fills its size cap while the
+  vault is locked ends there.** A new part needs its own key wrapped by the
+  master, and the master is the thing deliberately not held. The log does not
+  stop quietly — its last frame says the cap was reached and a new part could
+  not be started because the vault was locked — but everything after that point
+  is not recorded. Raising the per-file cap is the answer if this ever bites;
+  holding the master in the writer is not.
+
+- **Translations are machine-produced.** The security-critical strings — the
+  `hostkey`, `mcp`, `secret`, `recovery` and `vault` namespaces, now over a
+  hundred of them — are checked mechanically for placeholder integrity and were
+  read by a human for dropped negations, but they have not had a native review.
+  A weakened warning in a non-English locale is a real bug and worth reporting.
+  Note the checker's `SECURITY_NAMESPACES` covers those five; the newer `logs`
+  and upload-warning strings are outside it and are guarded by their own tests
+  rather than by the placeholder check.
 
 - **The MCP token is convenience, not a defence against a compromised machine.**
   It is 256 random bits, it lives inside the encrypted vault, and it is what stops

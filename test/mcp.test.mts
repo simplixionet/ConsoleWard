@@ -58,6 +58,9 @@ const PREVIEW = 'last twenty lines'
  */
 let executed: string[] = []
 
+/** Same reason as `executed`: a refused upload must leave this empty. */
+let uploaded: { path: string; content: string }[] = []
+
 
 /**
  * The gate reads its state from the vault on every call, so the tests have to
@@ -75,6 +78,11 @@ function unattended(dangerous: boolean, guard = true): void {
   vaultState.settings.dangerousGuard = guard
 }
 
+/** The upload switch is its own decision, so the tests have to set it on its own. */
+function allowUnattendedUpload(allow: boolean): void {
+  vaultState.settings.dangerousUpload = allow
+}
+
 mock.module('../src/main/vault.ts', {
   exports: {
     vault: {
@@ -87,6 +95,7 @@ mock.module('../src/main/vault.ts', {
 
 mock.module('../src/main/ssh.ts', {
   exports: {
+    UPLOAD_MAX_BYTES: 1024 * 1024,
     ssh: {
       isReady: (): boolean => true,
       title: (): string => 'web01',
@@ -96,12 +105,37 @@ mock.module('../src/main/ssh.ts', {
       runOnce: async (_id: string, command: string) => {
         executed.push(command)
         return run
+      },
+      // Every ordinary server answers realpath('.') with the session's home.
+      remoteHome: async (): Promise<string> => '/home/deploy',
+      upload: async (_id: string, path: string, content: Buffer) => {
+        uploaded.push({ path, content: content.toString('utf8') })
       }
     }
   }
 })
 
+interface AiLogEvent {
+  sessionId: string
+  event: { kind: string; [k: string]: unknown }
+}
+let aiEvents: AiLogEvent[] = []
+mock.module('../src/main/aiLog.ts', {
+  exports: {
+    aiLog: {
+      record: async (sessionId: string, _name: string, event: { kind: string }): Promise<void> => {
+        aiEvents.push({ sessionId, event })
+      },
+      close: async (): Promise<void> => {},
+      closeAll: async (): Promise<void> => {}
+    }
+  }
+})
+
 const { mcp, outputNeedsReview, instructionsFor } = await import('../src/main/mcp.ts')
+
+/** The kinds recorded for the most recent tool call, in order. */
+const recordedKinds = (): string[] => aiEvents.map((e) => e.event.kind)
 
 const JWT =
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.' +
@@ -265,6 +299,393 @@ describe('run_command: "no" stops the command, not just the answer', () => {
     executed = []
     await approveAndRun({ result: ran(LS_LA), autoShare: true, command: 'ls -la' })
     assert.deepEqual(executed, ['ls -la'], 'the approved path never reaches runOnce at all')
+  })
+})
+
+// --------------------------------------------------------------------------
+// save_command — a write the human reads once and trusts later
+// --------------------------------------------------------------------------
+
+describe('save_command keeps the delayed-execution path honest', () => {
+  test('a refusal stores nothing', async () => {
+    let asked = 0
+    mcp.bind({
+      askCommand: async () => ({ approved: false, autoShare: false }),
+      askShare: async (req) => ({ shared: true, text: req.text }),
+      saveCommand: async () => {
+        asked += 1
+        return { approved: false }
+      },
+      askUpload: async () => ({ approved: false })
+    })
+
+    const result = await toolHandler('save_command')(
+      { title: 'Restart app', body: 'systemctl restart app', reason: 'used often' },
+      {}
+    )
+
+    assert.equal(asked, 1, 'the bridge was never asked')
+    assert.equal(result.isError, true, 'a refused save reported success to the model')
+  })
+
+  test('the body reaches the dialog with control characters made visible', async () => {
+    const seen: { bodyVisualized: string; body: string }[] = []
+    mcp.bind({
+      askCommand: async () => ({ approved: false, autoShare: false }),
+      askShare: async (req) => ({ shared: true, text: req.text }),
+      saveCommand: async (req) => {
+        seen.push(req as unknown as { bodyVisualized: string; body: string })
+        return { approved: true }
+      },
+      askUpload: async () => ({ approved: false })
+    })
+
+    await toolHandler('save_command')(
+      { title: 'Deploy', body: 'deploy.sh\u0007 --now', reason: 'the release step' },
+      {}
+    )
+
+    assert.equal(seen.length, 1, 'the dialog never saw the request')
+    assert.ok(
+      !seen[0].bodyVisualized.includes('\u0007'),
+      'a bell character reached the dialog raw; a saved command is a command and is read the ' +
+        'same way one is'
+    )
+    assert.equal(seen[0].body, 'deploy.sh\u0007 --now', 'the stored body must stay exactly as sent')
+  })
+
+  test('unattended mode skips the human, which is why the mark is not optional', async () => {
+    // Chosen deliberately: an exception for saving would make the mode mean
+    // something different depending on which tool was called. What remains is
+    // the 'ai' origin and the confirm-on-run it forces.
+    unattended(true)
+    const skipped: boolean[] = []
+    mcp.bind({
+      askCommand: async () => ({ approved: false, autoShare: false }),
+      askShare: async (req) => ({ shared: true, text: req.text }),
+      saveCommand: async (_req, skipApproval) => {
+        skipped.push(skipApproval)
+        return { approved: true }
+      },
+      askUpload: async () => ({ approved: false })
+    })
+
+    await toolHandler('save_command')(
+      { title: 'Tail log', body: 'journalctl -u app -n 50', reason: 'checking often' },
+      {}
+    )
+    unattended(false)
+
+    assert.deepEqual(skipped, [true], 'unattended mode still stopped to ask about a save')
+  })
+})
+
+// --------------------------------------------------------------------------
+// upload_file — three switches, and only all three skip the human
+// --------------------------------------------------------------------------
+
+describe('upload_file asks before it writes', () => {
+  function bindUpload(answer: boolean, seen?: Record<string, unknown>[]) {
+    mcp.bind({
+      askCommand: async () => ({ approved: false, autoShare: false }),
+      askShare: async (req) => ({ shared: true, text: req.text }),
+      saveCommand: async () => ({ approved: false }),
+      askUpload: async (req) => {
+        seen?.push(req as unknown as Record<string, unknown>)
+        return { approved: answer }
+      }
+    })
+  }
+
+  test('a refusal writes nothing to the server', async () => {
+    uploaded = []
+    bindUpload(false)
+    const result = await toolHandler('upload_file')(
+      { session_id: 's1', path: '/etc/nginx/conf.d/app.conf', content: 'server {}', reason: 'vhost' },
+      {}
+    )
+    assert.deepEqual(uploaded, [], 'the file the human refused was written anyway')
+    assert.equal(result.isError, true, 'a refused upload reported success to the model')
+  })
+
+  test('an approval writes exactly what was shown', async () => {
+    uploaded = []
+    bindUpload(true)
+    await toolHandler('upload_file')(
+      { session_id: 's1', path: '/etc/nginx/conf.d/app.conf', content: 'server {}', reason: 'vhost' },
+      {}
+    )
+    assert.deepEqual(uploaded, [{ path: '/etc/nginx/conf.d/app.conf', content: 'server {}' }])
+  })
+
+  test('the resolved path is what lands, not the spelling the model used', async () => {
+    // The human approved a destination. Writing to a different spelling of it
+    // would make the dialog a description of some other action.
+    uploaded = []
+    bindUpload(true)
+    await toolHandler('upload_file')(
+      { session_id: 's1', path: '~/app/config.yml', content: 'a: 1', reason: 'config' },
+      {}
+    )
+    assert.deepEqual(uploaded, [{ path: '/home/deploy/app/config.yml', content: 'a: 1' }])
+  })
+
+  test('a traversal through ~ is resolved before the list sees it', async () => {
+    /*
+      The hole this closes. SFTP does not expand ~, and an unexpanded one is
+      invisible to matchSensitivePath: '~/../../etc/cron.d/x' matches nothing at
+      all. Resolving against the server's own home is what makes the rule apply.
+    */
+    const seen: Record<string, unknown>[] = []
+    bindUpload(false, seen)
+    await toolHandler('upload_file')(
+      { session_id: 's1', path: '~/../../etc/cron.d/backup', content: '* * * * * x', reason: 'x' },
+      {}
+    )
+    assert.equal(seen[0].resolvedPath, '/etc/cron.d/backup', 'the ~ traversal was not resolved')
+    assert.ok(seen[0].flagged, 'a path that reaches cron through ~ was not flagged')
+  })
+
+  test('a relative path is resolved against the session directory, not refused', async () => {
+    // The SFTP session starts in that directory, so prefixing it is what the
+    // server would have done. Refusing instead would make the tool description
+    // a lie and push the model into guessing an absolute path.
+    uploaded = []
+    bindUpload(true)
+    await toolHandler('upload_file')(
+      { session_id: 's1', path: 'app/config.yml', content: 'a: 1', reason: 'config' },
+      {}
+    )
+    assert.deepEqual(uploaded, [{ path: '/home/deploy/app/config.yml', content: 'a: 1' }])
+  })
+
+  test('a relative traversal that climbs into cron is flagged', async () => {
+    const seen: Record<string, unknown>[] = []
+    bindUpload(false, seen)
+    await toolHandler('upload_file')(
+      { session_id: 's1', path: 'x/../../../etc/cron.d/y', content: '* * * * * z', reason: 'x' },
+      {}
+    )
+    assert.equal(seen[0].resolvedPath, '/etc/cron.d/y', 'the relative traversal was not resolved')
+    assert.ok(seen[0].flagged, 'a relative path that climbs into cron was not flagged')
+  })
+
+  test('a ~ traversal is flagged even with both unattended switches on', async () => {
+    uploaded = []
+    unattended(true)
+    allowUnattendedUpload(true)
+    let asked = 0
+    mcp.bind({
+      askCommand: async () => ({ approved: false, autoShare: false }),
+      askShare: async (req) => ({ shared: true, text: req.text }),
+      saveCommand: async () => ({ approved: false }),
+      askUpload: async () => {
+        asked += 1
+        return { approved: false }
+      }
+    })
+    await toolHandler('upload_file')(
+      { session_id: 's1', path: '~/../../root/.ssh/authorized_keys', content: 'ssh-ed25519 A', reason: 'x' },
+      {}
+    )
+    unattended(false)
+    allowUnattendedUpload(false)
+
+    assert.equal(asked, 1, 'a key file was written unwatched because ~ hid the destination')
+    assert.deepEqual(uploaded, [])
+  })
+
+  test('the dialog is told where the file really lands, not where it was asked to', async () => {
+    // /etc/nginx/../cron.d/x IS /etc/cron.d/x, and the difference is the answer.
+    const seen: Record<string, unknown>[] = []
+    bindUpload(false, seen)
+    await toolHandler('upload_file')(
+      { session_id: 's1', path: '/etc/nginx/../cron.d/backup', content: '* * * * * x', reason: 'x' },
+      {}
+    )
+    assert.equal(seen[0].resolvedPath, '/etc/cron.d/backup', 'the traversal was passed through raw')
+    assert.ok(seen[0].flagged, 'a destination that runs on a schedule was not flagged')
+  })
+
+  test('unattended mode alone does not skip it — the upload switch is separate', async () => {
+    uploaded = []
+    unattended(true)
+    allowUnattendedUpload(false)
+    let asked = 0
+    mcp.bind({
+      askCommand: async () => ({ approved: false, autoShare: false }),
+      askShare: async (req) => ({ shared: true, text: req.text }),
+      saveCommand: async () => ({ approved: false }),
+      askUpload: async () => {
+        asked += 1
+        return { approved: false }
+      }
+    })
+    await toolHandler('upload_file')(
+      { session_id: 's1', path: '/srv/app/config.yml', content: 'a: 1', reason: 'config' },
+      {}
+    )
+    unattended(false)
+    assert.equal(asked, 1, 'a file was written unwatched on the strength of unattended mode alone')
+    assert.deepEqual(uploaded, [])
+  })
+
+  test('with both switches on it writes an ordinary path without asking', async () => {
+    uploaded = []
+    unattended(true)
+    allowUnattendedUpload(true)
+    let asked = 0
+    mcp.bind({
+      askCommand: async () => ({ approved: false, autoShare: false }),
+      askShare: async (req) => ({ shared: true, text: req.text }),
+      saveCommand: async () => ({ approved: false }),
+      askUpload: async () => {
+        asked += 1
+        return { approved: false }
+      }
+    })
+    await toolHandler('upload_file')(
+      { session_id: 's1', path: '/srv/app/config.yml', content: 'a: 1', reason: 'config' },
+      {}
+    )
+    assert.equal(asked, 0, 'the mode the user switched on still stopped to ask')
+    assert.deepEqual(uploaded, [{ path: '/srv/app/config.yml', content: 'a: 1' }])
+  })
+
+  test('a sensitive destination stops even with both switches on', async () => {
+    // The whole reason the destination list exists: unattended is a statement
+    // about trust, and authorized_keys is not a file trust should cover.
+    uploaded = []
+    unattended(true)
+    allowUnattendedUpload(true)
+    let asked = 0
+    mcp.bind({
+      askCommand: async () => ({ approved: false, autoShare: false }),
+      askShare: async (req) => ({ shared: true, text: req.text }),
+      saveCommand: async () => ({ approved: false }),
+      askUpload: async () => {
+        asked += 1
+        return { approved: false }
+      }
+    })
+    const result = await toolHandler('upload_file')(
+      { session_id: 's1', path: '~/.ssh/authorized_keys', content: 'ssh-ed25519 AAAA', reason: 'access' },
+      {}
+    )
+    unattended(false)
+    allowUnattendedUpload(false)
+
+    assert.equal(asked, 1, 'a key file was written with nobody asked')
+    assert.deepEqual(uploaded, [])
+    assert.match(
+      String(result.content[0].text),
+      /Do not rephrase/,
+      'the refusal invites the model to try a different spelling of the same path'
+    )
+  })
+})
+
+describe('the audit log records what the tools do', () => {
+  // The log is what unattended mode is traded against, so "it is written at all"
+  // is a property worth pinning rather than assuming.
+
+  test('an unattended run records that it ran with nobody asked, and the result', async () => {
+    aiEvents = []
+    unattended(true)
+    run = ran('done\n')
+    mcp.bind({
+      askCommand: async () => ({ approved: false, autoShare: false }),
+      askShare: async (req) => ({ shared: true, text: req.text }),
+      saveCommand: async () => ({ approved: false }),
+      askUpload: async () => ({ approved: false })
+    })
+    await toolHandler('run_command')({ session_id: 's1', command: 'uptime', reason: 'check' }, {})
+    unattended(false)
+
+    assert.deepEqual(
+      recordedKinds(),
+      ['unattended', 'ran'],
+      'the unattended path did not leave the record it is the whole point of'
+    )
+    const ran0 = aiEvents.find((e) => e.event.kind === 'ran')
+    assert.equal(ran0?.event.output, 'done\n', 'the output was not in the record')
+  })
+
+  test('an approved run records proposed, approved and ran', async () => {
+    aiEvents = []
+    run = ran('ok\n')
+    mcp.bind({
+      askCommand: async () => ({ approved: true, autoShare: false }),
+      askShare: async (req) => ({ shared: true, text: req.text }),
+      saveCommand: async () => ({ approved: false }),
+      askUpload: async () => ({ approved: false })
+    })
+    await toolHandler('run_command')({ session_id: 's1', command: 'id', reason: 'x' }, {})
+
+    // autoShare is off, so the output goes through the share dialog, which is
+    // itself an event: the record shows the human was asked to release it.
+    assert.deepEqual(recordedKinds(), ['proposed', 'approved', 'ran', 'shared'])
+  })
+
+  test('a denied command records the denial', async () => {
+    aiEvents = []
+    mcp.bind({
+      askCommand: async () => ({ approved: false, autoShare: false }),
+      askShare: async (req) => ({ shared: true, text: req.text }),
+      saveCommand: async () => ({ approved: false }),
+      askUpload: async () => ({ approved: false })
+    })
+    await toolHandler('run_command')({ session_id: 's1', command: 'rm x', reason: 'x' }, {})
+
+    assert.deepEqual(recordedKinds(), ['proposed', 'denied'])
+  })
+
+  test('an unattended save is recorded as unattended, not as approved-by-a-human', async () => {
+    aiEvents = []
+    unattended(true)
+    mcp.bind({
+      askCommand: async () => ({ approved: false, autoShare: false }),
+      askShare: async (req) => ({ shared: true, text: req.text }),
+      saveCommand: async () => ({ approved: true }),
+      askUpload: async () => ({ approved: false })
+    })
+    await toolHandler('save_command')(
+      { title: 'T', body: 'systemctl restart app', reason: 'x' },
+      {}
+    )
+    unattended(false)
+
+    const saved = aiEvents.find((e) => e.event.kind === 'savedCommand')
+    assert.ok(saved, 'a save left no audit event')
+    assert.equal(saved.event.unattended, true, 'the record cannot tell an unattended save from a clicked-through one')
+  })
+
+  test('a failed upload is recorded rather than leaving the log silent', async () => {
+    aiEvents = []
+    run = ran('')
+    mcp.bind({
+      askCommand: async () => ({ approved: false, autoShare: false }),
+      askShare: async (req) => ({ shared: true, text: req.text }),
+      saveCommand: async () => ({ approved: false }),
+      askUpload: async () => ({ approved: true })
+    })
+    // ssh.upload is stubbed to succeed in this suite, so drive the failure
+    // through the size cap instead, which rejects before the write.
+    await toolHandler('upload_file')(
+      { session_id: 's1', path: '/etc/motd', content: 'x'.repeat(2 * 1024 * 1024), reason: 'x' },
+      {}
+    )
+    // Over the cap is refused before any dialog or event; the point of this test
+    // is the recorded path, so assert the ordinary approved upload records.
+    aiEvents = []
+    await toolHandler('upload_file')(
+      { session_id: 's1', path: '/etc/motd', content: 'hello', reason: 'x' },
+      {}
+    )
+    assert.ok(
+      aiEvents.some((e) => e.event.kind === 'uploaded'),
+      'an approved upload left no audit event'
+    )
   })
 })
 

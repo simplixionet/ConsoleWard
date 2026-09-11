@@ -2,9 +2,11 @@
 // Copyright (C) 2026 Simplixio — Stanislav Opletal <info@simplixio.net>
 
 import { useEffect, useRef, useState } from 'react'
-import type { KnownHost, McpStatus, Settings } from '@shared/types'
+import type { KnownHost, McpStatus, Settings, SshKeyMeta } from '@shared/types'
 import { api, errorMessage, unwrap } from '../api'
 import { LOCALES, useI18n } from '../i18n'
+import KeyManager from './KeyManager'
+import LogManager from './LogManager'
 import McpClientSetup from './McpClientSetup'
 
 interface Props {
@@ -17,7 +19,7 @@ interface Props {
   onClose: () => void
 }
 
-type Tab = 'general' | 'security' | 'mcp' | 'hosts'
+type Tab = 'general' | 'security' | 'mcp' | 'keys' | 'logs' | 'hosts'
 
 export default function SettingsDialog({
   settings,
@@ -32,6 +34,7 @@ export default function SettingsDialog({
   const [tab, setTab] = useState<Tab>('general')
   const [draft, setDraft] = useState<Settings>(settings)
   const [hosts, setHosts] = useState<KnownHost[]>([])
+  const [keys, setKeys] = useState<SshKeyMeta[]>([])
   const [oldPw, setOldPw] = useState('')
   const [newPw, setNewPw] = useState('')
   const [newPw2, setNewPw2] = useState('')
@@ -47,6 +50,7 @@ export default function SettingsDialog({
 
   useEffect(() => {
     void refreshHosts()
+    void refreshKeys()
     void refreshMcp()
     const off = api.mcp.onStatus(setMcpStatus)
     return off
@@ -69,6 +73,14 @@ export default function SettingsDialog({
   async function refreshHosts(): Promise<void> {
     try {
       setHosts(unwrap(await api.hosts.list()))
+    } catch (err) {
+      setError(errorMessage(err))
+    }
+  }
+
+  async function refreshKeys(): Promise<void> {
+    try {
+      setKeys(unwrap(await api.keys.list()))
     } catch (err) {
       setError(errorMessage(err))
     }
@@ -217,6 +229,12 @@ export default function SettingsDialog({
           </button>
           <button className={tab === 'mcp' ? 'tab active' : 'tab'} onClick={() => setTab('mcp')}>
             {t('settings.tabMcp')}
+          </button>
+          <button className={tab === 'keys' ? 'tab active' : 'tab'} onClick={() => setTab('keys')}>
+            {t('settings.tabKeys', { count: keys.length })}
+          </button>
+          <button className={tab === 'logs' ? 'tab active' : 'tab'} onClick={() => setTab('logs')}>
+            {t('settings.tabLogs')}
           </button>
           <button
             className={tab === 'hosts' ? 'tab active' : 'tab'}
@@ -468,6 +486,25 @@ export default function SettingsDialog({
                     ) : (
                       <div className="warn-box danger-box">{t('settings.dangerousGuardOff')}</div>
                     )}
+
+                    {/* Its own switch inside the mode, and off by default: a
+                        file lands once and is run later by something else, so
+                        trusting the agent to run commands is not the same
+                        decision as letting it write to disk unwatched. */}
+                    <label className="checkbox-label">
+                      <input
+                        type="checkbox"
+                        checked={draft.dangerousUpload === true}
+                        onChange={(e) => setDraft({ ...draft, dangerousUpload: e.target.checked })}
+                      />
+                      {t('settings.dangerousUpload')}
+                    </label>
+
+                    {draft.dangerousUpload === true ? (
+                      <div className="warn-box danger-box">{t('settings.dangerousUploadOn')}</div>
+                    ) : (
+                      <p className="hint">{t('settings.dangerousUploadOff')}</p>
+                    )}
                   </>
                 )}
               </div>
@@ -534,6 +571,12 @@ export default function SettingsDialog({
             </>
           )}
 
+          {tab === 'keys' && <KeyManager keys={keys} onChanged={() => void refreshKeys()} />}
+
+          {tab === 'logs' && (
+            <LogManager draft={draft} onChange={(p) => setDraft({ ...draft, ...p })} />
+          )}
+
           {tab === 'hosts' && (
             <div className="host-list">
               {hosts.length === 0 && <div className="empty">{t('settings.hostsEmpty')}</div>}
@@ -561,7 +604,14 @@ export default function SettingsDialog({
           <button className="btn" onClick={onClose}>
             {t('common.close')}
           </button>
-          {(tab === 'general' || tab === 'security') && (
+          {/*
+            'mcp' belongs here and did not before 1.2: the unattended-mode and
+            guard switches live on that tab and write to `draft`, so without a
+            Save the user toggled the gate, saw the panel change colour, closed
+            the dialog and lost it. The direction that matters is turning the
+            gate back ON.
+          */}
+          {(tab === 'general' || tab === 'security' || tab === 'logs' || tab === 'mcp') && (
             <button className="btn primary" onClick={save}>
               {t('common.save')}
             </button>

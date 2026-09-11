@@ -10,15 +10,24 @@
 
 import { createHash, randomUUID } from 'node:crypto'
 import { Client } from 'ssh2'
-import type { ClientChannel } from 'ssh2'
+import type { ClientChannel, SFTPWrapper } from 'ssh2'
 import type { Connection, HostKeyPrompt, SessionInfo, SessionStatus } from '../shared/types'
 import { vault } from './vault'
+import { logs, type LogWriter } from './logs'
+import { aiLog } from './aiLog'
 import { cleanTerminalText, tailLines, visualizeControlChars } from './ansi'
 import { appError, t } from './i18n'
 
 const SCROLL_MEMORY_BYTES = 256 * 1024
 
 const RUN_OUTPUT_BYTES = 128 * 1024
+
+/**
+ * An upload is a whole file carried through a JSON tool call, so it is bounded
+ * twice over: once here, and once by the MCP request cap. A megabyte covers a
+ * config file, a unit file or a script, which is what this is for.
+ */
+export const UPLOAD_MAX_BYTES = 1024 * 1024
 
 /** Extra budget for stderr, so a stdout flood cannot drop the line explaining a failure. */
 const STDERR_RESERVE_BYTES = 16 * 1024
@@ -84,6 +93,10 @@ interface Session {
   bufferBytes: number
   /** An MCP command is in flight; the gate allows one per session. */
   running: boolean
+  /** The server's answer for `.`, resolved once. Empty until asked for. */
+  remoteHome: string | null
+  /** The encrypted transcript, if this connection writes one. */
+  log: LogWriter | null
 }
 
 type Emitter = {
@@ -168,6 +181,35 @@ class SshManager {
   private echo(session: Session, text: string): void {
     const block = `\r\n${text.replace(/\n/g, '\r\n')}\r\n`
     this.emit?.data(session.id, Buffer.from(block, 'utf8').toString('base64'))
+    session.log?.append(block)
+  }
+
+  /**
+   * Opens the transcript for a session, if this connection writes one.
+   *
+   * The key is resolved here and held by the writer: the session may outlive a
+   * vault lock, and a write path that had to read the vault would stop
+   * recording at exactly the moment a record matters most.
+   *
+   * A failure here is logged and dropped. Refusing to connect because a log
+   * could not be opened would make logging a reason sessions fail.
+   */
+  private async openTranscript(
+    session: Session,
+    conn: Connection,
+    settings: { sessionLogs?: boolean }
+  ): Promise<void> {
+    if (!logs.configured) return
+    if (settings.sessionLogs === false) return
+    if (conn.logTranscript === false) return
+    try {
+      const writer = await logs.open('transcript', session.id, session.title)
+      // The session can end while the file is being created.
+      if (this.sessions.has(session.id)) session.log = writer
+      else await writer.close()
+    } catch (err) {
+      console.warn('logs: transcript not started', err)
+    }
   }
 
   async connect(connectionId: string): Promise<string> {
@@ -187,10 +229,13 @@ class SshManager {
       status: 'connecting',
       buffer: [],
       bufferBytes: 0,
-      running: false
+      running: false,
+      log: null,
+      remoteHome: null
     }
     this.sessions.set(id, session)
     this.pushStatus(session)
+    void this.openTranscript(session, conn, data.settings)
 
     client.on('ready', () => {
       this.setStatus(session, 'authenticating')
@@ -209,14 +254,18 @@ class SshManager {
 
         stream.on('data', (chunk: Buffer) => {
           this.appendBuffer(session, chunk)
+          session.log?.append(chunk.toString('utf8'))
           this.emit?.data(id, chunk.toString('base64'))
         })
         stream.stderr?.on('data', (chunk: Buffer) => {
           this.appendBuffer(session, chunk)
+          session.log?.append(chunk.toString('utf8'))
           this.emit?.data(id, chunk.toString('base64'))
         })
         stream.on('close', () => {
           this.setStatus(session, 'closed', t('error.sessionEnded'))
+          void session.log?.close()
+          void aiLog.close(id)
           client.end()
         })
       })
@@ -249,6 +298,10 @@ class SshManager {
 
     client.on('close', () => {
       if (session.status !== 'error') this.setStatus(session, 'closed')
+      // Idempotent: a session can arrive here after stream close or disconnect
+      // already flushed it, and every path has to end with the tail on disk.
+      void session.log?.close()
+      void aiLog.close(id)
       this.sessions.delete(id)
     })
 
@@ -267,6 +320,94 @@ class SshManager {
     const s = this.sessions.get(sessionId)
     if (!s?.stream) throw appError('error.sessionNotReady')
     s.stream.write(Buffer.from(data, 'utf8'))
+    /*
+      Keystrokes are deliberately NOT logged. A transcript records what the
+      terminal displayed, which is the server's output — and the server echoes
+      the commands the user types, so they appear in the log through that path
+      anyway. What the server does not echo is a password typed at a sudo or ssh
+      prompt, and appending `data` here captured exactly those into a log that is
+      on by default and exports to plaintext. Logging both directions also wrote
+      every ordinary character twice. The one thing lost is input the server
+      chose not to show, which is the one thing that must not be recorded.
+    */
+  }
+
+  /**
+   * Where `~` and a relative path actually point, asked of the server.
+   *
+   * SFTP does not expand `~`: to sftp-server it is an ordinary directory name,
+   * so writing to `~/.ssh/authorized_keys` would create a directory called `~`
+   * and put the file inside it. Worse, an unexpanded `~` is invisible to
+   * `matchSensitivePath`, so `~/../../etc/cron.d/x` would reach cron without the
+   * human ever being shown a warning — which is precisely the case that list
+   * exists for.
+   *
+   * `realpath('.')` is what the server itself would resolve the session's start
+   * directory to, which for every ordinary configuration is the user's home.
+   * Cached per session: it cannot change while the connection is open.
+   */
+  async remoteHome(sessionId: string): Promise<string> {
+    const s = this.sessions.get(sessionId)
+    if (!s || s.status !== 'ready') throw appError('error.sessionNotReady')
+    if (s.remoteHome !== null) return s.remoteHome
+
+    const sftp = await new Promise<SFTPWrapper>((resolve, reject) => {
+      s.client.sftp((err, handle) => (err ? reject(err) : resolve(handle)))
+    })
+    try {
+      const home = await new Promise<string>((resolve, reject) => {
+        sftp.realpath('.', (err, absolute) => (err ? reject(err) : resolve(absolute)))
+      })
+      s.remoteHome = home
+      return home
+    } finally {
+      sftp.end()
+    }
+  }
+
+  /**
+   * Writes a file over SFTP on the same connection.
+   *
+   * SFTP rather than `cat > file`: a here-doc has to escape the content against
+   * the remote shell, and getting that wrong turns file content into commands.
+   * SFTP carries bytes.
+   *
+   * The path must already be absolute and resolved — see `remoteHome`. It is
+   * not this method's job to decide whether the destination is reasonable, but
+   * it is its job to refuse to write somewhere other than what the human was
+   * shown, and an unexpanded path is exactly that.
+   */
+  async upload(sessionId: string, remotePath: string, content: Buffer): Promise<void> {
+    const s = this.sessions.get(sessionId)
+    if (!s || s.status !== 'ready') throw appError('error.sessionNotReady')
+    if (content.length > UPLOAD_MAX_BYTES) throw appError('error.uploadTooLarge')
+    // The approval dialog showed an absolute path. Writing anything else would
+    // make the dialog a description of a different action than the one taken.
+    if (!remotePath.startsWith('/')) throw appError('error.uploadPathNotResolved')
+
+    const sftp = await new Promise<SFTPWrapper>((resolve, reject) => {
+      s.client.sftp((err, handle) => (err ? reject(err) : resolve(handle)))
+    })
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const stream = sftp.createWriteStream(remotePath)
+        stream.on('error', reject)
+        stream.on('close', () => resolve())
+        stream.end(content)
+      })
+    } finally {
+      sftp.end()
+    }
+
+    /*
+      Mirrored into the terminal, the way an AI command run is. An upload leaves
+      no other on-screen trace, so without this an unattended one is invisible
+      to a person watching — the AI log is the record, but it is a separate
+      switch, and a write to the server is the sharpest thing this tool does.
+      Display only, never appendBuffer: the model must not read it back.
+    */
+    this.echo(s, `${t('term.uploadHeader', { bytes: content.length })}\r\n${remotePath}`)
   }
 
   resize(sessionId: string, cols: number, rows: number): void {
@@ -278,6 +419,8 @@ class SshManager {
   disconnect(sessionId: string): void {
     const s = this.sessions.get(sessionId)
     if (!s) return
+    void s.log?.close()
+    void aiLog.close(sessionId)
     s.stream?.end()
     s.client.end()
     // Fallback in case the server ignores the graceful shutdown.
@@ -319,12 +462,23 @@ class SshManager {
     switch (conn.authKind) {
       case 'password':
         return { ...base, password: conn.password ?? '', tryKeyboard: true }
-      case 'key':
+      case 'key': {
+        if (conn.keyId) {
+          const key = vault.read().keys.find((k) => k.id === conn.keyId)
+          // Deleting a key in use is refused, so a dangling id means the vault
+          // was edited somewhere else. Saying that beats letting ssh2 report a
+          // parse error on an empty string.
+          if (!key) throw appError('error.keyMissing')
+          return { ...base, privateKey: key.privateKey, passphrase: key.passphrase || undefined }
+        }
+        // Key text still on the connection: a vault from before the key library,
+        // or a key the migration could not parse. Either must keep working.
         return {
           ...base,
           privateKey: conn.privateKey ?? '',
           passphrase: conn.passphrase || undefined
         }
+      }
       case 'agent':
         return { ...base, agent: resolveAgent(conn.agentSocket) }
     }

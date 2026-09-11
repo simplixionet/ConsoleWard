@@ -32,13 +32,21 @@ import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypt
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { z } from 'zod'
-import type { CommandApproval, McpStatus, ShareRequest } from '../shared/types'
+import type {
+  CommandApproval,
+  McpStatus,
+  SaveCommandApproval,
+  ShareRequest,
+  UploadApproval
+} from '../shared/types'
 import type { RunResult } from './ssh'
 import { scanSecrets } from '../shared/secretPatterns'
 import { deniedAfterFlag, matchDangerous } from '../shared/dangerousCommands'
+import { matchSensitivePath, normaliseRemotePath } from '../shared/uploadPaths'
 import { isQueueFull, MAX_PENDING_APPROVALS } from './approvals'
 import { visualizeControlChars } from './ansi'
-import { ssh } from './ssh'
+import { UPLOAD_MAX_BYTES, ssh } from './ssh'
+import { aiLog } from './aiLog'
 import { vault } from './vault'
 import { appError, t, type AppError } from './i18n'
 
@@ -50,6 +58,10 @@ export interface McpBridge {
   askCommand: (req: CommandApproval) => Promise<{ approved: boolean; autoShare: boolean }>
   /** Rejects like `askCommand`. */
   askShare: (req: ShareRequest) => Promise<{ shared: boolean; text: string }>
+  /** Rejects like `askCommand`. Writes the snippet itself when approved. */
+  saveCommand: (req: SaveCommandApproval, skipApproval: boolean) => Promise<{ approved: boolean }>
+  /** Rejects like `askCommand`. */
+  askUpload: (req: UploadApproval) => Promise<{ approved: boolean }>
 }
 
 const DEFAULT_PORT = 7345
@@ -142,19 +154,35 @@ const BUSY_MESSAGE =
   `ConsoleWard is already handling ${MAX_INFLIGHT_REQUESTS} requests and will not start ` +
   'another. This one was not queued. Let the earlier ones finish and send it again.'
 
+/** The head of a file, for a dialog: enough to recognise it, never the whole thing. */
+const UPLOAD_PREVIEW_LINES = 40
+const UPLOAD_PREVIEW_CHARS = 4000
+
+function previewOf(content: string): { text: string; truncated: boolean } {
+  const lines = content.split('\n')
+  const head = lines.slice(0, UPLOAD_PREVIEW_LINES).join('\n')
+  const text = head.slice(0, UPLOAD_PREVIEW_CHARS)
+  return { text, truncated: text.length < content.length }
+}
+
 /**
- * Whether the approval gate is currently switched off, and whether the list is
- * still under it.
+ * Whether the approval gate is currently switched off, whether the list is
+ * still under it, and whether uploads are included in that.
  *
  * Read per call rather than captured at start-up: the settings dialog can move
- * either of these while a client is connected, and the value that matters is
- * the one at the moment the command arrives. A locked vault has no settings to
- * read and no sessions to run on, so it reports the safe answer.
+ * any of these while a client is connected, and the value that matters is the
+ * one at the moment the command arrives. A locked vault has no settings to read
+ * and no sessions to run on, so it reports the safe answer.
  */
-function gateState(): { dangerous: boolean; guard: boolean } {
-  if (!vault.isUnlocked()) return { dangerous: false, guard: true }
+function gateState(): { dangerous: boolean; guard: boolean; upload: boolean } {
+  if (!vault.isUnlocked()) return { dangerous: false, guard: true, upload: false }
   const s = vault.read().settings
-  return { dangerous: s.dangerousMode === true, guard: s.dangerousGuard !== false }
+  return {
+    dangerous: s.dangerousMode === true,
+    guard: s.dangerousGuard !== false,
+    // Its own switch, and only meaningful while unattended mode is on.
+    upload: s.dangerousUpload === true
+  }
 }
 
 class McpService {
@@ -454,7 +482,14 @@ class McpService {
         // Unattended: the output goes back whole, with no one deciding what
         // part of it should. The session is still echoed to the terminal, so a
         // person returning to the window can at least see what was read.
-        if (gateState().dangerous) return sharedResult(preview)
+        if (gateState().dangerous) {
+          await aiLog.record(session_id, ssh.title(session_id), {
+            kind: 'readTerminal',
+            reason,
+            chars: preview.length
+          })
+          return sharedResult(preview)
+        }
 
         let answer: { shared: boolean; text: string }
         try {
@@ -474,7 +509,20 @@ class McpService {
           return toolError(QUEUE_FULL_MESSAGE)
         }
 
-        if (!answer.shared) return toolError('The human declined to share the output.')
+        if (!answer.shared) {
+          await aiLog.record(session_id, ssh.title(session_id), {
+            kind: 'withheld',
+            origin: 'read_terminal',
+            reason
+          })
+          return toolError('The human declined to share the output.')
+        }
+        await aiLog.record(session_id, ssh.title(session_id), {
+          kind: 'shared',
+          origin: 'read_terminal',
+          chars: answer.text.length,
+          edited: answer.text !== preview
+        })
         return sharedResult(answer.text)
       }
     )
@@ -543,14 +591,38 @@ class McpService {
           : null
 
         if (gate.dangerous && !flagged) {
+          // Nobody is asked on this path, so the log is the only record that it
+          // happened at all. Recorded before the run, or a command that hangs
+          // leaves nothing behind.
+          const name = ssh.title(session_id)
+          await aiLog.record(session_id, name, { kind: 'unattended', command, reason })
           let ran: RunResult
           try {
             ran = await ssh.runOnce(session_id, command)
           } catch (err) {
+            await aiLog.record(session_id, name, {
+              kind: 'ran',
+              command,
+              exitCode: null,
+              output: modelErrorFor(err)
+            })
             return toolError(modelErrorFor(err))
           }
+          await aiLog.record(session_id, name, {
+            kind: 'ran',
+            command,
+            exitCode: ran.exitCode,
+            output: ran.output
+          })
           return sharedResult(ran.output, ran)
         }
+
+        await aiLog.record(session_id, ssh.title(session_id), {
+          kind: 'proposed',
+          command,
+          reason,
+          ...(flagged ? { flagged: flagged.id } : {})
+        })
 
         let approval: { approved: boolean; autoShare: boolean }
         try {
@@ -572,20 +644,44 @@ class McpService {
         }
 
         if (!approval.approved) {
-      // A flagged command earns a more specific answer than the generic
-      // refusal: the model should learn it was singled out for review, which is
-      // the difference between rewording it and not sending it again.
-      return toolError(
-        flagged ? deniedAfterFlag(flagged) : 'The human did not approve the command.'
-      )
-    }
+          await aiLog.record(session_id, ssh.title(session_id), {
+            kind: 'denied',
+            command,
+            ...(flagged ? { flagged: flagged.id } : {})
+          })
+          // A flagged command earns a more specific answer than the generic
+          // refusal: the model should learn it was singled out for review, which
+          // is the difference between rewording it and not sending it again.
+          return toolError(
+            flagged ? deniedAfterFlag(flagged) : 'The human did not approve the command.'
+          )
+        }
+
+        await aiLog.record(session_id, ssh.title(session_id), {
+          kind: 'approved',
+          command,
+          autoShare: approval.autoShare
+        })
 
         let result: RunResult
         try {
           result = await ssh.runOnce(session_id, command)
         } catch (err) {
+          await aiLog.record(session_id, ssh.title(session_id), {
+            kind: 'ran',
+            command,
+            exitCode: null,
+            output: modelErrorFor(err)
+          })
           return toolError(modelErrorFor(err))
         }
+
+        await aiLog.record(session_id, ssh.title(session_id), {
+          kind: 'ran',
+          command,
+          exitCode: result.exitCode,
+          output: result.output
+        })
 
         // The tick was given while reading the COMMAND, before any output existed,
         // so it is revoked when the output looks like it carries a credential.
@@ -612,6 +708,11 @@ class McpService {
         )
 
         if (!answer.shared) {
+          await aiLog.record(session_id, ssh.title(session_id), {
+            kind: 'withheld',
+            origin: 'command_output',
+            reason: command
+          })
           return {
             content: [
               {
@@ -621,7 +722,247 @@ class McpService {
             ]
           }
         }
+        // `edited` is the part the model cannot see: what it receives may be a
+        // trimmed version of what actually came back, and only the log holds both.
+        await aiLog.record(session_id, ssh.title(session_id), {
+          kind: 'shared',
+          origin: 'command_output',
+          chars: answer.text.length,
+          edited: answer.text !== result.output
+        })
         return sharedResult(answer.text, result)
+      }
+    )
+
+    server.registerTool(
+      'save_command',
+      {
+        title: 'Keep a command in the human’s library',
+        description:
+          'Proposes a command for the saved-command library, so a sequence worked out once can be kept. ' +
+          'It is not run. A human approves the text before it is stored, and anything stored this way is ' +
+          'marked as written by an AI and asks for confirmation every time it is run afterwards. ' +
+          'Use it for something worth running again, not as a way to leave notes — and say in `reason` ' +
+          'why it is worth keeping. You cannot read, edit or delete what is already in the library.',
+        inputSchema: {
+          title: z.string().describe('short name the human will see in the list'),
+          body: z.string().describe('the exact command text'),
+          note: z.string().optional().describe('what it does and when to use it'),
+          folder: z.string().optional().describe('existing or new folder to file it under'),
+          reason: z.string().describe('why it is worth keeping; the human reads this in the dialog')
+        },
+        annotations: { destructiveHint: false, openWorldHint: false }
+      },
+      async ({ title, body, note, folder, reason }, extra) => {
+        const bridge = this.bridge
+        if (!bridge) return toolError(modelErrorFor({ key: 'error.mcpBridgeMissing' }))
+        if (!title.trim()) return toolError('Empty title.')
+        if (!body.trim()) return toolError('Empty command.')
+
+        /*
+          Unattended mode skips this approval too, deliberately: carving out an
+          exception for saving would make the mode mean something different
+          depending on which tool was called.
+
+          The cost lands entirely on the provenance mark. A saved command is
+          persistent, is echoed nowhere, and is trusted later out of the context
+          it was written in — so the `ai` origin and the confirm-on-run it forces
+          are the whole difference between this and an unreviewed one-liner the
+          user runs next week believing they wrote it. The log below is the other
+          half: without it an unattended write leaves no record at all.
+        */
+        const unattended = gateState().dangerous
+        const request: SaveCommandApproval = {
+          id: randomUUID(),
+          title: title.trim(),
+          body,
+          bodyVisualized: visualizeControlChars(body),
+          note,
+          folder,
+          reason
+        }
+
+        let answer: { approved: boolean }
+        try {
+          answer = await whileAwaitingHuman(extra, bridge.saveCommand(request, unattended))
+        } catch (err) {
+          if (isQueueFull(err)) return toolError(QUEUE_FULL_MESSAGE)
+          // Unlike the other two bridge methods, this one writes to the vault,
+          // so it rejects on any write failure and not only on a full queue.
+          // Rethrowing hands the SDK a raw Error whose message it puts straight
+          // in front of the model — an absolute path and a username with it.
+          return toolError(modelErrorFor(err))
+        }
+
+        await aiLog.record('library', 'Saved commands', {
+          kind: 'savedCommand',
+          title: request.title,
+          body,
+          approved: answer.approved,
+          unattended
+        })
+
+        if (!answer.approved) return toolError('The human did not approve saving this command.')
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text:
+                `Saved as "${request.title}". It is marked as written by an AI, so the human is ` +
+                'asked to confirm each time they run it.'
+            }
+          ]
+        }
+      }
+    )
+
+    server.registerTool(
+      'upload_file',
+      {
+        title: 'Write a file on the server',
+        description:
+          'Writes a text file at the given path over SFTP, on the same connection as the session. ' +
+          'A human approves the destination and the content unless they have turned that off. ' +
+          'It creates or overwrites — there is no append, and no way to read a file back. ' +
+          'Paths are POSIX. A leading ~ and a relative path are resolved against the session home ' +
+          'before anything is shown or written, and the absolute result is what lands. ' +
+          'Keep it to configuration, unit files and scripts: the limit is 1 MB and the content ' +
+          'travels inside this call. Say in `reason` what the file is for.',
+        inputSchema: {
+          session_id: z.string().describe('session id from list_sessions'),
+          path: z.string().describe('absolute, ~-relative or session-relative destination path'),
+          content: z.string().describe('the exact file content'),
+          reason: z.string().describe('what the file is for; the human reads this in the dialog')
+        },
+        annotations: { destructiveHint: true, openWorldHint: false }
+      },
+      async ({ session_id, path, content, reason }, extra) => {
+        const bridge = this.bridge
+        if (!bridge) return toolError(modelErrorFor({ key: 'error.mcpBridgeMissing' }))
+        if (!ssh.isReady(session_id)) return toolError('The session does not exist or is not ready.')
+        if (!path.trim()) return toolError('Empty path.')
+
+        const bytes = Buffer.byteLength(content, 'utf8')
+        if (bytes > UPLOAD_MAX_BYTES) {
+          return toolError(
+            `The file is ${bytes} bytes; the limit is ${UPLOAD_MAX_BYTES}. Write it in pieces with ` +
+              'run_command, or fetch it on the server instead.'
+          )
+        }
+
+        /*
+          Resolved against the server's own answer for `.`, before the list runs
+          and before the dialog renders.
+
+          Two things make this load-bearing rather than tidy. SFTP does not
+          expand `~` — to sftp-server it is an ordinary directory name — and an
+          unexpanded one is invisible to the destination list, so
+          `~/../../etc/cron.d/x` matches nothing at all, which is exactly the
+          case that list exists for. A relative path has the same problem for the
+          same reason, and `normaliseRemotePath` deliberately leaves one relative
+          because it cannot know what it is relative TO. Here we do: the SFTP
+          session starts in that directory, so prefixing it is what the server
+          would have done anyway.
+        */
+        let resolvedPath: string
+        try {
+          const home = await ssh.remoteHome(session_id)
+          const once = normaliseRemotePath(path, home)
+          resolvedPath = once.startsWith('/') ? once : normaliseRemotePath(`${home}/${once}`, home)
+        } catch (err) {
+          return toolError(modelErrorFor(err))
+        }
+        if (!resolvedPath.startsWith('/')) {
+          // `..` climbing past the root is the only way left to get here.
+          return toolError(
+            'That path does not resolve to somewhere on the server. Give an absolute one.'
+          )
+        }
+        const sensitive = matchSensitivePath(resolvedPath)
+
+        /*
+          Three switches decide this, and only all three together skip the human:
+          unattended mode, its own upload switch, and a destination that is not
+          on the list. The upload switch is separate from unattended mode because
+          a file lands once and is then run by something else, at a time nobody
+          is watching — which is a different trade from a command whose output
+          echoes into a session the human can read back.
+        */
+        const gate = gateState()
+        const unattended = gate.dangerous && gate.upload && !sensitive
+
+        const name = ssh.title(session_id)
+        if (!unattended) {
+          const preview = previewOf(content)
+          let answer: { approved: boolean }
+          try {
+            answer = await whileAwaitingHuman(
+              extra,
+              bridge.askUpload({
+                id: randomUUID(),
+                sessionId: session_id,
+                sessionName: name,
+                path,
+                resolvedPath,
+                bytes,
+                preview: visualizeControlChars(preview.text),
+                previewTruncated: preview.truncated,
+                reason,
+                ...(sensitive ? { flagged: { id: sensitive.id, what: sensitive.what } } : {})
+              })
+            )
+          } catch (err) {
+            if (!isQueueFull(err)) throw err
+            return toolError(QUEUE_FULL_MESSAGE)
+          }
+
+          if (!answer.approved) {
+            await aiLog.record(session_id, name, {
+              kind: 'uploadDenied',
+              path: resolvedPath,
+              bytes
+            })
+            return toolError(
+              sensitive
+                ? `The human did not approve writing to ${resolvedPath}. It was flagged as ` +
+                    `${sensitive.what} (rule ${sensitive.id}) and shown to them with that warning. ` +
+                    'Do not rephrase the path to get around it — ask for what you need instead.'
+                : 'The human did not approve the upload.'
+            )
+          }
+        }
+
+        try {
+          // The resolved path, not the one asked for: the human approved a
+          // destination, and writing to a different spelling of it would make
+          // the dialog a description of some other action.
+          await ssh.upload(session_id, resolvedPath, Buffer.from(content, 'utf8'))
+        } catch (err) {
+          // Recorded, because SFTP opens with truncate: by the time a write can
+          // fail the destination has already been emptied, and a log that goes
+          // quiet there is quiet about the worst outcome this tool has.
+          await aiLog.record(session_id, name, {
+            kind: 'uploadFailed',
+            path: resolvedPath,
+            bytes,
+            error: modelErrorFor(err)
+          })
+          return toolError(modelErrorFor(err))
+        }
+
+        await aiLog.record(session_id, name, {
+          kind: 'uploaded',
+          path: resolvedPath,
+          bytes,
+          content,
+          unattended
+        })
+
+        return {
+          content: [
+            { type: 'text' as const, text: `Wrote ${bytes} bytes to ${resolvedPath}.` }
+          ]
+        }
       }
     )
 

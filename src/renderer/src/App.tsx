@@ -6,7 +6,9 @@ import type {
   CommandApproval,
   ConnectionMeta,
   HostKeyPrompt,
+  SaveCommandApproval,
   SessionInfo,
+  UploadApproval,
   Settings,
   ShareRequest,
   Snippet,
@@ -25,6 +27,8 @@ import HostKeyDialog from './components/HostKeyDialog'
 import SettingsDialog from './components/SettingsDialog'
 import RecoveryKeyDialog from './components/RecoveryKeyDialog'
 import CommandApprovalDialog from './components/CommandApprovalDialog'
+import SaveCommandDialog from './components/SaveCommandDialog'
+import UploadApprovalDialog from './components/UploadApprovalDialog'
 import OutputShareDialog from './components/OutputShareDialog'
 
 const FALLBACK_SETTINGS: Settings = {
@@ -78,6 +82,8 @@ export default function App() {
   } | null>(null)
   // Queues, so concurrent requests from the model are never dropped.
   const [commandQueue, setCommandQueue] = useState<CommandApproval[]>([])
+  const [saveQueue, setSaveQueue] = useState<SaveCommandApproval[]>([])
+  const [uploadQueue, setUploadQueue] = useState<UploadApproval[]>([])
   const [shareQueue, setShareQueue] = useState<ShareRequest[]>([])
 
   const activeRef = useRef<string | null>(null)
@@ -144,6 +150,10 @@ export default function App() {
     const offCommand = api.mcp.onCommandRequest((req) =>
       setCommandQueue((prev) => [...prev, req])
     )
+    const offSaveCommand = api.mcp.onSaveCommandRequest((req) =>
+      setSaveQueue((prev) => [...prev, req])
+    )
+    const offUpload = api.mcp.onUploadRequest((req) => setUploadQueue((prev) => [...prev, req]))
     const offShare = api.mcp.onShareRequest((req) => setShareQueue((prev) => [...prev, req]))
 
     const offLocked = api.vault.onLocked(() => {
@@ -160,6 +170,8 @@ export default function App() {
       setPendingInsert(null)
       setSettingsOpen(false)
       setCommandQueue([])
+      setSaveQueue([])
+      setUploadQueue([])
       setShareQueue([])
       void refreshVault()
     })
@@ -169,6 +181,8 @@ export default function App() {
       offStatus()
       offHostKey()
       offCommand()
+      offSaveCommand()
+      offUpload()
       offShare()
       offLocked()
     }
@@ -222,10 +236,18 @@ export default function App() {
 
   /* -------------------------------------------------------------- snippets */
 
+  async function loadSnippets(): Promise<void> {
+    try {
+      setSnippets(unwrap(await api.snippets.list()))
+    } catch (err) {
+      showToast(errorMessage(err))
+    }
+  }
+
   async function duplicateSnippet(s: Snippet): Promise<void> {
     try {
       unwrap(await api.snippets.duplicate(s.id))
-      setSnippets(unwrap(await api.snippets.list()))
+      await loadSnippets()
     } catch (err) {
       showToast(errorMessage(err))
     }
@@ -244,7 +266,16 @@ export default function App() {
       showToast(t('snip.noSession'))
       return
     }
-    if (s.body.includes('\n')) {
+    /*
+      An AI-written entry always confirms, whatever its length.
+
+      A single-line snippet the user typed runs straight to the shell, which is
+      right: they wrote it and they know what it does. One a model wrote was
+      read once, at save time, and is run later out of that context — so without
+      this line a useful-now, harmful-later suggestion reaches the shell with no
+      dialog at all, days after the only review it ever got.
+    */
+    if (s.origin === 'ai' || s.body.includes('\n')) {
       setPendingInsert({ snippet: s, withEnter })
       return
     }
@@ -487,6 +518,65 @@ export default function App() {
         expose a live danger button the frame its cover unmounts. Ordered by
         timeout, shortest fuse first: host key two minutes, approval five.
       */}
+      {/*
+        Before the approval dialogs on purpose. They share `.modal-backdrop`
+        with no z-index between them, so DOM order decides what covers what —
+        and an AI approval left underneath this one times out into a denial
+        nobody saw. This is the human’s own action and can wait behind it.
+      */}
+      {pendingInsert && (
+        <div className="modal-backdrop" onMouseDown={() => setPendingInsert(null)}>
+          <div className="modal wide-modal" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="modal-head">
+              <h2>{t('snip.confirmTitle')}</h2>
+            </div>
+            <div className="modal-body">
+              {/*
+                Two reasons open this dialog and they are not interchangeable.
+                A multi-line snippet is dangerous because every line ending acts
+                as Enter; an AI-written one is dangerous because it was read once
+                at save time and is being run now, out of that context. Telling
+                someone their one-line command "has multiple lines" is both false
+                and the wrong thing to check before saying yes.
+              */}
+              {pendingInsert.snippet.origin === 'ai' ? (
+                <>
+                  <div className="warn-box danger-box">
+                    <b>{t('snip.confirmAiLead')}</b>{' '}
+                    {t('snip.confirmAiBody', { session: active?.title ?? '' })}
+                  </div>
+                  {pendingInsert.snippet.body.includes('\n') && (
+                    <div className="warn-box">{t('snip.multiline')}</div>
+                  )}
+                </>
+              ) : (
+                <p>
+                  {t('snip.confirmBody', {
+                    title: pendingInsert.snippet.title,
+                    session: active?.title ?? ''
+                  })}
+                </p>
+              )}
+              <pre className="snip-code preview">{pendingInsert.snippet.body}</pre>
+            </div>
+            <div className="modal-foot">
+              <button className="btn" onClick={() => setPendingInsert(null)}>
+                {t('common.cancel')}
+              </button>
+              <button
+                className="btn primary"
+                onClick={() => {
+                  void doInsert(pendingInsert.snippet, pendingInsert.withEnter)
+                  setPendingInsert(null)
+                }}
+              >
+                {t('snip.confirmRun')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {hostKeyQueue.length > 0 && (
         <HostKeyDialog
           key={hostKeyQueue[0].requestId}
@@ -512,7 +602,39 @@ export default function App() {
         />
       )}
 
-      {hostKeyQueue.length === 0 && commandQueue.length === 0 && shareQueue.length > 0 && (
+      {hostKeyQueue.length === 0 && commandQueue.length === 0 && uploadQueue.length > 0 && (
+        <UploadApprovalDialog
+          key={uploadQueue[0].id}
+          request={uploadQueue[0]}
+          onAnswer={(approved) => {
+            const req = uploadQueue[0]
+            setUploadQueue((prev) => prev.slice(1))
+            void api.mcp.answerUpload(req.id, approved)
+          }}
+        />
+      )}
+
+      {hostKeyQueue.length === 0 &&
+        commandQueue.length === 0 &&
+        uploadQueue.length === 0 &&
+        saveQueue.length > 0 && (
+        <SaveCommandDialog
+          key={saveQueue[0].id}
+          request={saveQueue[0]}
+          onAnswer={(approved) => {
+            const req = saveQueue[0]
+            setSaveQueue((prev) => prev.slice(1))
+            void api.mcp.answerSaveCommand(req.id, approved)
+            if (approved) void loadSnippets()
+          }}
+        />
+      )}
+
+      {hostKeyQueue.length === 0 &&
+        commandQueue.length === 0 &&
+        uploadQueue.length === 0 &&
+        saveQueue.length === 0 &&
+        shareQueue.length > 0 && (
         <OutputShareDialog
           key={shareQueue[0].id}
           request={shareQueue[0]}
@@ -541,38 +663,6 @@ export default function App() {
         />
       )}
 
-      {pendingInsert && (
-        <div className="modal-backdrop" onMouseDown={() => setPendingInsert(null)}>
-          <div className="modal wide-modal" onMouseDown={(e) => e.stopPropagation()}>
-            <div className="modal-head">
-              <h2>{t('snip.confirmTitle')}</h2>
-            </div>
-            <div className="modal-body">
-              <p>
-                {t('snip.confirmBody', {
-                  title: pendingInsert.snippet.title,
-                  session: active?.title ?? ''
-                })}
-              </p>
-              <pre className="snip-code preview">{pendingInsert.snippet.body}</pre>
-            </div>
-            <div className="modal-foot">
-              <button className="btn" onClick={() => setPendingInsert(null)}>
-                {t('common.cancel')}
-              </button>
-              <button
-                className="btn primary"
-                onClick={() => {
-                  void doInsert(pendingInsert.snippet, pendingInsert.withEnter)
-                  setPendingInsert(null)
-                }}
-              >
-                {t('snip.confirmRun')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {deleteTarget && (
         <div className="modal-backdrop" onMouseDown={() => setDeleteTarget(null)}>

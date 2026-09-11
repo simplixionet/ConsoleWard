@@ -69,6 +69,18 @@ const CLICK = (selector) => `
 `
 
 /** Clicks the first element whose trimmed text matches exactly. */
+/** For a label that carries a count — "SSH keys (2)" — where the count is not the point. */
+const CLICK_PREFIX = (selector, text) => `
+  (() => {
+    const all = [...document.querySelectorAll(${JSON.stringify(selector)})]
+    const el = all.find((e) => e.textContent.trim().startsWith(${JSON.stringify(text)}))
+    if (!el) return 'no ' + ${JSON.stringify(selector)} + ' starts with ' + ${JSON.stringify(text)} +
+      ' — saw: ' + all.map((e) => e.textContent.trim()).join(' | ')
+    el.click()
+    return 'ok'
+  })()
+`
+
 const CLICK_TEXT = (selector, text) => `
   (() => {
     const all = [...document.querySelectorAll(${JSON.stringify(selector)})]
@@ -154,6 +166,19 @@ async function run(win) {
     })()
   `)
   await shoot(win, '07-connect-client')
+
+  // The key library and the logs: the two things a reader has no other way to
+  // picture, and the two that carry the most "is my private key safe" doubt.
+  // Both show only public halves and invented metadata, as everything here does.
+  await step('keys tab', CLICK_PREFIX('.tab', 'SSH keys'))
+  await wait(400)
+  await step('show a public key', CLICK_TEXT('.key-actions .btn', 'Public key'))
+  await wait(200)
+  await shoot(win, '08-key-library')
+
+  await step('logs tab', CLICK_PREFIX('.tab', 'Logs'))
+  await wait(400)
+  await shoot(win, '09-session-logs')
 }
 
 app.whenReady().then(async () => {

@@ -940,7 +940,7 @@ test('a failed write during create or v1 migration does not leave the vault open
   fs.rmSync(vaultPath() + '.tmp', { recursive: true, force: true })
 
   await vault.unlock(PASSWORD)
-  assert.equal(readVaultFile().version, 3, 'the migration no longer runs after a failed write')
+  assert.equal(readVaultFile().version, 4, 'the migration no longer runs after a failed write')
   assert.equal(vault.read().connections.length, 1, 'the legacy data was lost')
 })
 
@@ -974,7 +974,7 @@ test('a migration does not leave the old-format vault lying next to the new one'
   await writeV2Vault(PASSWORD, generateRecoveryKey(), { connections: [sampleConnection()] })
   await vault.unlock(PASSWORD)
 
-  assert.equal(readVaultFile().version, 3, 'precondition: the migration ran')
+  assert.equal(readVaultFile().version, 4, 'precondition: the migration ran')
   assert.equal(
     fs.existsSync(backupPath()),
     false,
@@ -1096,7 +1096,7 @@ test('concurrent mutations do not lose one another', async () => {
 
 /* ------------------------------------------------------- v1 → v3 migration */
 
-test('a v1 vault migrates to v3 on unlock and keeps its data', async () => {
+test('a v1 vault migrates to the current format on unlock and keeps its data', async () => {
   fresh()
   await writeLegacyVault(PASSWORD, {
     connections: [sampleConnection()],
@@ -1117,7 +1117,7 @@ test('a v1 vault migrates to v3 on unlock and keeps its data', async () => {
   assert.equal(migrated.mcpToken, 'legacy-mcp-token', 'the legacy MCP token was lost')
 
   const onDisk = readVaultFile()
-  assert.equal(onDisk.version, 3, 'the file was not rewritten in the v3 format')
+  assert.equal(onDisk.version, 4, 'the file was not rewritten in the current format')
   assert.ok(
     Number.isSafeInteger(onDisk.counter) && onDisk.counter! >= 1,
     `the migrated file carries no usable counter: ${onDisk.counter}`
@@ -1183,7 +1183,7 @@ test('a v1 vault opened with the wrong password is left exactly as it was', asyn
   assert.equal(readVaultFile().version, 1, 'a failed legacy unlock half-migrated the file')
 
   await vault.unlock(PASSWORD)
-  assert.equal(readVaultFile().version, 3, 'the migration no longer runs after a wrong guess')
+  assert.equal(readVaultFile().version, 4, 'the migration no longer runs after a wrong guess')
   assert.equal(vault.read().connections.length, 1, 'the legacy data was lost')
 })
 
@@ -1205,7 +1205,7 @@ test('unlockWithRecovery() on a v1 vault says so and leaves the file untouched',
 
 /* ------------------------------------------------------- v2 → v3 migration */
 
-test('a v2 vault migrates to v3 on unlock, keeping its data and both secrets', async () => {
+test('a v2 vault migrates on unlock, keeping its data and both secrets', async () => {
   fresh()
   const recoveryKey = generateRecoveryKey()
   await writeV2Vault(PASSWORD, recoveryKey, {
@@ -1226,7 +1226,7 @@ test('a v2 vault migrates to v3 on unlock, keeping its data and both secrets', a
   assert.equal(vault.read().mcpToken, 'v2-mcp-token', 'the v2 MCP token was lost')
 
   const onDisk = readVaultFile()
-  assert.equal(onDisk.version, 3, 'unlocking a v2 vault did not rewrite it as v3')
+  assert.equal(onDisk.version, 4, 'unlocking a v2 vault did not rewrite it in the current format')
   assert.ok(
     Number.isSafeInteger(onDisk.counter) && onDisk.counter! >= 1,
     `the migrated file carries no usable counter: ${onDisk.counter}`
@@ -1284,18 +1284,18 @@ test('a v2 vault opened with the wrong password is left in the v2 format', async
   assert.equal(readVaultFile().version, 2, 'a failed v2 unlock half-migrated the file')
 
   await vault.unlock(PASSWORD)
-  assert.equal(readVaultFile().version, 3, 'the migration no longer runs after a wrong guess')
+  assert.equal(readVaultFile().version, 4, 'the migration no longer runs after a wrong guess')
   assert.equal(vault.read().connections.length, 1, 'the v2 data was lost')
 })
 
-test('unlockWithRecovery() on a v2 vault migrates it to v3 and rotates', async () => {
+test('unlockWithRecovery() on a v2 vault migrates it and rotates', async () => {
   fresh()
   const recoveryKey = generateRecoveryKey()
   await writeV2Vault(PASSWORD, recoveryKey, { connections: [sampleConnection()] })
 
   const replacement = await vault.unlockWithRecovery(recoveryKey, OTHER_PASSWORD)
   assert.notEqual(replacement, recoveryKey, 'the recovery unlock handed back the key just used')
-  assert.equal(readVaultFile().version, 3, 'the recovery unlock left the file at v2')
+  assert.equal(readVaultFile().version, 4, 'the recovery unlock left the file at v2')
   assert.equal(vault.read().connections.length, 1, 'the v2 data was lost')
 
   vault.lock()
@@ -1332,7 +1332,7 @@ test('unlock() refuses a version or cipher it does not understand', async () => 
   await vault.create(PASSWORD)
   const good = readVaultFile()
 
-  writeVaultFile({ ...good, version: 4 })
+  writeVaultFile({ ...good, version: 5 })
   vault.lock()
   await rejectsWithKey(() => vault.unlock(PASSWORD), 'error.vaultUnsupported', 'a future version')
 
@@ -1517,7 +1517,7 @@ test('a v1 vault with hostile KDF parameters is refused before deriving', async 
   // The untouched legacy file must still migrate; the floor cannot lock out v1.
   writeVaultFile(legacy)
   await vault.unlock(PASSWORD)
-  assert.equal(readVaultFile().version, 3, 'the KDF check blocked the v1 migration')
+  assert.equal(readVaultFile().version, 4, 'the KDF check blocked the v1 migration')
   assert.equal(vault.read().connections.length, 1, 'the legacy data was lost')
 })
 
@@ -1537,13 +1537,13 @@ test('the KDF check leaves a genuine file alone and leaves room to raise N', asy
 
 /* ----------------------------------------------- authenticated header (v3) */
 
-test('a new vault is written in the v3 format with a counter in the header', async () => {
+test('a new vault is written in the current format with a counter in the header', async () => {
   fresh()
   await vault.create(PASSWORD)
   await seed()
 
   const file = readVaultFile()
-  assert.equal(file.version, 3, 'create() did not write the v3 format')
+  assert.equal(file.version, 4, 'create() did not write the current format')
   assert.ok(Number.isSafeInteger(file.counter), `the header counter is not whole: ${file.counter}`)
   assert.ok(file.counter! >= 1, 'the header counter never advanced past zero')
 
@@ -1627,7 +1627,7 @@ test('changing version in a finished v3 file makes it fail instead of opening', 
   await seed()
   const file = readVaultFile()
 
-  writeVaultFile({ ...file, version: 4 })
+  writeVaultFile({ ...file, version: 5 })
   vault.lock()
   await rejectsWithKey(() => vault.unlock(PASSWORD), 'error.vaultUnsupported', 'version 4')
 

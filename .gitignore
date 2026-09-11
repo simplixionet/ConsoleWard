@@ -14,8 +14,11 @@ Thumbs.db
 # GSD Core tooling — reinstall with:
 #   npx @opengsd/gsd-core@latest --claude --local
 # Kept out of the repo so 9.7 MB of MIT-licensed tooling does not dominate a
-# GPL-3.0 project.
+# GPL-3.0 project. It reappears under several names as editors are added; all of
+# them are generated and belong out of the tree, or a `git add -A` sweeps them in.
 .claude/
+.agents/
+.codex/
 
 # Planning and design notes stay local. They carry precise file:line references
 # to weaknesses in this codebase — some fixed, some not — and shipping that

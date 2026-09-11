@@ -164,6 +164,11 @@ label.checkbox-label {
 label.checkbox-label input {
   width: auto;
 }
+/* In a column the end-alignment above has nothing to line up with. */
+label.checkbox-label.stacked {
+  align-self: start;
+  padding-bottom: 0;
+}
 
 .hint {
   color: var(--text-dim);
@@ -893,9 +898,23 @@ input.mono {
 .snip-title {
   font-size: 13px;
   font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+/* The title truncates; anything beside it does not. */
+.snip-title-text {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.snip-title .badge {
+  flex: none;
+}
+.key-confirm {
+  width: 100%;
+  margin-top: 8px;
 }
 .snip-preview {
   font-family: var(--font-mono);
@@ -1358,6 +1377,49 @@ input.mono {
   word-break: break-all;
   margin-top: 3px;
   user-select: text;
+}
+
+/* The AI mark. Distinct from .badge.ok, which reads as reassurance. */
+.badge.ai {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.keys-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+/* A key row carries four buttons and a public key, so it stacks instead. */
+.key-row {
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+.key-main {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+.key-main .host-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.key-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.pubkey {
+  width: 100%;
+  margin-top: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  resize: vertical;
+  word-break: break-all;
 }
 
 .toast {

@@ -101,6 +101,14 @@ looking at is byte for byte what gets sent.
 The gateway listens on `127.0.0.1` only and is off until you turn it on. The setup for
 each client is generated with your port and token already in it.
 
+<p align="center">
+  <img src="docs/screenshots/08-key-library.png" alt="The SSH keys tab: two keys with their type and SHA256 fingerprint, one showing which connections use it, and one with its public key expanded" width="820">
+</p>
+
+Keys belong to the vault, not to one connection. The public half is shown and copyable
+so you can install it; the private half has no button anywhere, because a screenshot of
+this screen should not be able to compromise anything.
+
 <details>
 <summary>More screens</summary>
 
@@ -110,6 +118,8 @@ each client is generated with your port and token already in it.
 | Unlocking the vault | Connections and a live session |
 | ![The first step of the share dialog](docs/screenshots/04-output-choose.png) | ![The AI access settings tab](docs/screenshots/06-mcp-gateway.png) |
 | Choosing what to share — there is no "send everything" button | The gateway, its port and its token |
+| ![The logs settings tab](docs/screenshots/09-session-logs.png) | |
+| What is recorded, what it costs in disk, and how to read or delete it | |
 
 </details>
 
@@ -129,8 +139,15 @@ each client is generated with your port and token already in it.
   created and shown exactly once. It resets a forgotten master password. You can
   regenerate it or remove it entirely at any time.
 - **Connections** — name, host, port, user, folder, note. Authentication by password,
-  by private key (OpenSSH PEM, passphrase supported), or through an SSH agent
-  (Pageant or the OpenSSH agent).
+  by a key from the key library, or through an SSH agent (Pageant or the OpenSSH agent).
+- **SSH key library** — keys are objects the vault owns, not text copied into each
+  connection that uses them. One key can sign in to five servers, and rotating it is one
+  edit rather than five. Import OpenSSH PEM or a `.ppk` that PuTTYgen saved in format 3,
+  or **generate** an Ed25519 or RSA 4096 keypair in the app. The public half is shown and
+  copyable so you can install it; the private half is never displayed anywhere, and never
+  reaches the UI process. Deleting a key that a connection still uses is refused, and the
+  message names the connections. Existing vaults migrate on unlock: key text already on a
+  connection moves into the library, deduplicated by fingerprint.
 - **Host key verification** — `SHA256:…` fingerprints in OpenSSH format. First contact
   asks for confirmation (TOFU); **a changed fingerprint is raised as a warning** and the
   session does not open without explicit acceptance. Stored fingerprints are manageable
@@ -145,6 +162,15 @@ each client is generated with your port and token already in it.
 - **AI access over MCP** — a local MCP server through which an AI client (Claude Code
   and similar) can see session names, propose commands and request output. Always
   through the gate you hold. Off by default.
+- **Encrypted logs** — a full transcript per session and a record of everything the AI
+  did, both **on by default**, both encrypted at rest under a key in the vault. Each file
+  carries its own key wrapped by that one, so a session keeps writing through a vault
+  lock and one leaked file key exposes one session rather than the archive. Bounded by a
+  per-file and a total size cap; a full file starts a new part and says so inside it.
+  Export decrypts one where you point it, and `scripts/decrypt-log.mjs` opens one
+  without ConsoleWard at all — see [docs/LOG-FORMAT.md](docs/LOG-FORMAT.md). The
+  transcript records **what the terminal showed**, which is the server's output — so a
+  password typed at a `sudo` or `ssh` prompt, which the server never echoes, is not in it.
 - **Automatic lock** after a configurable idle period, optionally ending all SSH
   sessions at the same time.
 - **Master password change** — rotates the vault key and re-encrypts the contents. Issues a new recovery key, since the old one cannot be rebuilt under the new key.
@@ -159,6 +185,8 @@ each client is generated with your port and token already in it.
 | The UI (renderer) | receives metadata plus `hasPassword` / `hasPrivateKey` flags only |
 | Host fingerprints | in the vault, encrypted |
 | Commands and notes | in the vault, encrypted (sent to the UI — you have to see and edit them) |
+| SSH private keys and their passphrases | in the vault, main process only; the UI gets the public half, the fingerprint and a `hasPassphrase` flag |
+| Session transcripts and AI logs | `logs/*.cwlog`, encrypted under a key in the vault — see [docs/LOG-FORMAT.md](docs/LOG-FORMAT.md) |
 | Recovery key | nowhere — the file holds only a lock derived from it |
 | Language preference | `prefs.json`, deliberately **outside** the vault, since the unlock screen must be translated before any password is typed |
 
@@ -247,6 +275,8 @@ claude mcp add --transport http consoleward http://127.0.0.1:7345/ --header "Aut
 | `list_sessions` | `id`, the name you gave the connection (a placeholder if you gave none) and status — **address, port and username are never sent** |
 | `run_command` | proposes a command; **it does not run until you approve it** in a dialog |
 | `read_terminal` | asks for output; **you highlight the excerpt yourself**, then read and edit it before it goes back |
+| `save_command` | proposes a command for your saved-command library; **it does not run**, and anything stored this way is marked as AI-written and asks again before it ever runs |
+| `upload_file` | proposes a file to write over SFTP; **you see the destination and the content** before anything lands. The model cannot read a file back |
 
 The approval dialog shows the command's **literal text with control characters made
 visible**, so an extra line cannot hide in it. There is no "approve all" and no
@@ -265,11 +295,30 @@ that knows nobody is, and telling it the wrong thing would be a lie to the party
 able to check.
 
 Underneath it sits a short list of irreversible commands — `rm -rf /`, `mkfs`,
-`shutdown`, `DROP DATABASE` and a dozen more — which are refused and written into the
-session so you can see them later. That list is **a seatbelt, not a lock**, and the
-settings say so: it reads the command text, so it stops a mistake and not an intention.
-`/bin/rm`, a downloaded script and a plain `dd` all walk past it unchanged. It can be
-switched off too, which leaves nothing at all in the path.
+`shutdown`, `DROP DATABASE` and a dozen more. A match does not refuse the command: it
+**escalates it to the ordinary approval dialog**, with the offending span highlighted, so
+you can say yes to something you would have approved in a second. Refusing was the first
+shape this took and it was the wrong one — it left the model arguing with a regular
+expression and you unable to answer.
+
+That list is **a seatbelt, not a lock**, and the settings say so: it reads the command
+text, so it stops a mistake and not an intention. `/bin/rm`, a downloaded script and a
+plain `dd` all walk past it unchanged. It can be switched off too, which leaves nothing
+at all in the path.
+
+**Uploads have their own switch**, off even while unattended mode is on. Running a
+command you read about afterwards is not the same trade as letting an agent write files
+to the box: a file lands once and is then run by something else, at a time nobody is
+watching. With that switch on, an ordinary destination is written without asking — but a
+**sensitive** one still stops and waits for you. Keys, `authorized_keys`, cron, sudoers,
+systemd, login scripts, anything on `PATH`, and the web roots. A path is structured where
+shell text is not, so unlike the command list that set is nearly complete — though still
+not a boundary: writing to `/tmp` and moving the file afterwards is two steps, not one.
+
+**And the log is the other half of the trade.** Unattended mode means you trust the agent
+and read the record afterwards, so the record has to exist: every proposal, every
+decision, every command that ran with nobody asked, and what came back. On by default,
+encrypted, under Settings → Logs.
 
 Worth being explicit about what the mode costs, because it is not only "you stop
 reading commands": terminal output shapes what the AI proposes next, so a compromised
@@ -330,18 +379,31 @@ copy. Rotation protects everything written afterwards, not what was already take
 
 ### PuTTY-format keys (`.ppk`)
 
-`.ppk` is not supported directly. Convert it in PuTTYgen via
-*Conversions → Export OpenSSH key* and load the result in the connection editor.
+Format **3** — what current PuTTYgen writes — imports directly, encrypted or not,
+including the Argon2id case. It is converted to OpenSSH on the way in, so the vault holds
+one format and the connect path has one parser.
+
+Format 2 is refused by version, before any parsing: it is the older format, and the
+workaround is one step. Open it in PuTTYgen and save it again to get a format 3 file, or
+use *Conversions → Export OpenSSH key* as before.
+
+A `.ppk` is a file somebody sent you, so the parser treats it that way — every length it
+reads is bounded, the MAC is checked with a constant-time comparison before anything from
+the private half is trusted, and an Argon2 cost the file asks for is refused before it is
+paid rather than after.
 
 ## Project layout
 
 ```
 src/
   shared/     types, IPC channel names and i18n shared across processes
-  main/       main process: vault (vault.ts), SSH (ssh.ts), MCP (mcp.ts), IPC (index.ts)
+  main/       main process: vault (vault.ts), SSH (ssh.ts), MCP (mcp.ts), IPC (index.ts),
+              keys (sshKeys.ts), logs (logs.ts, logFormat.ts, aiLog.ts)
   preload/    the bridge between main and the UI (contextBridge)
   renderer/   React UI and the xterm.js terminal
 scripts/      build and verification scripts, plain Node, no dependencies
+              — including decrypt-log.mjs, which reads a log without the app
+docs/         the .cwlog format, and the screenshots the README uses
 build/        brand assets and the electron-builder resource directory
 ```
 

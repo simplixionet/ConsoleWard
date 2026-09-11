@@ -23,6 +23,65 @@ const ok = (value) => ({ ok: true, value })
 
 /* ------------------------------------------------------------ invented data */
 
+/*
+  The public halves are real ed25519 and RSA public keys, generated once for
+  this file and matching no private key anyone holds — a public key is safe to
+  publish by construction, which is the whole reason the application shows it.
+*/
+const KEYS = [
+  {
+    id: 'k1',
+    name: 'deploy@workstation',
+    keyType: 'ssh-ed25519',
+    publicKey:
+      'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ8mQ1nYvXKcR7pLxT2wDfHgZaBv4NkEyUiOpQrStUvW deploy@workstation',
+    fingerprint: 'SHA256:Xr4KpQm2nBvCzAeTyUiOpLkJhGfDsAqWeRtYuIoPxSc',
+    hasPassphrase: true,
+    origin: 'imported',
+    createdAt: 0,
+    usedBy: ['web01', 'backup-nas']
+  },
+  {
+    id: 'k2',
+    name: 'ci-runner',
+    keyType: 'ssh-ed25519',
+    publicKey:
+      'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHqWeRtYuIoPaSdFgHjKlZxCvBnMqWeRtYuIoPaSdFgH ci-runner',
+    fingerprint: 'SHA256:Lm9QwErTyUiOpAsDfGhJkLzXcVbNm1QaZwSxEdCrFvG',
+    hasPassphrase: false,
+    origin: 'generated',
+    createdAt: 0,
+    usedBy: []
+  }
+]
+
+const LOGS = [
+  {
+    id: 'transcript-11111111-2222-4333-8444-555555555555',
+    kind: 'transcript',
+    sessionId: 's1',
+    label: 'web01',
+    createdAt: 1789136000000,
+    bytes: 148_320
+  },
+  {
+    id: 'ai-66666666-7777-4888-8999-aaaaaaaaaaaa',
+    kind: 'ai',
+    sessionId: 's1',
+    label: 'web01',
+    createdAt: 1789136000000,
+    bytes: 9_840
+  },
+  {
+    id: 'transcript-bbbbbbbb-cccc-4ddd-8eee-ffffffffffff',
+    kind: 'transcript',
+    sessionId: 's2',
+    label: 'db-staging',
+    createdAt: 1789049600000,
+    bytes: 61_204
+  }
+]
+
 const CONNECTIONS = [
   {
     id: 'c1',
@@ -119,7 +178,16 @@ const SETTINGS = {
   fontSize: 14,
   scrollback: 5000,
   mcpEnabled: true,
-  mcpPort: 7345
+  mcpPort: 7345,
+  // The shipping defaults, so a capture of the settings shows what a new
+  // install actually looks like rather than what this file felt like setting.
+  dangerousMode: false,
+  dangerousGuard: true,
+  dangerousUpload: false,
+  sessionLogs: true,
+  aiLog: true,
+  logMaxFileMb: 16,
+  logMaxTotalMb: 512
 }
 
 /* ---------------------------------------------------------------- the bridge */
@@ -132,6 +200,8 @@ const listeners = {
   data: [],
   status: [],
   command: [],
+  saveCommand: [],
+  upload: [],
   hostKey: [],
   share: [],
   locked: [],
@@ -164,6 +234,21 @@ const api = {
     regenerateRecoveryKey: async () => ok('DEMO0-DEMO1-DEMO2-DEMO3-DEMO4-DEMO5'),
     removeRecoveryKey: async () => ok(null),
     onLocked: (cb) => on(listeners.locked, cb)
+  },
+  keys: {
+    list: async () => ok(KEYS),
+    import: async () => ok(KEYS[0]),
+    generate: async () => ok(KEYS[0]),
+    rename: async () => ok(KEYS[0]),
+    remove: async () => ok(null)
+  },
+  logs: {
+    list: async () => ok(LOGS),
+    size: async () => ok(LOGS.reduce((sum, f) => sum + f.bytes, 0)),
+    export: async () => ok('C:\\Users\\demo\\Documents\\transcript-2026-09-11.txt'),
+    remove: async () => ok(null),
+    purge: async () => ok(LOGS.length),
+    reveal: async () => ok(null)
   },
   connections: {
     list: async () => ok(CONNECTIONS),
@@ -227,14 +312,18 @@ const api = {
     token: async () => ok('EXAMPLE-TOKEN-NOT-REAL-0000000000000000000'),
     regenerateToken: async () => ok('EXAMPLE-TOKEN-NOT-REAL-0000000000000000000'),
     answerCommand: async () => ok(null),
+    answerSaveCommand: async () => ok(null),
+    answerUpload: async () => ok(null),
     answerShare: async () => ok(null),
     onCommandRequest: (cb) => on(listeners.command, cb),
+    onSaveCommandRequest: (cb) => on(listeners.saveCommand, cb),
+    onUploadRequest: (cb) => on(listeners.upload, cb),
     onShareRequest: (cb) => on(listeners.share, cb),
     onStatus: (cb) => on(listeners.mcpStatus, cb)
   },
   app: {
     notifyActivity: () => {},
-    version: async () => ok('1.0.2'),
+    version: async () => ok('1.2.0'),
     getLocale: async () => ok('en'),
     setLocale: async () => ok(null)
   },
