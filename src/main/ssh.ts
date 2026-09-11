@@ -93,6 +93,8 @@ interface Session {
   bufferBytes: number
   /** An MCP command is in flight; the gate allows one per session. */
   running: boolean
+  /** The server's answer for `.`, resolved once. Empty until asked for. */
+  remoteHome: string | null
   /** The encrypted transcript, if this connection writes one. */
   log: LogWriter | null
 }
@@ -228,7 +230,8 @@ class SshManager {
       buffer: [],
       bufferBytes: 0,
       running: false,
-      log: null
+      log: null,
+      remoteHome: null
     }
     this.sessions.set(id, session)
     this.pushStatus(session)
@@ -323,21 +326,57 @@ class SshManager {
   }
 
   /**
+   * Where `~` and a relative path actually point, asked of the server.
+   *
+   * SFTP does not expand `~`: to sftp-server it is an ordinary directory name,
+   * so writing to `~/.ssh/authorized_keys` would create a directory called `~`
+   * and put the file inside it. Worse, an unexpanded `~` is invisible to
+   * `matchSensitivePath`, so `~/../../etc/cron.d/x` would reach cron without the
+   * human ever being shown a warning — which is precisely the case that list
+   * exists for.
+   *
+   * `realpath('.')` is what the server itself would resolve the session's start
+   * directory to, which for every ordinary configuration is the user's home.
+   * Cached per session: it cannot change while the connection is open.
+   */
+  async remoteHome(sessionId: string): Promise<string> {
+    const s = this.sessions.get(sessionId)
+    if (!s || s.status !== 'ready') throw appError('error.sessionNotReady')
+    if (s.remoteHome !== null) return s.remoteHome
+
+    const sftp = await new Promise<SFTPWrapper>((resolve, reject) => {
+      s.client.sftp((err, handle) => (err ? reject(err) : resolve(handle)))
+    })
+    try {
+      const home = await new Promise<string>((resolve, reject) => {
+        sftp.realpath('.', (err, absolute) => (err ? reject(err) : resolve(absolute)))
+      })
+      s.remoteHome = home
+      return home
+    } finally {
+      sftp.end()
+    }
+  }
+
+  /**
    * Writes a file over SFTP on the same connection.
    *
    * SFTP rather than `cat > file`: a here-doc has to escape the content against
    * the remote shell, and getting that wrong turns file content into commands.
    * SFTP carries bytes.
    *
-   * The remote path is passed to the server verbatim. It is not this method's
-   * job to decide whether the destination is reasonable — that decision belongs
-   * to the human, in front of the dialog, with `uploadPaths.ts` telling them
-   * what they are looking at.
+   * The path must already be absolute and resolved — see `remoteHome`. It is
+   * not this method's job to decide whether the destination is reasonable, but
+   * it is its job to refuse to write somewhere other than what the human was
+   * shown, and an unexpanded path is exactly that.
    */
   async upload(sessionId: string, remotePath: string, content: Buffer): Promise<void> {
     const s = this.sessions.get(sessionId)
     if (!s || s.status !== 'ready') throw appError('error.sessionNotReady')
     if (content.length > UPLOAD_MAX_BYTES) throw appError('error.uploadTooLarge')
+    // The approval dialog showed an absolute path. Writing anything else would
+    // make the dialog a description of a different action than the one taken.
+    if (!remotePath.startsWith('/')) throw appError('error.uploadPathNotResolved')
 
     const sftp = await new Promise<SFTPWrapper>((resolve, reject) => {
       s.client.sftp((err, handle) => (err ? reject(err) : resolve(handle)))

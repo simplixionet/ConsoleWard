@@ -154,15 +154,6 @@ const BUSY_MESSAGE =
   `ConsoleWard is already handling ${MAX_INFLIGHT_REQUESTS} requests and will not start ` +
   'another. This one was not queued. Let the earlier ones finish and send it again.'
 
-/**
- * Whether the approval gate is currently switched off, and whether the list is
- * still under it.
- *
- * Read per call rather than captured at start-up: the settings dialog can move
- * either of these while a client is connected, and the value that matters is
- * the one at the moment the command arrives. A locked vault has no settings to
- * read and no sessions to run on, so it reports the safe answer.
- */
 /** The head of a file, for a dialog: enough to recognise it, never the whole thing. */
 const UPLOAD_PREVIEW_LINES = 40
 const UPLOAD_PREVIEW_CHARS = 4000
@@ -174,6 +165,15 @@ function previewOf(content: string): { text: string; truncated: boolean } {
   return { text, truncated: text.length < content.length }
 }
 
+/**
+ * Whether the approval gate is currently switched off, whether the list is
+ * still under it, and whether uploads are included in that.
+ *
+ * Read per call rather than captured at start-up: the settings dialog can move
+ * any of these while a client is connected, and the value that matters is the
+ * one at the moment the command arrives. A locked vault has no settings to read
+ * and no sessions to run on, so it reports the safe answer.
+ */
 function gateState(): { dangerous: boolean; guard: boolean; upload: boolean } {
   if (!vault.isUnlocked()) return { dangerous: false, guard: true, upload: false }
   const s = vault.read().settings
@@ -819,12 +819,13 @@ class McpService {
           'Writes a text file at the given path over SFTP, on the same connection as the session. ' +
           'A human approves the destination and the content unless they have turned that off. ' +
           'It creates or overwrites — there is no append, and no way to read a file back. ' +
-          'Paths are POSIX and ~ expands on the server. Keep it to configuration, unit files and ' +
-          'scripts: the limit is 1 MB and the content travels inside this call. ' +
-          'Say in `reason` what the file is for.',
+          'Paths are POSIX. A leading ~ and a relative path are resolved against the session home ' +
+          'before anything is shown or written, and the absolute result is what lands. ' +
+          'Keep it to configuration, unit files and scripts: the limit is 1 MB and the content ' +
+          'travels inside this call. Say in `reason` what the file is for.',
         inputSchema: {
           session_id: z.string().describe('session id from list_sessions'),
-          path: z.string().describe('absolute or ~-relative destination path on the server'),
+          path: z.string().describe('absolute, ~-relative or session-relative destination path'),
           content: z.string().describe('the exact file content'),
           reason: z.string().describe('what the file is for; the human reads this in the dialog')
         },
@@ -844,7 +845,24 @@ class McpService {
           )
         }
 
-        const resolvedPath = normaliseRemotePath(path)
+        /*
+          Resolved against the server's own answer for `.`, before the list runs
+          and before the dialog renders. SFTP does not expand `~`, and an
+          unexpanded one is invisible to the destination list:
+          `~/../../etc/cron.d/x` matches nothing at all, which is exactly the
+          case that list exists for.
+        */
+        let resolvedPath: string
+        try {
+          resolvedPath = normaliseRemotePath(path, await ssh.remoteHome(session_id))
+        } catch (err) {
+          return toolError(modelErrorFor(err))
+        }
+        if (!resolvedPath.startsWith('/')) {
+          return toolError(
+            'That path does not resolve to an absolute path on the server. Give an absolute one.'
+          )
+        }
         const sensitive = matchSensitivePath(resolvedPath)
 
         /*
@@ -900,7 +918,10 @@ class McpService {
         }
 
         try {
-          await ssh.upload(session_id, path, Buffer.from(content, 'utf8'))
+          // The resolved path, not the one asked for: the human approved a
+          // destination, and writing to a different spelling of it would make
+          // the dialog a description of some other action.
+          await ssh.upload(session_id, resolvedPath, Buffer.from(content, 'utf8'))
         } catch (err) {
           return toolError(modelErrorFor(err))
         }

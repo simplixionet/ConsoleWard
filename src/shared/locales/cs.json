@@ -417,6 +417,7 @@
   "error.logNotFound": "Tento log už neexistuje.",
   "error.logKeyMissing": "Klíč k logům se nepodařilo uložit, takže se nic nezapsalo.",
   "error.uploadTooLarge": "Soubor je na nahrání příliš velký — limit je 1 MB.",
+  "error.uploadPathNotResolved": "Cíl se nepodařilo převést na absolutní cestu na serveru, takže se nic nezapsalo.",
   "error.keyMissing": "Tento klíč už v knihovně není.",
   "error.keyInUse": "Klíč stále používá: {{connections}}. Nejdřív změňte tato připojení.",
   "error.keyDuplicate": "Knihovna už tento klíč má pod názvem „{{name}}“.",

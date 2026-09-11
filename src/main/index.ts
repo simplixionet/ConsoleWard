@@ -569,7 +569,7 @@ function registerIpc(): void {
       const src = data.connections.find((c) => c.id === id)
       if (!src) throw appError('error.connNotFound')
       const now = Date.now()
-      const copy = { ...src, id: newId(), name: `${src.name} (kopie)`, createdAt: now, updatedAt: now }
+      const copy = { ...src, id: newId(), name: `${src.name} (copy)`, createdAt: now, updatedAt: now }
       data.connections.push(copy)
       return toMeta(copy)
     })
@@ -714,7 +714,7 @@ function registerIpc(): void {
       const copy: Snippet = {
         ...src,
         id: newId(),
-        title: `${src.title} (kopie)`,
+        title: `${src.title} (copy)`,
         createdAt: now,
         updatedAt: now
       }

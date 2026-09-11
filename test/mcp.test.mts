@@ -106,6 +106,8 @@ mock.module('../src/main/ssh.ts', {
         executed.push(command)
         return run
       },
+      // Every ordinary server answers realpath('.') with the session's home.
+      remoteHome: async (): Promise<string> => '/home/deploy',
       upload: async (_id: string, path: string, content: Buffer) => {
         uploaded.push({ path, content: content.toString('utf8') })
       }
@@ -394,6 +396,59 @@ describe('upload_file asks before it writes', () => {
       {}
     )
     assert.deepEqual(uploaded, [{ path: '/etc/nginx/conf.d/app.conf', content: 'server {}' }])
+  })
+
+  test('the resolved path is what lands, not the spelling the model used', async () => {
+    // The human approved a destination. Writing to a different spelling of it
+    // would make the dialog a description of some other action.
+    uploaded = []
+    bindUpload(true)
+    await toolHandler('upload_file')(
+      { session_id: 's1', path: '~/app/config.yml', content: 'a: 1', reason: 'config' },
+      {}
+    )
+    assert.deepEqual(uploaded, [{ path: '/home/deploy/app/config.yml', content: 'a: 1' }])
+  })
+
+  test('a traversal through ~ is resolved before the list sees it', async () => {
+    /*
+      The hole this closes. SFTP does not expand ~, and an unexpanded one is
+      invisible to matchSensitivePath: '~/../../etc/cron.d/x' matches nothing at
+      all. Resolving against the server's own home is what makes the rule apply.
+    */
+    const seen: Record<string, unknown>[] = []
+    bindUpload(false, seen)
+    await toolHandler('upload_file')(
+      { session_id: 's1', path: '~/../../etc/cron.d/backup', content: '* * * * * x', reason: 'x' },
+      {}
+    )
+    assert.equal(seen[0].resolvedPath, '/etc/cron.d/backup', 'the ~ traversal was not resolved')
+    assert.ok(seen[0].flagged, 'a path that reaches cron through ~ was not flagged')
+  })
+
+  test('a ~ traversal is flagged even with both unattended switches on', async () => {
+    uploaded = []
+    unattended(true)
+    allowUnattendedUpload(true)
+    let asked = 0
+    mcp.bind({
+      askCommand: async () => ({ approved: false, autoShare: false }),
+      askShare: async (req) => ({ shared: true, text: req.text }),
+      saveCommand: async () => ({ approved: false }),
+      askUpload: async () => {
+        asked += 1
+        return { approved: false }
+      }
+    })
+    await toolHandler('upload_file')(
+      { session_id: 's1', path: '~/../../root/.ssh/authorized_keys', content: 'ssh-ed25519 A', reason: 'x' },
+      {}
+    )
+    unattended(false)
+    allowUnattendedUpload(false)
+
+    assert.equal(asked, 1, 'a key file was written unwatched because ~ hid the destination')
+    assert.deepEqual(uploaded, [])
   })
 
   test('the dialog is told where the file really lands, not where it was asked to', async () => {

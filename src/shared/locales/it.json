@@ -413,6 +413,7 @@
   "error.logNotFound": "Quel log non c’è più.",
   "error.logKeyMissing": "La chiave dei log non è stata salvata, quindi non è stato scritto nulla.",
   "error.uploadTooLarge": "Il file è troppo grande da caricare — il limite è 1 MB.",
+  "error.uploadPathNotResolved": "La destinazione non si è risolta in un percorso assoluto sul server, quindi non è stato scritto nulla.",
   "error.keyMissing": "Questa chiave non è più nella libreria.",
   "error.keyInUse": "La chiave è ancora usata da: {{connections}}. Modifica prima quelle connessioni.",
   "error.keyDuplicate": "La libreria contiene già questa chiave come «{{name}}».",

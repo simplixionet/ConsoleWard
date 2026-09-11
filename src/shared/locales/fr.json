@@ -413,6 +413,7 @@
   "error.logNotFound": "Ce journal n’existe plus.",
   "error.logKeyMissing": "La clé des journaux n’a pas pu être enregistrée, donc rien n’a été écrit.",
   "error.uploadTooLarge": "Le fichier est trop gros pour être envoyé — la limite est de 1 Mo.",
+  "error.uploadPathNotResolved": "La destination ne s’est pas résolue en chemin absolu sur le serveur, donc rien n’a été écrit.",
   "error.keyMissing": "Cette clé ne figure plus dans la bibliothèque.",
   "error.keyInUse": "La clé est encore utilisée par : {{connections}}. Modifiez d’abord ces connexions.",
   "error.keyDuplicate": "La bibliothèque contient déjà cette clé sous le nom « {{name}} ».",

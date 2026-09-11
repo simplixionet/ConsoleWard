@@ -413,6 +413,7 @@
   "error.logNotFound": "Ese registro ya no está.",
   "error.logKeyMissing": "No se pudo guardar la clave de registros, así que no se escribió nada.",
   "error.uploadTooLarge": "El archivo es demasiado grande para subirlo — el límite es 1 MB.",
+  "error.uploadPathNotResolved": "El destino no se resolvió a una ruta absoluta en el servidor, así que no se escribió nada.",
   "error.keyMissing": "Esa clave ya no está en la biblioteca.",
   "error.keyInUse": "La clave sigue en uso por: {{connections}}. Cambie primero esas conexiones.",
   "error.keyDuplicate": "La biblioteca ya tiene esta clave como «{{name}}».",

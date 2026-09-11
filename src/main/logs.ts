@@ -114,12 +114,26 @@ export class LogWriter {
     }
   }
 
+  /**
+   * Resolves when everything appended so far is on disk — including work an
+   * earlier append queued and this call has nothing to add to.
+   *
+   * The empty case has to await the queue too. Returning early there made
+   * `close()` resolve while frames were still in flight, and since `disconnect`
+   * calls it as `void s.log?.close()` and the process can quit straight
+   * afterwards, the tail of a session was simply lost.
+   *
+   * Also the close path, so it must not refuse to run once `closed` is set.
+   */
   async flush(): Promise<void> {
     if (this.timer !== null) {
       clearTimeout(this.timer)
       this.timer = null
     }
-    if (this.pending.length === 0) return
+    if (this.pending.length === 0) {
+      await this.queue
+      return
+    }
     const payload = this.pending.join('')
     this.pending = []
     this.pendingBytes = 0
@@ -128,8 +142,11 @@ export class LogWriter {
 
   async close(): Promise<void> {
     if (this.closed) return
-    await this.flush()
+    // Marked closed BEFORE the flush is awaited. The other order accepts an
+    // append that arrives during the await, arms a fresh timer, and writes after
+    // the caller was told the file was finished with.
     this.closed = true
+    await this.flush()
   }
 
   private write(payload: string): Promise<void> {
@@ -145,7 +162,18 @@ export class LogWriter {
     return this.queue
   }
 
-  private async writeFrame(payload: Buffer): Promise<void> {
+  /**
+   * `mayRoll` is false for the second attempt and for the notices `rollOver`
+   * writes itself, and both matter.
+   *
+   * A frame larger than the whole file cap does not shrink by starting a new
+   * file, so retrying the check after a roll-over would roll over again, and
+   * again, one file per attempt until the disk filled — reachable from the
+   * settings dialog, whose minimum is 1 MB against a 1 MiB frame payload. Such a
+   * frame overshoots the cap instead. Overshooting by at most one frame is a
+   * bounded miss; losing a record because it did not fit is not.
+   */
+  private async writeFrame(payload: Buffer, mayRoll = true): Promise<void> {
     const frame = encodeFrame({
       fileKey: this.file.fileKey,
       header: this.file.header,
@@ -153,9 +181,9 @@ export class LogWriter {
       payload
     })
 
-    if (this.bytesWritten + frame.length > this.limits.maxFileBytes) {
+    if (mayRoll && this.bytesWritten + frame.length > this.limits.maxFileBytes) {
       await this.rollOver()
-      return this.writeFrame(payload)
+      return this.writeFrame(payload, false)
     }
 
     await fsp.appendFile(this.file.filePath, frame, { mode: FILE_MODE })
@@ -185,7 +213,7 @@ export class LogWriter {
     this.bytesWritten = (await fsp.stat(this.file.filePath)).size
 
     const head = Buffer.from(`[consoleward] continued from part ${next - 1}\n`)
-    await this.writeFrame(head)
+    await this.writeFrame(head, false)
   }
 }
 
@@ -301,9 +329,12 @@ class LogStore {
    * logging.
    */
   async decrypt(id: string): Promise<{ info: LogFileInfo; text: string; truncated: boolean }> {
+    // Before `describe`, which joins the id onto the log directory: an id that
+    // has not been checked is a path, and this one arrived over IPC.
+    const filePath = this.filePathFor(id)
     const info = await this.describe(`${id}${EXTENSION}`)
     if (!info) throw appError('error.logNotFound')
-    const bytes = await fsp.readFile(this.filePathFor(id))
+    const bytes = await fsp.readFile(filePath)
     const result = readLogFile(bytes, await this.masterKey())
     return {
       info,

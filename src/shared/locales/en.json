@@ -413,6 +413,7 @@
   "error.logNotFound": "That log is not there any more.",
   "error.logKeyMissing": "The log key could not be stored, so nothing was written.",
   "error.uploadTooLarge": "The file is too large to upload — the limit is 1 MB.",
+  "error.uploadPathNotResolved": "The destination did not resolve to an absolute path on the server, so nothing was written.",
   "error.keyMissing": "That key is not in the library any more.",
   "error.keyInUse": "The key is still used by: {{connections}}. Change those connections first.",
   "error.keyDuplicate": "The library already holds this key as \"{{name}}\".",

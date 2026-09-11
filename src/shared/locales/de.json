@@ -413,6 +413,7 @@
   "error.logNotFound": "Dieses Protokoll gibt es nicht mehr.",
   "error.logKeyMissing": "Der Protokollschlüssel konnte nicht gespeichert werden, also wurde nichts geschrieben.",
   "error.uploadTooLarge": "Die Datei ist zu groß zum Hochladen — die Grenze liegt bei 1 MB.",
+  "error.uploadPathNotResolved": "Das Ziel ließ sich nicht in einen absoluten Pfad auf dem Server auflösen, also wurde nichts geschrieben.",
   "error.keyMissing": "Dieser Schlüssel ist nicht mehr in der Bibliothek.",
   "error.keyInUse": "Der Schlüssel wird noch verwendet von: {{connections}}. Ändern Sie zuerst diese Verbindungen.",
   "error.keyDuplicate": "Die Bibliothek enthält diesen Schlüssel bereits als „{{name}}“.",

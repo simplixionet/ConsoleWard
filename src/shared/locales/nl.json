@@ -413,6 +413,7 @@
   "error.logNotFound": "Dat logboek is er niet meer.",
   "error.logKeyMissing": "De logsleutel kon niet worden opgeslagen, dus er is niets geschreven.",
   "error.uploadTooLarge": "Het bestand is te groot om te uploaden — de grens is 1 MB.",
+  "error.uploadPathNotResolved": "De bestemming loste niet op naar een absoluut pad op de server, dus er is niets geschreven.",
   "error.keyMissing": "Deze sleutel staat niet meer in de bibliotheek.",
   "error.keyInUse": "De sleutel is nog in gebruik door: {{connections}}. Pas die verbindingen eerst aan.",
   "error.keyDuplicate": "De bibliotheek heeft deze sleutel al als “{{name}}”.",
