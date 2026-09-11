@@ -117,10 +117,14 @@ you will get this answer:
   is not recorded. Raising the per-file cap is the answer if this ever bites;
   holding the master in the writer is not.
 
-- **Translations are machine-produced.** The 81 security-critical strings are
-  checked mechanically for placeholder integrity and were read by a human for
-  dropped negations, but they have not had a native review. A weakened warning
-  in a non-English locale is a real bug and worth reporting.
+- **Translations are machine-produced.** The security-critical strings — the
+  `hostkey`, `mcp`, `secret`, `recovery` and `vault` namespaces, now over a
+  hundred of them — are checked mechanically for placeholder integrity and were
+  read by a human for dropped negations, but they have not had a native review.
+  A weakened warning in a non-English locale is a real bug and worth reporting.
+  Note the checker's `SECURITY_NAMESPACES` covers those five; the newer `logs`
+  and upload-warning strings are outside it and are guarded by their own tests
+  rather than by the placeholder check.
 
 - **The MCP token is convenience, not a defence against a compromised machine.**
   It is 256 random bits, it lives inside the encrypted vault, and it is what stops

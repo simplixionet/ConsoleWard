@@ -70,6 +70,13 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   whole difference; an AI log is a handful of events an hour and each one is the
   record of a decision, including the ones nobody was asked about.
 
+  The transcript records what the terminal *showed* — the server's output — and
+  not the user's keystrokes. The server echoes typed commands, so they appear
+  through that path anyway; what it does not echo is a password at a `sudo` or
+  `ssh` prompt, and logging keystrokes would have captured exactly those into a
+  log that is on by default and exports to plaintext. An earlier draft logged
+  both directions and was corrected before release.
+
 - **`scripts/decrypt-log.mjs`, and `docs/LOG-FORMAT.md`.** A record kept for the
   case where something went wrong is worth little if the only program that can
   open it is the one that was there when it happened. The format is documented

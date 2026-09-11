@@ -23,6 +23,7 @@ export default function LogManager({ draft, onChange }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [confirmPurge, setConfirmPurge] = useState(false)
+  const [confirmOne, setConfirmOne] = useState<string | null>(null)
 
   useEffect(() => {
     void refresh()
@@ -51,6 +52,7 @@ export default function LogManager({ draft, onChange }: Props) {
 
   async function removeOne(file: LogFileInfo): Promise<void> {
     setError(null)
+    setConfirmOne(null)
     try {
       unwrap(await api.logs.remove(file.id))
       await refresh()
@@ -166,9 +168,22 @@ export default function LogManager({ draft, onChange }: Props) {
             <button className="btn small" disabled={busy} onClick={() => void exportOne(f)}>
               {t('logs.export')}
             </button>
-            <button className="btn small danger" onClick={() => void removeOne(f)}>
-              {t('common.delete')}
-            </button>
+            {/* Confirms, like Delete all does: a log is a record, and deleting
+                one was the odd action out with no confirmation at all. */}
+            {confirmOne === f.id ? (
+              <>
+                <button className="btn small danger" onClick={() => void removeOne(f)}>
+                  {t('common.delete')}
+                </button>
+                <button className="btn small" onClick={() => setConfirmOne(null)}>
+                  {t('common.cancel')}
+                </button>
+              </>
+            ) : (
+              <button className="btn small danger" onClick={() => setConfirmOne(f.id)}>
+                {t('common.delete')}
+              </button>
+            )}
           </div>
         </div>
       ))}

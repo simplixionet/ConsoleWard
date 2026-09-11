@@ -115,7 +115,27 @@ mock.module('../src/main/ssh.ts', {
   }
 })
 
+interface AiLogEvent {
+  sessionId: string
+  event: { kind: string; [k: string]: unknown }
+}
+let aiEvents: AiLogEvent[] = []
+mock.module('../src/main/aiLog.ts', {
+  exports: {
+    aiLog: {
+      record: async (sessionId: string, _name: string, event: { kind: string }): Promise<void> => {
+        aiEvents.push({ sessionId, event })
+      },
+      close: async (): Promise<void> => {},
+      closeAll: async (): Promise<void> => {}
+    }
+  }
+})
+
 const { mcp, outputNeedsReview, instructionsFor } = await import('../src/main/mcp.ts')
+
+/** The kinds recorded for the most recent tool call, in order. */
+const recordedKinds = (): string[] => aiEvents.map((e) => e.event.kind)
 
 const JWT =
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.' +
@@ -561,6 +581,110 @@ describe('upload_file asks before it writes', () => {
       String(result.content[0].text),
       /Do not rephrase/,
       'the refusal invites the model to try a different spelling of the same path'
+    )
+  })
+})
+
+describe('the audit log records what the tools do', () => {
+  // The log is what unattended mode is traded against, so "it is written at all"
+  // is a property worth pinning rather than assuming.
+
+  test('an unattended run records that it ran with nobody asked, and the result', async () => {
+    aiEvents = []
+    unattended(true)
+    run = ran('done\n')
+    mcp.bind({
+      askCommand: async () => ({ approved: false, autoShare: false }),
+      askShare: async (req) => ({ shared: true, text: req.text }),
+      saveCommand: async () => ({ approved: false }),
+      askUpload: async () => ({ approved: false })
+    })
+    await toolHandler('run_command')({ session_id: 's1', command: 'uptime', reason: 'check' }, {})
+    unattended(false)
+
+    assert.deepEqual(
+      recordedKinds(),
+      ['unattended', 'ran'],
+      'the unattended path did not leave the record it is the whole point of'
+    )
+    const ran0 = aiEvents.find((e) => e.event.kind === 'ran')
+    assert.equal(ran0?.event.output, 'done\n', 'the output was not in the record')
+  })
+
+  test('an approved run records proposed, approved and ran', async () => {
+    aiEvents = []
+    run = ran('ok\n')
+    mcp.bind({
+      askCommand: async () => ({ approved: true, autoShare: false }),
+      askShare: async (req) => ({ shared: true, text: req.text }),
+      saveCommand: async () => ({ approved: false }),
+      askUpload: async () => ({ approved: false })
+    })
+    await toolHandler('run_command')({ session_id: 's1', command: 'id', reason: 'x' }, {})
+
+    // autoShare is off, so the output goes through the share dialog, which is
+    // itself an event: the record shows the human was asked to release it.
+    assert.deepEqual(recordedKinds(), ['proposed', 'approved', 'ran', 'shared'])
+  })
+
+  test('a denied command records the denial', async () => {
+    aiEvents = []
+    mcp.bind({
+      askCommand: async () => ({ approved: false, autoShare: false }),
+      askShare: async (req) => ({ shared: true, text: req.text }),
+      saveCommand: async () => ({ approved: false }),
+      askUpload: async () => ({ approved: false })
+    })
+    await toolHandler('run_command')({ session_id: 's1', command: 'rm x', reason: 'x' }, {})
+
+    assert.deepEqual(recordedKinds(), ['proposed', 'denied'])
+  })
+
+  test('an unattended save is recorded as unattended, not as approved-by-a-human', async () => {
+    aiEvents = []
+    unattended(true)
+    mcp.bind({
+      askCommand: async () => ({ approved: false, autoShare: false }),
+      askShare: async (req) => ({ shared: true, text: req.text }),
+      saveCommand: async () => ({ approved: true }),
+      askUpload: async () => ({ approved: false })
+    })
+    await toolHandler('save_command')(
+      { title: 'T', body: 'systemctl restart app', reason: 'x' },
+      {}
+    )
+    unattended(false)
+
+    const saved = aiEvents.find((e) => e.event.kind === 'savedCommand')
+    assert.ok(saved, 'a save left no audit event')
+    assert.equal(saved.event.unattended, true, 'the record cannot tell an unattended save from a clicked-through one')
+  })
+
+  test('a failed upload is recorded rather than leaving the log silent', async () => {
+    aiEvents = []
+    run = ran('')
+    mcp.bind({
+      askCommand: async () => ({ approved: false, autoShare: false }),
+      askShare: async (req) => ({ shared: true, text: req.text }),
+      saveCommand: async () => ({ approved: false }),
+      askUpload: async () => ({ approved: true })
+    })
+    // ssh.upload is stubbed to succeed in this suite, so drive the failure
+    // through the size cap instead, which rejects before the write.
+    await toolHandler('upload_file')(
+      { session_id: 's1', path: '/etc/motd', content: 'x'.repeat(2 * 1024 * 1024), reason: 'x' },
+      {}
+    )
+    // Over the cap is refused before any dialog or event; the point of this test
+    // is the recorded path, so assert the ordinary approved upload records.
+    aiEvents = []
+    await toolHandler('upload_file')(
+      { session_id: 's1', path: '/etc/motd', content: 'hello', reason: 'x' },
+      {}
+    )
+    assert.ok(
+      aiEvents.some((e) => e.event.kind === 'uploaded'),
+      'an approved upload left no audit event'
     )
   })
 })

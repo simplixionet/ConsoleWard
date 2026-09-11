@@ -320,9 +320,16 @@ class SshManager {
     const s = this.sessions.get(sessionId)
     if (!s?.stream) throw appError('error.sessionNotReady')
     s.stream.write(Buffer.from(data, 'utf8'))
-    // Both directions, because a transcript holding only the server's half
-    // cannot show which command produced which output.
-    s.log?.append(data)
+    /*
+      Keystrokes are deliberately NOT logged. A transcript records what the
+      terminal displayed, which is the server's output — and the server echoes
+      the commands the user types, so they appear in the log through that path
+      anyway. What the server does not echo is a password typed at a sudo or ssh
+      prompt, and appending `data` here captured exactly those into a log that is
+      on by default and exports to plaintext. Logging both directions also wrote
+      every ordinary character twice. The one thing lost is input the server
+      chose not to show, which is the one thing that must not be recorded.
+    */
   }
 
   /**
@@ -392,6 +399,15 @@ class SshManager {
     } finally {
       sftp.end()
     }
+
+    /*
+      Mirrored into the terminal, the way an AI command run is. An upload leaves
+      no other on-screen trace, so without this an unattended one is invisible
+      to a person watching — the AI log is the record, but it is a separate
+      switch, and a write to the server is the sharpest thing this tool does.
+      Display only, never appendBuffer: the model must not read it back.
+    */
+    this.echo(s, `${t('term.uploadHeader', { bytes: content.length })}\r\n${remotePath}`)
   }
 
   resize(sessionId: string, cols: number, rows: number): void {

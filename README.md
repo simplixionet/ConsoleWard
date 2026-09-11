@@ -168,7 +168,9 @@ this screen should not be able to compromise anything.
   lock and one leaked file key exposes one session rather than the archive. Bounded by a
   per-file and a total size cap; a full file starts a new part and says so inside it.
   Export decrypts one where you point it, and `scripts/decrypt-log.mjs` opens one
-  without ConsoleWard at all — see [docs/LOG-FORMAT.md](docs/LOG-FORMAT.md).
+  without ConsoleWard at all — see [docs/LOG-FORMAT.md](docs/LOG-FORMAT.md). The
+  transcript records **what the terminal showed**, which is the server's output — so a
+  password typed at a `sudo` or `ssh` prompt, which the server never echoes, is not in it.
 - **Automatic lock** after a configurable idle period, optionally ending all SSH
   sessions at the same time.
 - **Master password change** — rotates the vault key and re-encrypts the contents. Issues a new recovery key, since the old one cannot be rebuilt under the new key.
