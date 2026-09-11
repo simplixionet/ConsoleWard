@@ -34,8 +34,14 @@ export interface KeyFacts {
 export type KeyParseFailure = 'needPassphrase' | 'badPassphrase' | 'unreadable'
 
 export class KeyParseError extends Error {
-  constructor(readonly kind: KeyParseFailure) {
+  readonly kind: KeyParseFailure
+
+  // Assigned rather than declared as a constructor parameter property: the test
+  // runner strips types without transforming, and that syntax needs a transform
+  // — so a parameter property here makes the whole module unloadable by a test.
+  constructor(kind: KeyParseFailure) {
     super(kind)
+    this.kind = kind
     this.name = 'KeyParseError'
   }
 }
