@@ -47,6 +47,7 @@ import {
   generateKey,
   hasKeysToAdopt,
   importKeyText,
+  KeyParseError,
   toKeyMeta
 } from './sshKeys'
 import { DEFAULT_SETTINGS, sanitizeSettings } from './settings'
@@ -290,6 +291,25 @@ function handle<T>(channel: string, fn: (...args: any[]) => Promise<T> | T): voi
       return fail(err)
     }
   })
+}
+
+/**
+ * `importKeyText` throws `KeyParseError` (keyed on `kind`) or an `appError`
+ * (keyed on `key`). Only the second reaches the renderer through `fail()`, so
+ * the first is translated here — the passphrase cases especially, or the import
+ * dialog cannot ask for the one thing that would let the key in.
+ */
+function readKeyOrExplain(text: string, passphrase?: string): ReturnType<typeof importKeyText> {
+  try {
+    return importKeyText(text, passphrase)
+  } catch (err) {
+    if (err instanceof KeyParseError) {
+      if (err.kind === 'needPassphrase') throw appError('error.keyNeedPassphrase')
+      if (err.kind === 'badPassphrase') throw appError('error.keyBadPassphrase')
+      throw appError('error.keyUnreadable')
+    }
+    throw err
+  }
 }
 
 function toMeta(c: {
@@ -593,7 +613,7 @@ function registerIpc(): void {
 
   handle(CH.keyImport, async (input: KeyImportInput): Promise<SshKeyMeta> => {
     if (!input?.name?.trim()) throw appError('error.fillName')
-    const facts = importKeyText(input.privateKey ?? '', input.passphrase)
+    const facts = readKeyOrExplain(input.privateKey ?? '', input.passphrase)
     return vault.mutate((data) => {
       // One entry per key is the point of the library, so a re-import is an
       // error rather than a second copy that quietly diverges from the first.
