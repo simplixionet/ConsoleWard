@@ -466,46 +466,51 @@ export default function SettingsDialog({
                   {t('settings.dangerousToggle')}
                 </label>
 
-                {draft.dangerousMode !== true ? (
-                  <p className="hint">{t('settings.dangerousOffNote')}</p>
+                {draft.dangerousMode === true ? (
+                  <div className="warn-box danger-box">{t('settings.dangerousWhatChanges')}</div>
                 ) : (
-                  <>
-                    <div className="warn-box danger-box">{t('settings.dangerousWhatChanges')}</div>
+                  <p className="hint">{t('settings.dangerousOffNote')}</p>
+                )}
 
-                    <label className="checkbox-label">
-                      <input
-                        type="checkbox"
-                        checked={draft.dangerousGuard !== false}
-                        onChange={(e) => setDraft({ ...draft, dangerousGuard: e.target.checked })}
-                      />
-                      {t('settings.dangerousGuard')}
-                    </label>
+                {/*
+                  Guard and upload are policy for ANY unattended session — one
+                  armed from its status bar, or every new one when the default
+                  above is on — so they stay visible whether or not the default
+                  is set. Hiding them behind the default left them unreachable in
+                  the common case: default off, individual sessions armed.
+                */}
+                <label className="checkbox-label">
+                  <input
+                    type="checkbox"
+                    checked={draft.dangerousGuard !== false}
+                    onChange={(e) => setDraft({ ...draft, dangerousGuard: e.target.checked })}
+                  />
+                  {t('settings.dangerousGuard')}
+                </label>
 
-                    {draft.dangerousGuard !== false ? (
-                      <p className="hint">{t('settings.dangerousGuardOn')}</p>
-                    ) : (
-                      <div className="warn-box danger-box">{t('settings.dangerousGuardOff')}</div>
-                    )}
+                {draft.dangerousGuard !== false ? (
+                  <p className="hint">{t('settings.dangerousGuardOn')}</p>
+                ) : (
+                  <div className="warn-box danger-box">{t('settings.dangerousGuardOff')}</div>
+                )}
 
-                    {/* Its own switch inside the mode, and off by default: a
-                        file lands once and is run later by something else, so
-                        trusting the agent to run commands is not the same
-                        decision as letting it write to disk unwatched. */}
-                    <label className="checkbox-label">
-                      <input
-                        type="checkbox"
-                        checked={draft.dangerousUpload === true}
-                        onChange={(e) => setDraft({ ...draft, dangerousUpload: e.target.checked })}
-                      />
-                      {t('settings.dangerousUpload')}
-                    </label>
+                {/* Its own switch, off by default: a file lands once and is run
+                    later by something else, so trusting the agent to run
+                    commands is not the same decision as letting it write to
+                    disk unwatched. */}
+                <label className="checkbox-label">
+                  <input
+                    type="checkbox"
+                    checked={draft.dangerousUpload === true}
+                    onChange={(e) => setDraft({ ...draft, dangerousUpload: e.target.checked })}
+                  />
+                  {t('settings.dangerousUpload')}
+                </label>
 
-                    {draft.dangerousUpload === true ? (
-                      <div className="warn-box danger-box">{t('settings.dangerousUploadOn')}</div>
-                    ) : (
-                      <p className="hint">{t('settings.dangerousUploadOff')}</p>
-                    )}
-                  </>
+                {draft.dangerousUpload === true ? (
+                  <div className="warn-box danger-box">{t('settings.dangerousUploadOn')}</div>
+                ) : (
+                  <p className="hint">{t('settings.dangerousUploadOff')}</p>
                 )}
               </div>
 
