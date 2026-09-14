@@ -76,6 +76,8 @@ export interface ModelSession {
   id: string
   name: string
   status: SessionStatus
+  /** The approval step is off for this session — commands run immediately here. */
+  unattended: boolean
 }
 
 interface Session {
@@ -93,6 +95,14 @@ interface Session {
   bufferBytes: number
   /** An MCP command is in flight; the gate allows one per session. */
   running: boolean
+  /**
+   * The approval gate is off for THIS session — the AI runs unattended here.
+   * Per session, not global: you can hand one session to an agent and keep the
+   * approval dialog on every other. Seeded from the global default at connect,
+   * then toggled live; ephemeral, and cleared on lock. `gateState` in mcp.ts
+   * reads it, still behind `vault.isUnlocked()`.
+   */
+  dangerous: boolean
   /** The server's answer for `.`, resolved once. Empty until asked for. */
   remoteHome: string | null
   /** The encrypted transcript, if this connection writes one. */
@@ -130,8 +140,35 @@ class SshManager {
     return [...this.sessions.values()].map((s) => ({
       id: s.id,
       name: s.modelName,
-      status: s.status
+      status: s.status,
+      unattended: s.dangerous
     }))
+  }
+
+  /** Whether this one session runs unattended. The gate in mcp.ts asks per call. */
+  isDangerous(sessionId: string): boolean {
+    return this.sessions.get(sessionId)?.dangerous === true
+  }
+
+  /** Arms or disarms one session. A no-op for a session that has gone. */
+  setDangerous(sessionId: string, on: boolean): void {
+    const s = this.sessions.get(sessionId)
+    if (!s || s.dangerous === on) return
+    s.dangerous = on
+    this.pushStatus(s)
+  }
+
+  /**
+   * Disarms every session. Called on lock: a locked vault is the safe state, and
+   * a session that survives a lock (`disconnectOnLock` off) must not come back
+   * still armed after the next unlock without the human saying so again.
+   */
+  disarmAll(): void {
+    for (const s of this.sessions.values()) {
+      if (!s.dangerous) continue
+      s.dangerous = false
+      this.pushStatus(s)
+    }
   }
 
   isReady(sessionId: string): boolean {
@@ -231,7 +268,11 @@ class SshManager {
       bufferBytes: 0,
       running: false,
       log: null,
-      remoteHome: null
+      remoteHome: null,
+      // The global switch is the DEFAULT a new session starts at; from here it
+      // is the session's own, and changing the setting never reaches back to a
+      // session already open.
+      dangerous: vault.read().settings.dangerousMode === true
     }
     this.sessions.set(id, session)
     this.pushStatus(session)
@@ -557,7 +598,8 @@ function toInfo(s: Session): SessionInfo {
     connectionId: s.connectionId,
     title: s.title,
     status: s.status,
-    message: s.message
+    message: s.message,
+    dangerous: s.dangerous
   }
 }
 

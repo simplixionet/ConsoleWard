@@ -81,6 +81,7 @@ const api: AppApi = {
     write: (sessionId, data) => ipcRenderer.invoke(CH.sshWrite, sessionId, data),
     resize: (sessionId, cols, rows) => ipcRenderer.invoke(CH.sshResize, sessionId, cols, rows),
     disconnect: (sessionId) => ipcRenderer.invoke(CH.sshDisconnect, sessionId),
+    setDangerous: (sessionId, on) => ipcRenderer.invoke(CH.sshSetDangerous, sessionId, on),
     answerHostKey: (requestId, accept) =>
       ipcRenderer.invoke(CH.sshAnswerHostKey, requestId, accept),
     onData: (cb) => on<[string, string]>(CH.sshDataEvent, cb),

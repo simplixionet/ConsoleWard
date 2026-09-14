@@ -1025,6 +1025,12 @@ input.mono {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* The bolt marks a session running unattended — visible at a glance across tabs. */
+.tab-danger {
+  color: var(--danger);
+  font-size: 11px;
+  flex: none;
+}
 .tab-close {
   background: transparent;
   border: none;
@@ -1175,6 +1181,18 @@ input.mono {
   padding: 0 12px;
   font-size: 12px;
   color: var(--text-dim);
+}
+/* Pushed to the right edge of the status bar. */
+.statusbar-gate {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.gate-chip {
+  color: var(--danger);
+  font-weight: 600;
+  white-space: nowrap;
 }
 .sep {
   opacity: 0.5;

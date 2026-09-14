@@ -167,6 +167,7 @@ function doLock(): void {
   if (!vault.isUnlocked()) return
   const disconnect = vault.read().settings.disconnectOnLock
   if (disconnect) ssh.disconnectAll()
+  ssh.disarmAll()
   void mcp.stopOnLock().then(pushMcpStatus)
   approvals.rejectAll()
   vault.lock()
@@ -810,6 +811,13 @@ function registerIpc(): void {
   })
   handle(CH.sshDisconnect, (sessionId: string) => {
     ssh.disconnect(sessionId)
+    return null
+  })
+  handle(CH.sshSetDangerous, (sessionId: string, on: boolean) => {
+    // Only meaningful while unlocked; the gate treats a locked vault as safe
+    // regardless, and `doLock` disarms every session anyway.
+    vault.requireUnlockedPublic()
+    ssh.setDangerous(sessionId, Boolean(on))
     return null
   })
   handle(CH.sshAnswerHostKey, (requestId: string, accept: boolean) => {

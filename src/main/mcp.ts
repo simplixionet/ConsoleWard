@@ -9,13 +9,15 @@
  * token plus Host/Origin DNS-rebinding protection; off unless enabled and
  * unlocked; addresses, usernames and passwords never reach the model.
  *
- * The gate itself is NOT one of them any more. `dangerousMode` in the settings
- * removes the approval dialog and returns output unedited, leaving the
- * destructive list in `dangerousCommands.ts` — itself switchable — as the only
- * thing in the path. Both default off and on respectively, both have to be
- * changed by hand, and `instructionsFor` tells the model which of the two
- * worlds it is in, because a model told a human is reading its proposals
- * behaves differently from one that knows nobody is.
+ * The gate itself is NOT one of them any more, and it is now PER SESSION. Each
+ * session carries its own dangerous flag (`ssh.isDangerous`), seeded at connect
+ * from the `dangerousMode` default and toggled from the status bar; where it is
+ * on, the approval dialog is removed for that session and output goes back
+ * unedited, leaving the destructive list in `dangerousCommands.ts` — itself
+ * switchable, still global — as the only thing in the path. `list_sessions`
+ * marks each session `unattended` and `instructionsFor` explains the mechanism,
+ * because a model told a human is reading its proposals behaves differently from
+ * one that knows nobody is.
  *
  * There is still no "approve all" while the gate is on: the choice is the gate
  * or no gate, never a dialog that remembers a previous yes.
@@ -174,15 +176,22 @@ function previewOf(content: string): { text: string; truncated: boolean } {
  * one at the moment the command arrives. A locked vault has no settings to read
  * and no sessions to run on, so it reports the safe answer.
  */
-function gateState(): { dangerous: boolean; guard: boolean; upload: boolean } {
+function gateState(sessionId: string): { dangerous: boolean; guard: boolean; upload: boolean } {
   if (!vault.isUnlocked()) return { dangerous: false, guard: true, upload: false }
   const s = vault.read().settings
   return {
-    dangerous: s.dangerousMode === true,
+    // Per session now: `dangerousMode` in the settings is only the default a new
+    // session was seeded with — the live answer is the session's own flag.
+    dangerous: ssh.isDangerous(sessionId),
     guard: s.dangerousGuard !== false,
-    // Its own switch, and only meaningful while unattended mode is on.
+    // Its own switch, and only meaningful while a session runs unattended.
     upload: s.dangerousUpload === true
   }
+}
+
+/** The guard is global policy, so the server-level instructions can read it without a session. */
+function globalGuard(): boolean {
+  return vault.isUnlocked() ? vault.read().settings.dangerousGuard !== false : true
 }
 
 class McpService {
@@ -429,7 +438,7 @@ class McpService {
           believes a person is reading its proposals behaves differently from
           one that knows nobody is.
         */
-        instructions: instructionsFor(gateState())
+        instructions: instructionsFor({ guard: globalGuard() })
       }
     )
 
@@ -438,9 +447,10 @@ class McpService {
       {
         title: 'List the open SSH sessions',
         description:
-          'Returns the open sessions with only their id, name and status. The name is the label ' +
-          'the human gave the connection, or a neutral placeholder when they gave none. The ' +
-          'address, port and username are deliberately withheld.',
+          'Returns the open sessions with only their id, name, status and whether each one runs ' +
+          'unattended. The name is the label the human gave the connection, or a neutral placeholder ' +
+          'when they gave none. The address, port and username are deliberately withheld. ' +
+          'An unattended session is one where your commands run with no human approving them first.',
         inputSchema: {},
         annotations: { readOnlyHint: true }
       },
@@ -482,7 +492,7 @@ class McpService {
         // Unattended: the output goes back whole, with no one deciding what
         // part of it should. The session is still echoed to the terminal, so a
         // person returning to the window can at least see what was read.
-        if (gateState().dangerous) {
+        if (gateState(session_id).dangerous) {
           await aiLog.record(session_id, ssh.title(session_id), {
             kind: 'readTerminal',
             reason,
@@ -553,7 +563,7 @@ class McpService {
         if (!ssh.isReady(session_id)) return toolError('The session does not exist or is not ready.')
         if (!command.trim()) return toolError('Empty command.')
 
-        const gate = gateState()
+        const gate = gateState(session_id)
         /*
           Unattended mode is a statement about trust, not about supervision: the
           AI works on its own and the human reads the record afterwards. The list
@@ -760,18 +770,16 @@ class McpService {
         if (!body.trim()) return toolError('Empty command.')
 
         /*
-          Unattended mode skips this approval too, deliberately: carving out an
-          exception for saving would make the mode mean something different
-          depending on which tool was called.
+          Always shown to a human, even from a session running unattended.
 
-          The cost lands entirely on the provenance mark. A saved command is
-          persistent, is echoed nowhere, and is trusted later out of the context
-          it was written in — so the `ai` origin and the confirm-on-run it forces
-          are the whole difference between this and an unreviewed one-liner the
-          user runs next week believing they wrote it. The log below is the other
-          half: without it an unattended write leaves no record at all.
+          Unattended mode is now per session, and `save_command` belongs to no
+          session — it writes to the library, which every session shares — so
+          there is no session flag to inherit. Asking is also the safe answer on
+          its own merits: a saved command is persistent, echoed nowhere, and
+          trusted later out of the context it was written in, which the phase
+          that added it called the riskiest thing to skip. The `ai` origin and
+          the confirm-on-run it forces remain the other half of the guarantee.
         */
-        const unattended = gateState().dangerous
         const request: SaveCommandApproval = {
           id: randomUUID(),
           title: title.trim(),
@@ -784,7 +792,8 @@ class McpService {
 
         let answer: { approved: boolean }
         try {
-          answer = await whileAwaitingHuman(extra, bridge.saveCommand(request, unattended))
+          // `false`: never skip the dialog — see the note above.
+          answer = await whileAwaitingHuman(extra, bridge.saveCommand(request, false))
         } catch (err) {
           if (isQueueFull(err)) return toolError(QUEUE_FULL_MESSAGE)
           // Unlike the other two bridge methods, this one writes to the vault,
@@ -799,7 +808,8 @@ class McpService {
           title: request.title,
           body,
           approved: answer.approved,
-          unattended
+          // A save is always shown to a human now, per session or not.
+          unattended: false
         })
 
         if (!answer.approved) return toolError('The human did not approve saving this command.')
@@ -888,7 +898,7 @@ class McpService {
           is watching — which is a different trade from a command whose output
           echoes into a session the human can read back.
         */
-        const gate = gateState()
+        const gate = gateState(session_id)
         const unattended = gate.dangerous && gate.upload && !sensitive
 
         const name = ssh.title(session_id)
@@ -1048,32 +1058,19 @@ export const MODEL_ERRORS = new Map<string, string>([
  * stop it is the one that should be most careful, and telling it otherwise
  * would be both untrue and counterproductive.
  */
-export function instructionsFor(state: { dangerous: boolean; guard: boolean }): string {
-  const common = [
+export function instructionsFor(state: { guard: boolean }): string {
+  return [
     'Access to the SSH sessions of ConsoleWard.',
     'Server addresses, usernames and passwords are not available and never will be.',
-    'Commands run in their own channel, not in the terminal the human is looking at: a fresh non-interactive shell in the home directory, with no terminal and no state carried over from your previous calls.'
-  ]
-
-  if (!state.dangerous) {
-    return [
-      common[0],
-      common[1],
-      'A human approves every command, and decides what part of its output reaches you — sometimes in advance, sometimes only after seeing it. Respect a refusal and do not retry it in a different shape.',
-      'Whatever output you receive may be trimmed or edited by the human, so never assume you are seeing everything.',
-      common[2]
-    ].join(' ')
-  }
-
-  return [
-    common[0],
-    common[1],
-    'The human has switched off the approval step. Commands you propose RUN IMMEDIATELY on a real machine, and you receive the output in full. Nobody is reading these first, so there is no one to catch a mistake before it lands.',
+    // The gate is per session, so the server-level instructions describe both
+    // sides at once and point at the per-session signal.
+    'The approval step is per session. By default a human approves every command you propose and decides what part of its output reaches you — sometimes in advance, sometimes only after seeing it; respect a refusal and do not retry it in a different shape, and never assume the output you receive is complete.',
+    'Some sessions have that step switched off: list_sessions marks each one with unattended:true, and on an unattended session the commands you propose RUN IMMEDIATELY on a real machine and you receive the output in full, with nobody reading them first to catch a mistake.',
     state.guard
-      ? 'A short list of irreversible commands is still shown to the human for approval rather than running straight away — the destination or the offending part is highlighted for them. That list catches accidents, not intent, and it is not permission to try things: anything it does not recognise runs with nobody looking.'
-      : 'Nothing is checked. Every command you send runs exactly as written.',
-    'Prefer reading over writing, make one change at a time, and say what you are about to do before you do it. If a command would be hard to undo, ask the human instead of running it.',
-    common[2]
+      ? 'Even on an unattended session a short list of irreversible commands is still shown to the human rather than running straight away, with the offending part highlighted — that list catches accidents, not intent, and is not permission to try things.'
+      : 'Nothing is checked on an unattended session: every command you send there runs exactly as written.',
+    'On any unattended session, prefer reading over writing, make one change at a time, say what you are about to do before you do it, and if a command would be hard to undo, ask the human instead.',
+    'Commands run in their own channel, not in the terminal the human is looking at: a fresh non-interactive shell in the home directory, with no terminal and no state carried over from your previous calls.'
   ].join(' ')
 }
 

@@ -28,6 +28,7 @@ import SettingsDialog from './components/SettingsDialog'
 import RecoveryKeyDialog from './components/RecoveryKeyDialog'
 import CommandApprovalDialog from './components/CommandApprovalDialog'
 import SaveCommandDialog from './components/SaveCommandDialog'
+import ArmSessionDialog from './components/ArmSessionDialog'
 import UploadApprovalDialog from './components/UploadApprovalDialog'
 import OutputShareDialog from './components/OutputShareDialog'
 
@@ -85,6 +86,8 @@ export default function App() {
   const [saveQueue, setSaveQueue] = useState<SaveCommandApproval[]>([])
   const [uploadQueue, setUploadQueue] = useState<UploadApproval[]>([])
   const [shareQueue, setShareQueue] = useState<ShareRequest[]>([])
+  // The session the human is about to switch to unattended, pending confirmation.
+  const [armTarget, setArmTarget] = useState<SessionInfo | null>(null)
 
   const activeRef = useRef<string | null>(null)
   activeRef.current = activeSession
@@ -169,6 +172,7 @@ export default function App() {
       setSnippetEditor({ open: false, snippet: null })
       setPendingInsert(null)
       setSettingsOpen(false)
+      setArmTarget(null)
       setCommandQueue([])
       setSaveQueue([])
       setUploadQueue([])
@@ -229,6 +233,15 @@ export default function App() {
     try {
       unwrap(await api.connections.duplicate(c.id))
       setConnections(unwrap(await api.connections.list()))
+    } catch (err) {
+      showToast(errorMessage(err))
+    }
+  }
+
+  async function setDangerous(sessionId: string, on: boolean): Promise<void> {
+    setArmTarget(null)
+    try {
+      unwrap(await api.ssh.setDangerous(sessionId, on))
     } catch (err) {
       showToast(errorMessage(err))
     }
@@ -436,6 +449,11 @@ export default function App() {
                 onClick={() => setActiveSession(s.id)}
               >
                 <span className={`dot ${s.status}`} />
+                {s.dangerous && (
+                  <span className="tab-danger" title={t('term.unattendedTab')}>
+                    ⚡
+                  </span>
+                )}
                 <span className="tab-title">{s.title}</span>
                 <button
                   className="tab-close"
@@ -476,6 +494,23 @@ export default function App() {
                 <span>{active.title}</span>
                 <span className="sep">·</span>
                 <span>{active.message ?? t(STATUS_BAR_KEY[active.status])}</span>
+                <span className="statusbar-gate">
+                  {active.dangerous ? (
+                    <>
+                      <span className="gate-chip">⚡ {t('term.aiUnattended')}</span>
+                      <button
+                        className="btn small"
+                        onClick={() => void setDangerous(active.id, false)}
+                      >
+                        {t('term.disarm')}
+                      </button>
+                    </>
+                  ) : (
+                    <button className="btn small" onClick={() => setArmTarget(active)}>
+                      {t('term.arm')}
+                    </button>
+                  )}
+                </span>
               </>
             ) : (
               <span>
@@ -695,6 +730,17 @@ export default function App() {
             </div>
           </div>
         </div>
+      )}
+
+      {armTarget && (
+        <ArmSessionDialog
+          session={armTarget}
+          guard={settings.dangerousGuard !== false}
+          onAnswer={(arm) => {
+            if (arm) void setDangerous(armTarget.id, true)
+            else setArmTarget(null)
+          }}
+        />
       )}
 
       {recoveryModal}

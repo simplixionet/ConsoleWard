@@ -73,7 +73,14 @@ const vaultState = {
   settings: { dangerousMode: false, dangerousGuard: true } as Record<string, unknown>
 }
 
+/*
+  The gate is per session now: `gateState` reads `ssh.isDangerous(session_id)`
+  for the dangerous flag and the vault settings only for guard/upload. The tests
+  drive one session, so this single boolean stands in for it.
+*/
+let sessionDangerous = false
 function unattended(dangerous: boolean, guard = true): void {
+  sessionDangerous = dangerous
   vaultState.settings.dangerousMode = dangerous
   vaultState.settings.dangerousGuard = guard
 }
@@ -98,6 +105,7 @@ mock.module('../src/main/ssh.ts', {
     UPLOAD_MAX_BYTES: 1024 * 1024,
     ssh: {
       isReady: (): boolean => true,
+      isDangerous: (): boolean => sessionDangerous,
       title: (): string => 'web01',
       list: () => HUMAN_SESSIONS,
       listForModel: () => MODEL_SESSIONS,
@@ -354,10 +362,10 @@ describe('save_command keeps the delayed-execution path honest', () => {
     assert.equal(seen[0].body, 'deploy.sh\u0007 --now', 'the stored body must stay exactly as sent')
   })
 
-  test('unattended mode skips the human, which is why the mark is not optional', async () => {
-    // Chosen deliberately: an exception for saving would make the mode mean
-    // something different depending on which tool was called. What remains is
-    // the 'ai' origin and the confirm-on-run it forces.
+  test('save_command always asks a human, even from an unattended session', async () => {
+    // The gate is per session now, and save_command belongs to no session — it
+    // writes to the shared library — so there is no flag to inherit and it asks
+    // every time. The 'ai' origin and the confirm-on-run remain the guarantee.
     unattended(true)
     const skipped: boolean[] = []
     mcp.bind({
@@ -376,7 +384,7 @@ describe('save_command keeps the delayed-execution path honest', () => {
     )
     unattended(false)
 
-    assert.deepEqual(skipped, [true], 'unattended mode still stopped to ask about a save')
+    assert.deepEqual(skipped, [false], 'a save from an unattended session skipped the human')
   })
 })
 
@@ -640,7 +648,7 @@ describe('the audit log records what the tools do', () => {
     assert.deepEqual(recordedKinds(), ['proposed', 'denied'])
   })
 
-  test('an unattended save is recorded as unattended, not as approved-by-a-human', async () => {
+  test('a save is recorded as shown-to-a-human, because it always is now', async () => {
     aiEvents = []
     unattended(true)
     mcp.bind({
@@ -657,7 +665,7 @@ describe('the audit log records what the tools do', () => {
 
     const saved = aiEvents.find((e) => e.event.kind === 'savedCommand')
     assert.ok(saved, 'a save left no audit event')
-    assert.equal(saved.event.unattended, true, 'the record cannot tell an unattended save from a clicked-through one')
+    assert.equal(saved.event.unattended, false, 'a save is always shown to a human, so it is never unattended')
   })
 
   test('a failed upload is recorded rather than leaving the log silent', async () => {
@@ -1011,18 +1019,14 @@ describe('unattended mode', () => {
     // The instructions are the only way a client learns whether a person is
     // between it and the shell. Saying a human approves everything while
     // nobody does is a falsehood told to the party least able to check it.
-    const gated = instructionsFor({ dangerous: false, guard: true })
-    assert.match(gated, /A human approves every command/, 'the gated promise went missing')
+    // Per session, so one text names both sides and points at the signal.
+    const withGuard = instructionsFor({ guard: true })
+    assert.match(withGuard, /human approves every command/, 'the gated default went missing')
+    assert.match(withGuard, /RUN IMMEDIATELY/, 'the unattended warning went missing')
+    assert.match(withGuard, /list_sessions/, 'the model is not told where the per-session flag is')
+    assert.match(withGuard, /catches accidents, not intent/, 'the guard is oversold or missing')
 
-    const open = instructionsFor({ dangerous: true, guard: true })
-    assert.ok(
-      !open.includes('A human approves every command'),
-      'unattended mode still claims a human approves every command'
-    )
-    assert.match(open, /RUN IMMEDIATELY/, 'the model is not told commands run unchecked')
-    assert.match(open, /catches accidents, not intent/, 'the list is oversold to the model')
-
-    const bare = instructionsFor({ dangerous: true, guard: false })
+    const bare = instructionsFor({ guard: false })
     assert.match(bare, /Nothing is checked/, 'the model is not told the list is off')
   })
 })

@@ -7,6 +7,31 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Changed
+
+- **Unattended mode is now per session.** It was one global switch; it is now a
+  flag each session carries, toggled from its own status bar, so one session can
+  be handed to an agent while every other keeps the approval dialog. The setting
+  in Settings → AI access stays, reinterpreted as the **default a new session
+  starts at** — changing it never reaches back to a session already open.
+
+  A new session is seeded from that default and starts gated unless the default
+  is on. Turning a session unattended asks for confirmation; turning it back on
+  is instant. Locking the vault disarms every session, so none returns
+  unattended after an unlock without the human saying so again. Armed sessions
+  carry a ⚡ on their tab and a note in the status bar.
+
+  The connected model is told per session: `list_sessions` marks each one
+  `unattended`, and the server instructions describe the per-session gate rather
+  than a single global mode. The destructive-command guard and the upload switch
+  stay global policy.
+
+- **`save_command` now always asks a human**, even from an unattended session. It
+  belongs to no session — the library is shared — so there is no per-session flag
+  to inherit, and a saved command is trusted later out of the context it was
+  written in, which is the riskiest thing to skip. The `ai` origin and the
+  confirm-on-run remain the rest of the guarantee.
+
 ## [1.2.0] — 2026-09-11
 
 ### Added

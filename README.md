@@ -287,12 +287,21 @@ visible**, so an extra line cannot hide in it. There is no "approve all" and no
 All of the above describes the default, and the default is the product. There is
 also a switch that removes it.
 
-With **unattended mode** on, commands the AI proposes run immediately and their full
-output goes back unedited. It is off until you turn it on, it is never implied by
-enabling the gateway, and the server tells the connected model which of the two modes
-it is in — a model told a human is reading its proposals behaves differently from one
-that knows nobody is, and telling it the wrong thing would be a lie to the party least
-able to check.
+Unattended mode is **per session**. Each session carries its own switch, in its status
+bar, so you can hand one session to an agent and keep the approval dialog on every
+other. With it on for a session, commands the AI proposes there run immediately and
+their full output goes back unedited; every other session stays gated.
+
+A new session starts from the **default in Settings → AI access** — off unless you turn
+that default on — and turning a session unattended asks for confirmation, while turning
+it back on is instant. Changing the default never reaches back to a session already
+open. Locking the vault disarms every session, so none comes back unattended after an
+unlock without you saying so again.
+
+The connected model is told, per session: `list_sessions` marks each one `unattended`,
+and the server describes the per-session gate — a model told a human is reading its
+proposals behaves differently from one that knows nobody is, and telling it the wrong
+thing would be a lie to the party least able to check.
 
 Underneath it sits a short list of irreversible commands — `rm -rf /`, `mkfs`,
 `shutdown`, `DROP DATABASE` and a dozen more. A match does not refuse the command: it

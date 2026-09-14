@@ -75,6 +75,8 @@ class FakeClient extends EventEmitter {
 }
 
 mock.module('ssh2', { exports: { Client: FakeClient } })
+/** Mutable so a test can set the global default that a new session is seeded from. */
+const vaultSettings: Record<string, unknown> = {}
 mock.module('../src/main/vault.ts', {
   exports: {
     vault: {
@@ -92,7 +94,7 @@ mock.module('../src/main/vault.ts', {
           }
         ],
         knownHosts: [],
-        settings: {}
+        settings: vaultSettings
       }),
       mutate: async () => {}
     }
@@ -110,6 +112,57 @@ async function readySession(): Promise<{ id: string; client: FakeClient }> {
   assert.equal(ssh.isReady(id), true, 'fixture: the session never became ready')
   return { id, client: lastClient! }
 }
+
+describe('per-session unattended mode', () => {
+  it('a new session starts gated, whatever other sessions are doing', async () => {
+    const { id } = await readySession()
+    assert.equal(ssh.isDangerous(id), false, 'a fresh session came up unattended')
+    const seen = ssh.listForModel().find((s) => s.id === id)
+    assert.equal(seen?.unattended, false, 'the model was told a gated session is unattended')
+  })
+
+  it('a new session inherits the global default, and an existing one does not change', async () => {
+    // "Default for new sessions": the setting seeds a session at connect and
+    // never reaches back to one already open.
+    const before = await readySession()
+    vaultSettings.dangerousMode = true
+    try {
+      const after = await readySession()
+      assert.equal(ssh.isDangerous(after.id), true, 'a new session ignored the global default')
+      assert.equal(ssh.isDangerous(before.id), false, 'changing the default reached back to an open session')
+    } finally {
+      vaultSettings.dangerousMode = false
+      ssh.disarmAll()
+    }
+  })
+
+  it('setDangerous arms and disarms exactly one session', async () => {
+    const a = await readySession()
+    const b = await readySession()
+    ssh.setDangerous(a.id, true)
+    assert.equal(ssh.isDangerous(a.id), true, 'the armed session did not take')
+    assert.equal(ssh.isDangerous(b.id), false, 'arming one session armed another')
+    assert.equal(ssh.listForModel().find((s) => s.id === a.id)?.unattended, true)
+
+    ssh.setDangerous(a.id, false)
+    assert.equal(ssh.isDangerous(a.id), false, 'disarming did not take')
+  })
+
+  it('disarmAll clears every armed session — the lock path', async () => {
+    const a = await readySession()
+    const b = await readySession()
+    ssh.setDangerous(a.id, true)
+    ssh.setDangerous(b.id, true)
+    ssh.disarmAll()
+    assert.equal(ssh.isDangerous(a.id), false, 'a session stayed armed through a lock')
+    assert.equal(ssh.isDangerous(b.id), false, 'a session stayed armed through a lock')
+  })
+
+  it('setDangerous on a session that has gone is a no-op, not a throw', () => {
+    assert.doesNotThrow(() => ssh.setDangerous('no-such-session', true))
+    assert.equal(ssh.isDangerous('no-such-session'), false)
+  })
+})
 
 describe('runOnce isolation', () => {
   it('never returns bytes the human typed into the interactive session', async () => {

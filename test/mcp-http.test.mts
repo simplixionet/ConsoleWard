@@ -39,6 +39,10 @@ mock.module('../src/main/ssh.ts', {
     UPLOAD_MAX_BYTES: 1024 * 1024,
     ssh: {
       isReady: () => true,
+      // Gated: the gate reads this per session, and without it gateState throws
+      // before read_terminal reaches the dialog — the streaming test would then
+      // hang on `await opened` instead of proving anything.
+      isDangerous: () => false,
       title: () => 'web01',
       listForModel: () => [],
       // read_terminal reads a preview before it ever asks the human; without
