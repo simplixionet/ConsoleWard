@@ -172,6 +172,8 @@
   "term.aiUnattended": "IA sin supervisión",
   "term.arm": "Ejecutar sin supervisión…",
   "term.disarm": "Desactivar",
+  "term.on": "ON",
+  "term.off": "OFF",
   "term.armTitle": "¿Ejecutar sin supervisión en {{session}}?",
   "term.armBody": "Los comandos que la IA proponga para esta sesión se ejecutarán de inmediato y su salida completa volverá sin editar, sin que nadie los apruebe antes. Solo afecta a esta sesión.",
   "term.armGuardOn": "La lista de comandos destructivos sigue deteniendo los peores y te pregunta primero.",

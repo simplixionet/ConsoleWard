@@ -172,6 +172,8 @@
   "term.aiUnattended": "IA sans surveillance",
   "term.arm": "Exécuter sans surveillance…",
   "term.disarm": "Désactiver",
+  "term.on": "ON",
+  "term.off": "OFF",
   "term.armTitle": "Exécuter sans surveillance sur {{session}} ?",
   "term.armBody": "Les commandes que l’IA propose pour cette session s’exécuteront aussitôt et leur sortie complète reviendra sans être modifiée, sans que personne les approuve d’abord. Seule cette session est concernée.",
   "term.armGuardOn": "La liste des commandes irréversibles arrête toujours les pires et vous demande d’abord.",

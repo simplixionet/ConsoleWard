@@ -172,6 +172,8 @@
   "term.aiUnattended": "IA non presidiata",
   "term.arm": "Esegui non presidiata…",
   "term.disarm": "Disattiva",
+  "term.on": "ON",
+  "term.off": "OFF",
   "term.armTitle": "Eseguire non presidiata su {{session}}?",
   "term.armBody": "I comandi che l’IA propone per questa sessione verranno eseguiti subito e il loro output completo tornerà non modificato, senza che nessuno li approvi prima. Riguarda solo questa sessione.",
   "term.armGuardOn": "La lista dei comandi distruttivi ferma ancora i peggiori e ti chiede prima.",

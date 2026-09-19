@@ -1189,10 +1189,57 @@ input.mono {
   align-items: center;
   gap: 8px;
 }
-.gate-chip {
-  color: var(--danger);
-  font-weight: 600;
+/* Per-session unattended switch: a red danger toggle that carries its own
+   ON/OFF state. OFF is an outline the eye can pass over; ON is a filled red
+   nobody misses — the loud state is the dangerous one. */
+.gate-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 9px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
   white-space: nowrap;
+  cursor: pointer;
+  border: 1px solid rgba(255, 107, 107, 0.5);
+  border-radius: 999px;
+  background: transparent;
+  color: #ff9a9a;
+  transition: background 0.12s, border-color 0.12s, color 0.12s, box-shadow 0.12s;
+}
+.gate-toggle:hover {
+  background: rgba(255, 107, 107, 0.14);
+  border-color: var(--danger);
+}
+.gate-toggle-bolt {
+  font-size: 11px;
+}
+.gate-toggle-label {
+  font-weight: 600;
+}
+.gate-toggle-state {
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  background: rgba(255, 107, 107, 0.16);
+  color: #ff9a9a;
+}
+.gate-toggle.on {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #2a0808;
+  box-shadow: 0 0 0 3px rgba(255, 107, 107, 0.18);
+}
+.gate-toggle.on:hover {
+  background: #ff5252;
+  border-color: #ff5252;
+}
+.gate-toggle.on .gate-toggle-state {
+  background: rgba(0, 0, 0, 0.24);
+  color: #fff;
 }
 .sep {
   opacity: 0.5;

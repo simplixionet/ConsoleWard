@@ -172,6 +172,8 @@
   "term.aiUnattended": "KI unbeaufsichtigt",
   "term.arm": "Unbeaufsichtigt starten…",
   "term.disarm": "Ausschalten",
+  "term.on": "EIN",
+  "term.off": "AUS",
   "term.armTitle": "Unbeaufsichtigt auf {{session}} ausführen?",
   "term.armBody": "Befehle, die die KI für diese Sitzung vorschlägt, laufen sofort, und ihre volle Ausgabe geht ungekürzt zurück, ohne dass jemand sie vorher freigibt. Nur diese Sitzung ist betroffen.",
   "term.armGuardOn": "Die Liste zerstörerischer Befehle hält die schlimmsten davon weiterhin auf und fragt Sie zuerst.",

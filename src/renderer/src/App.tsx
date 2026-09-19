@@ -506,21 +506,26 @@ export default function App() {
                 <span className="sep">·</span>
                 <span>{active.message ?? t(STATUS_BAR_KEY[active.status])}</span>
                 <span className="statusbar-gate">
-                  {active.dangerous ? (
-                    <>
-                      <span className="gate-chip">⚡ {t('term.aiUnattended')}</span>
-                      <button
-                        className="btn small"
-                        onClick={() => void setDangerous(active.id, false)}
-                      >
-                        {t('term.disarm')}
-                      </button>
-                    </>
-                  ) : (
-                    <button className="btn small" onClick={() => setArmTarget(active)}>
-                      {t('term.arm')}
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    className={`gate-toggle${active.dangerous ? ' on' : ''}`}
+                    aria-pressed={active.dangerous}
+                    title={t(active.dangerous ? 'term.disarm' : 'term.arm')}
+                    onClick={() => {
+                      // Turning it on is the dangerous move, so it asks first;
+                      // turning it back off is instant and needs no dialog.
+                      if (active.dangerous) void setDangerous(active.id, false)
+                      else setArmTarget(active)
+                    }}
+                  >
+                    <span className="gate-toggle-bolt" aria-hidden="true">
+                      ⚡
+                    </span>
+                    <span className="gate-toggle-label">{t('term.aiUnattended')}</span>
+                    <span className="gate-toggle-state">
+                      {t(active.dangerous ? 'term.on' : 'term.off')}
+                    </span>
+                  </button>
                 </span>
               </>
             ) : (

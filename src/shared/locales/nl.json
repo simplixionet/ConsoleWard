@@ -172,6 +172,8 @@
   "term.aiUnattended": "AI onbewaakt",
   "term.arm": "Onbewaakt draaien…",
   "term.disarm": "Uitzetten",
+  "term.on": "AAN",
+  "term.off": "UIT",
   "term.armTitle": "Onbewaakt draaien op {{session}}?",
   "term.armBody": "Opdrachten die de AI voor deze sessie voorstelt draaien meteen en hun volledige uitvoer komt ongewijzigd terug, zonder dat iemand ze eerst goedkeurt. Alleen deze sessie wordt geraakt.",
   "term.armGuardOn": "De lijst met destructieve opdrachten houdt de ergste nog steeds tegen en vraagt het je eerst.",

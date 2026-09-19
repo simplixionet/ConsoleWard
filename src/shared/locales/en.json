@@ -172,6 +172,8 @@
   "term.aiUnattended": "AI unattended",
   "term.arm": "Run unattended…",
   "term.disarm": "Turn off",
+  "term.on": "ON",
+  "term.off": "OFF",
   "term.armTitle": "Run unattended on {{session}}?",
   "term.armBody": "Commands the AI proposes for this session will run immediately and their full output goes back unedited, with nobody approving them first. Only this session is affected.",
   "term.armGuardOn": "The destructive-command list still stops the worst of them and asks you first.",
