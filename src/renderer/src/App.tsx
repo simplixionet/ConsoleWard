@@ -113,7 +113,18 @@ export default function App() {
     // SSH clients survive a lock while `vault:locked` clears this list, so
     // without re-adopting them here they stay authenticated but unreachable —
     // no tab to read or close them, while MCP still runs commands on them.
-    if (live.ok) setSessions(live.value)
+    if (live.ok) {
+      setSessions(live.value)
+      // Re-adopting the tabs is not enough: the lock cleared `activeSession`, so
+      // with sessions back but none selected every TerminalView renders hidden
+      // and the workspace is a blank screen with nothing to type into. Keep the
+      // current tab if it survived, otherwise fall back to the last one.
+      if (live.value.length) {
+        setActiveSession((cur) =>
+          cur && live.value.some((s) => s.id === cur) ? cur : live.value[live.value.length - 1].id
+        )
+      }
+    }
   }, [])
 
   const refreshVault = useCallback(async () => {
