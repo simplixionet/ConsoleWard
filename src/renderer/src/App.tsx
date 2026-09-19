@@ -28,6 +28,7 @@ import SettingsDialog from './components/SettingsDialog'
 import RecoveryKeyDialog from './components/RecoveryKeyDialog'
 import CommandApprovalDialog from './components/CommandApprovalDialog'
 import SaveCommandDialog from './components/SaveCommandDialog'
+import ArmSessionDialog from './components/ArmSessionDialog'
 import UploadApprovalDialog from './components/UploadApprovalDialog'
 import OutputShareDialog from './components/OutputShareDialog'
 
@@ -85,6 +86,8 @@ export default function App() {
   const [saveQueue, setSaveQueue] = useState<SaveCommandApproval[]>([])
   const [uploadQueue, setUploadQueue] = useState<UploadApproval[]>([])
   const [shareQueue, setShareQueue] = useState<ShareRequest[]>([])
+  // The session the human is about to switch to unattended, pending confirmation.
+  const [armTarget, setArmTarget] = useState<SessionInfo | null>(null)
 
   const activeRef = useRef<string | null>(null)
   activeRef.current = activeSession
@@ -110,7 +113,18 @@ export default function App() {
     // SSH clients survive a lock while `vault:locked` clears this list, so
     // without re-adopting them here they stay authenticated but unreachable —
     // no tab to read or close them, while MCP still runs commands on them.
-    if (live.ok) setSessions(live.value)
+    if (live.ok) {
+      setSessions(live.value)
+      // Re-adopting the tabs is not enough: the lock cleared `activeSession`, so
+      // with sessions back but none selected every TerminalView renders hidden
+      // and the workspace is a blank screen with nothing to type into. Keep the
+      // current tab if it survived, otherwise fall back to the last one.
+      if (live.value.length) {
+        setActiveSession((cur) =>
+          cur && live.value.some((s) => s.id === cur) ? cur : live.value[live.value.length - 1].id
+        )
+      }
+    }
   }, [])
 
   const refreshVault = useCallback(async () => {
@@ -169,6 +183,7 @@ export default function App() {
       setSnippetEditor({ open: false, snippet: null })
       setPendingInsert(null)
       setSettingsOpen(false)
+      setArmTarget(null)
       setCommandQueue([])
       setSaveQueue([])
       setUploadQueue([])
@@ -229,6 +244,15 @@ export default function App() {
     try {
       unwrap(await api.connections.duplicate(c.id))
       setConnections(unwrap(await api.connections.list()))
+    } catch (err) {
+      showToast(errorMessage(err))
+    }
+  }
+
+  async function setDangerous(sessionId: string, on: boolean): Promise<void> {
+    setArmTarget(null)
+    try {
+      unwrap(await api.ssh.setDangerous(sessionId, on))
     } catch (err) {
       showToast(errorMessage(err))
     }
@@ -436,6 +460,11 @@ export default function App() {
                 onClick={() => setActiveSession(s.id)}
               >
                 <span className={`dot ${s.status}`} />
+                {s.dangerous && (
+                  <span className="tab-danger" title={t('term.unattendedTab')}>
+                    ⚡
+                  </span>
+                )}
                 <span className="tab-title">{s.title}</span>
                 <button
                   className="tab-close"
@@ -476,6 +505,28 @@ export default function App() {
                 <span>{active.title}</span>
                 <span className="sep">·</span>
                 <span>{active.message ?? t(STATUS_BAR_KEY[active.status])}</span>
+                <span className="statusbar-gate">
+                  <button
+                    type="button"
+                    className={`gate-toggle${active.dangerous ? ' on' : ''}`}
+                    aria-pressed={active.dangerous}
+                    title={t(active.dangerous ? 'term.disarm' : 'term.arm')}
+                    onClick={() => {
+                      // Turning it on is the dangerous move, so it asks first;
+                      // turning it back off is instant and needs no dialog.
+                      if (active.dangerous) void setDangerous(active.id, false)
+                      else setArmTarget(active)
+                    }}
+                  >
+                    <span className="gate-toggle-bolt" aria-hidden="true">
+                      ⚡
+                    </span>
+                    <span className="gate-toggle-label">{t('term.aiUnattended')}</span>
+                    <span className="gate-toggle-state">
+                      {t(active.dangerous ? 'term.on' : 'term.off')}
+                    </span>
+                  </button>
+                </span>
               </>
             ) : (
               <span>
@@ -695,6 +746,17 @@ export default function App() {
             </div>
           </div>
         </div>
+      )}
+
+      {armTarget && (
+        <ArmSessionDialog
+          session={armTarget}
+          guard={settings.dangerousGuard !== false}
+          onAnswer={(arm) => {
+            if (arm) void setDangerous(armTarget.id, true)
+            else setArmTarget(null)
+          }}
+        />
       )}
 
       {recoveryModal}

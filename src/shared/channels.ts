@@ -52,6 +52,7 @@ export const CH = {
   sshWrite: 'ssh:write',
   sshResize: 'ssh:resize',
   sshDisconnect: 'ssh:disconnect',
+  sshSetDangerous: 'ssh:setDangerous',
   sshAnswerHostKey: 'ssh:answerHostKey',
   sshDataEvent: 'ssh:data',
   sshStatusEvent: 'ssh:status',

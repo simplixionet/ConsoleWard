@@ -153,7 +153,9 @@ const SESSION = {
   id: 'sess-1',
   connectionId: 'c1',
   title: 'web01',
-  status: 'ready'
+  status: 'ready',
+  // Gated by default, like a real new session; the __demo hook can arm it.
+  dangerous: false
 }
 
 /** A believable login banner and one command, written for this capture. */
@@ -290,6 +292,11 @@ const api = {
     write: async () => ok(null),
     resize: async () => ok(null),
     disconnect: async () => ok(null),
+    setDangerous: async (_id, on) => {
+      SESSION.dangerous = Boolean(on)
+      for (const cb of listeners.status) cb(SESSION)
+      return ok(null)
+    },
     answerHostKey: async () => ok(null),
     onData: (cb) => on(listeners.data, cb),
     onStatus: (cb) => on(listeners.status, cb),

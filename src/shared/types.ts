@@ -191,6 +191,12 @@ export interface Settings {
    * a separate, deliberate decision with its own warnings — never a side effect
    * of enabling the gateway.
    */
+  /**
+   * The DEFAULT a new session starts at — not a global switch any more. Each
+   * session carries its own dangerous flag (`SessionInfo.dangerous`), seeded
+   * from this at connect and toggled per session from the status bar. Changing
+   * this never reaches back to a session already open.
+   */
   dangerousMode?: boolean
   /**
    * While dangerousMode is on, still refuse the destructive list. On by default;
@@ -270,6 +276,8 @@ export interface SessionInfo {
   status: SessionStatus
   /** Set on `error` / `closed`. */
   message?: string
+  /** The AI runs unattended on this session (no approval dialog). Per session, ephemeral. */
+  dangerous: boolean
 }
 
 export interface HostKeyPrompt {
@@ -460,6 +468,8 @@ export interface AppApi {
     /** Sessions the main process holds — the list is rebuilt from these after unlock. */
     list(): Promise<Result<SessionInfo[]>>
     connect(connectionId: string): Promise<Result<string>>
+    /** Arm or disarm unattended mode for one live session. */
+    setDangerous(sessionId: string, on: boolean): Promise<Result<null>>
     write(sessionId: string, data: string): Promise<Result<null>>
     resize(sessionId: string, cols: number, rows: number): Promise<Result<null>>
     disconnect(sessionId: string): Promise<Result<null>>
