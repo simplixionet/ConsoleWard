@@ -238,6 +238,10 @@ function registerMcpBridge(): void {
         if (!answer.approved) return { approved: false }
       }
       await saveAiSnippet(req)
+      // The library panel is built from the renderer's own copy of the list, so
+      // without a nudge an AI-saved command stays invisible until the next full
+      // reload — which only happens on an unlock. Tell it to refresh.
+      mainWindow?.webContents.send(CH.snipChangedEvent)
       return { approved: true }
     }
   })

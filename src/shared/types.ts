@@ -439,6 +439,9 @@ export interface AppApi {
     save(input: SnippetInput): Promise<Result<Snippet>>
     remove(id: string): Promise<Result<null>>
     duplicate(id: string): Promise<Result<Snippet>>
+    // Fires when the library changes from outside the renderer — an AI-saved
+    // command — so the panel can refresh instead of waiting for the next unlock.
+    onChanged(cb: () => void): () => void
   }
   settings: {
     get(): Promise<Result<Settings>>
