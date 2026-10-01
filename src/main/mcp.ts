@@ -409,10 +409,6 @@ class McpService {
     await this.start()
   }
 
-  async stopOnLock(): Promise<void> {
-    await this.stop()
-  }
-
   /**
    * Constant-time for any input, including the wrong length. Hashing both sides
    * first is what buys that: `timingSafeEqual` throws on unequal lengths, and
