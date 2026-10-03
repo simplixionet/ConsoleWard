@@ -57,7 +57,8 @@ const api: AppApi = {
     list: () => ipcRenderer.invoke(CH.snipList),
     save: (input: SnippetInput) => ipcRenderer.invoke(CH.snipSave, input),
     remove: (id) => ipcRenderer.invoke(CH.snipRemove, id),
-    duplicate: (id) => ipcRenderer.invoke(CH.snipDuplicate, id)
+    duplicate: (id) => ipcRenderer.invoke(CH.snipDuplicate, id),
+    onChanged: (cb) => on(CH.snipChangedEvent, cb)
   },
   logs: {
     list: () => ipcRenderer.invoke(CH.logList),

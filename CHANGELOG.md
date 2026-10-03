@@ -7,6 +7,24 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [1.3.1] — 2026-10-03
+
+### Fixed
+
+- **The MCP gateway keeps answering while the vault is locked.** Locking used to
+  shut the server down, so a connected model's next request was refused at the
+  socket — which reads as a crash, not as a locked door. The server now stays up
+  and answers every authenticated request with `vault_locked`, so the model
+  learns the vault is locked and can try again after an unlock. Nothing runs
+  while locked: the lock is checked before any tool, and pending approvals are
+  still denied the moment it locks. The server keeps only the token's SHA-256
+  digest, so staying up does not keep the credential alive through the lock.
+
+- **A command the AI saves shows up in the library at once.** `save_command`
+  wrote the entry to the vault but never told the window, so it appeared only
+  after the next lock and unlock. The library now refreshes as soon as the save
+  lands.
+
 ## [1.3.0] — 2026-09-19
 
 ### Changed

@@ -28,6 +28,7 @@ export const CH = {
   snipSave: 'snip:save',
   snipRemove: 'snip:remove',
   snipDuplicate: 'snip:duplicate',
+  snipChangedEvent: 'snip:changed',
 
   mcpSaveCommandRequestEvent: 'mcp:saveCommandRequest',
   mcpAnswerSaveCommand: 'mcp:answerSaveCommand',

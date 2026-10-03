@@ -168,9 +168,14 @@ function doLock(): void {
   const disconnect = vault.read().settings.disconnectOnLock
   if (disconnect) ssh.disconnectAll()
   ssh.disarmAll()
-  void mcp.stopOnLock().then(pushMcpStatus)
   approvals.rejectAll()
   vault.lock()
+  // The gateway keeps listening while the vault is locked. Every authenticated
+  // request is then answered `vault_locked` (the token is captured at start, so
+  // it survives the lock), rather than the connection being refused — which a
+  // model reads as the server having crashed, not as a door it can knock on
+  // again. Push the status so the renderer shows it running but locked.
+  pushMcpStatus()
   if (autoLockTimer) clearTimeout(autoLockTimer)
   autoLockTimer = null
   mainWindow?.webContents.send(CH.vaultLockedEvent)
@@ -233,6 +238,10 @@ function registerMcpBridge(): void {
         if (!answer.approved) return { approved: false }
       }
       await saveAiSnippet(req)
+      // The library panel is built from the renderer's own copy of the list, so
+      // without a nudge an AI-saved command stays invisible until the next full
+      // reload — which only happens on an unlock. Tell it to refresh.
+      mainWindow?.webContents.send(CH.snipChangedEvent)
       return { approved: true }
     }
   })

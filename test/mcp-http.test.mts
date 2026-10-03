@@ -11,6 +11,7 @@
 
 import { after, before, describe, test, mock } from 'node:test'
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import { createServer, request, type ClientRequest, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
@@ -67,11 +68,15 @@ const {
 } = await import('../src/main/mcp.ts')
 const { MAX_PENDING_APPROVALS } = await import('../src/main/approvals.ts')
 
-/** `checkAuth` is private; going over HTTP would test node and the SDK. */
+/**
+ * `checkAuth` is private; going over HTTP would test node and the SDK. It takes
+ * the digest the server keeps rather than the token, so hash here the way
+ * `start()` does — the assertions below are about the token a client offers.
+ */
 const checkAuth = (header: string | undefined, token: string): boolean =>
-  (mcp as unknown as { checkAuth(h: string | undefined, t: string): boolean }).checkAuth(
+  (mcp as unknown as { checkAuth(h: string | undefined, d: Buffer): boolean }).checkAuth(
     header,
-    token
+    createHash('sha256').update(token).digest()
   )
 
 const PORT = 7345

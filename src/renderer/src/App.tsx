@@ -170,6 +170,13 @@ export default function App() {
     const offUpload = api.mcp.onUploadRequest((req) => setUploadQueue((prev) => [...prev, req]))
     const offShare = api.mcp.onShareRequest((req) => setShareQueue((prev) => [...prev, req]))
 
+    const offSnip = api.snippets.onChanged(async () => {
+      // An AI-saved command landed in the library from outside the renderer, so
+      // reload instead of leaving it invisible until the next unlock.
+      const res = await api.snippets.list()
+      if (res.ok) setSnippets(res.value)
+    })
+
     const offLocked = api.vault.onLocked(() => {
       // The first keypress after a lock must reach the main process, not be
       // swallowed by a throttle window that opened before the user left.
@@ -199,6 +206,7 @@ export default function App() {
       offSaveCommand()
       offUpload()
       offShare()
+      offSnip()
       offLocked()
     }
   }, [refreshVault, showToast])
