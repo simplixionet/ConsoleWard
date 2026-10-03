@@ -6,8 +6,9 @@
  * output through a gate a human holds.
  *
  * Invariants that hold in every mode — 127.0.0.1 only, never 0.0.0.0; bearer
- * token plus Host/Origin DNS-rebinding protection; off unless enabled and
- * unlocked; addresses, usernames and passwords never reach the model.
+ * token plus Host/Origin DNS-rebinding protection; started only once enabled
+ * and unlocked, and through a later lock it stays up but answers nothing except
+ * `vault_locked`; addresses, usernames and passwords never reach the model.
  *
  * The gate itself is NOT one of them any more, and it is now PER SESSION. Each
  * session carries its own dangerous flag (`ssh.isDangerous`), seeded at connect
@@ -246,7 +247,10 @@ class McpService {
 
     const settings = vault.read().settings
     this.port = clampPort(settings.mcpPort ?? DEFAULT_PORT)
-    const token = await this.ensureToken()
+    // The digest, not the token: this handler stays up through a vault lock
+    // (answering `vault_locked`), and a closure holding the token itself would
+    // keep a usable credential alive after the vault has wiped everything else.
+    const tokenDigest = createHash('sha256').update(await this.ensureToken()).digest()
     this.lastError = null
 
     const allowedHosts = [`127.0.0.1:${this.port}`, `localhost:${this.port}`]
@@ -269,7 +273,7 @@ class McpService {
           // a distinct status for a bad name tells a guessing page we are here.
           // Neither may short-circuit the other — `&&` reinstates a timing oracle.
           const named = hostAllowed(req.headers, allowedHosts, allowedOrigins)
-          const authed = this.checkAuth(req.headers.authorization, token)
+          const authed = this.checkAuth(req.headers.authorization, tokenDigest)
           if (!named || !authed) {
             sendJson(res, 403, REJECTED)
             return
@@ -391,8 +395,10 @@ class McpService {
    * `closeAllConnections()` is required, not belt-and-braces: `server.close()`
    * waits for open sockets, and the MCP notification stream is one the client
    * holds for its whole session — without it this never resolves and neither
-   * does `restart()`. Dropping mid-request is intended; the vault has locked or
-   * the gateway is off, so there is nothing left to answer.
+   * does `restart()`. Dropping mid-request is intended: the gateway is being
+   * switched off, restarted on a new token or port, or the app is quitting. A
+   * vault lock does not come through here — the server stays up and answers
+   * `vault_locked`.
    */
   async stop(): Promise<void> {
     const server = this.http
@@ -410,15 +416,16 @@ class McpService {
   }
 
   /**
-   * Constant-time for any input, including the wrong length. Hashing both sides
-   * first is what buys that: `timingSafeEqual` throws on unequal lengths, and
-   * the early return that avoids the throw leaks the token's length.
+   * Constant-time for any input, including the wrong length. Hashing the offer
+   * is what buys that: `timingSafeEqual` throws on unequal lengths, and the
+   * early return that avoids the throw leaks the token's length. `expected` is
+   * the token's SHA-256 digest, computed once at start, so the running server
+   * never holds the token itself.
    */
-  private checkAuth(header: string | undefined, token: string): boolean {
+  private checkAuth(header: string | undefined, expected: Buffer): boolean {
     const prefix = 'Bearer '
     const offered = header?.startsWith(prefix) === true ? header.slice(prefix.length) : ''
     const provided = createHash('sha256').update(offered).digest()
-    const expected = createHash('sha256').update(token).digest()
     return timingSafeEqual(provided, expected)
   }
 

@@ -138,10 +138,14 @@ you will get this answer:
   Clipboard on your other machines. No application can clear those, Electron
   offers no way to mark clipboard content transient, and ConsoleWard does not
   pretend otherwise by wiping the clipboard on a timer. The token also does not
-  expire: the server runs only while the app is open and the vault is unlocked, so
-  a stale token buys nothing at a moment you are not sitting there. **Regenerating
-  is the revocation** — one click, and it restarts the server so the old token
-  stops working immediately.
+  expire: the server runs only while the app is open, and while the vault is
+  locked it answers even the right token with nothing but `vault_locked` — no
+  session names, no commands, no dialogs — so a stale token buys nothing at a
+  moment you are not sitting there. The server checks requests against the
+  token's SHA-256 digest, never the token itself, so staying up through a lock
+  does not keep the credential alive with it. **Regenerating is the
+  revocation** — one click, and it restarts the server so the old token stops
+  working immediately.
 
 - **Rolling `vault.enc` back to an older copy is detected, but not prevented.**
   The file carries a write counter bound into the body's GCM tag, so it cannot be

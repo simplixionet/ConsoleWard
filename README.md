@@ -368,7 +368,9 @@ output as though it had seen everything.
   byte for byte, so a web page cannot learn from the difference that anything is
   listening on the port
 - at most 8 requests are handled at once; the rest get a 503 rather than being queued
-- locking the vault shuts the server down immediately and denies pending requests
+- locking the vault denies pending requests immediately; until you unlock, the server
+  answers every authenticated request with `vault_locked` and runs nothing — a caller
+  without the token still gets the same 403
 - an unanswered request auto-denies after 5 minutes
 
 > ⚠️ **What leaves your machine:** the commands the AI proposes, and **the output you
